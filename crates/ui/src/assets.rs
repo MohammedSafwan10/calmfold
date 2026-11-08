@@ -15,6 +15,11 @@ icon_assets!(
     AppIcons,
     [
         ArchiveRestore,
+        RotateCcw,
+        Play,
+        Pause,
+        PanelRightOpen,
+        Ban,
         CalendarCheck,
         CalendarClock,
         CalendarDays,

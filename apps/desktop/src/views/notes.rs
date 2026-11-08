@@ -17,6 +17,7 @@ use std::time::Duration;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -337,57 +338,76 @@ impl NotesView {
         Ok(())
     }
 
-    fn toggle_pin(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = &mut self.open else { return };
-        let (id, pinned) = (open.id, !open.pinned);
+    fn set_pinned(
+        &mut self,
+        id: NoteId,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let result = self
             .library
             .update(cx, |lib, cx| lib.set_note_pinned(id, pinned, cx));
-        if result.is_ok() {
+        if feedback::report(result, window, cx).is_some()
+            && let Some(open) = self.open.as_mut().filter(|o| o.id == id)
+        {
             open.pinned = pinned;
         }
-        notify_err(result, window, cx);
     }
 
-    fn trash_open(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.flush(window, cx) {
-            return;
-        }
-        let Some(open) = self.open.take() else { return };
-        let id = open.id;
-        match self.library.update(cx, |lib, cx| lib.trash_note(id, cx)) {
-            Ok(()) => {
-                let library = self.library.clone();
-                let view = cx.entity().downgrade();
-                feedback::undo_toast("Note moved to trash.", window, cx, move |window, cx| {
-                    if feedback::report(
-                        library.update(cx, |lib, cx| lib.restore_note(id, cx)),
-                        window,
-                        cx,
-                    )
-                    .is_some()
-                    {
-                        _ = view.update(cx, |this, cx| this.open_note(id, window, cx));
-                    }
-                });
-            }
-            Err(err) => {
-                self.open = Some(open);
-                feedback::error_toast(format!("{err:#}"), window, cx);
-            }
-        }
-        cx.notify();
-    }
-
-    fn restore_open(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.open.as_ref().map(|o| o.id) else {
-            return;
-        };
+    fn restore_note(&mut self, id: NoteId, window: &mut Window, cx: &mut Context<Self>) {
         let result = self.library.update(cx, |lib, cx| lib.restore_note(id, cx));
         if feedback::report(result, window, cx).is_some() {
             self.show_trash = false;
             self.reload_list(cx);
             self.open_note(id, window, cx);
+        }
+    }
+
+    /// Moves any note to the trash (the open one or one from the list) and offers Undo.
+    fn trash_note(&mut self, id: NoteId, window: &mut Window, cx: &mut Context<Self>) {
+        let is_open = self.open.as_ref().is_some_and(|o| o.id == id);
+        if is_open && !self.flush(window, cx) {
+            return;
+        }
+        let result = self.library.update(cx, |lib, cx| lib.trash_note(id, cx));
+        if feedback::report(result, window, cx).is_none() {
+            return;
+        }
+        if is_open {
+            self.open = None;
+        }
+        let library = self.library.clone();
+        let view = cx.entity().downgrade();
+        feedback::undo_toast("Note moved to trash.", window, cx, move |window, cx| {
+            if feedback::report(
+                library.update(cx, |lib, cx| lib.restore_note(id, cx)),
+                window,
+                cx,
+            )
+            .is_some()
+            {
+                _ = view.update(cx, |this, cx| this.open_note(id, window, cx));
+            }
+        });
+        cx.notify();
+    }
+
+    fn toggle_pin(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((id, pinned)) = self.open.as_ref().map(|o| (o.id, o.pinned)) {
+            self.set_pinned(id, !pinned, window, cx);
+        }
+    }
+
+    fn trash_open(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.open.as_ref().map(|o| o.id) {
+            self.trash_note(id, window, cx);
+        }
+    }
+
+    fn restore_open(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.open.as_ref().map(|o| o.id) {
+            self.restore_note(id, window, cx);
         }
     }
 
@@ -527,10 +547,13 @@ impl NotesView {
                     ),
             );
 
+        let in_trash = self.show_trash;
         let rows = self.list.iter().map(|note| {
             let id = note.id;
+            let pinned = note.pinned;
             let active = selected == Some(id);
             let view = view.clone();
+            let menu_view = view.clone();
             v_flex()
                 .id(ElementId::Name(SharedString::from(format!("note-{id}"))))
                 .w_full()
@@ -574,6 +597,9 @@ impl NotesView {
                             note.preview.clone()
                         }),
                 )
+                .context_menu(move |menu, _, _| {
+                    note_row_menu(menu, &menu_view, id, pinned, in_trash)
+                })
         });
 
         let empty = match (self.show_trash, searching) {
@@ -843,6 +869,57 @@ impl NotesView {
                     .child(div().text_sm().child(b.title.clone()))
             }))
     }
+}
+
+/// Right-click menu for a note in the list. Same order as task menus:
+/// open → change → trash.
+fn note_row_menu(
+    menu: PopupMenu,
+    view: &gpui_kit::WeakEntity<NotesView>,
+    id: NoteId,
+    pinned: bool,
+    in_trash: bool,
+) -> PopupMenu {
+    let run = |label: &'static str,
+               icon: Lucide,
+               f: fn(&mut NotesView, NoteId, &mut Window, &mut Context<NotesView>)| {
+        let view = view.clone();
+        PopupMenuItem::new(label)
+            .icon(icon)
+            .on_click(move |_, window, cx| {
+                _ = view.update(cx, |this, cx| f(this, id, window, cx));
+            })
+    };
+    if in_trash {
+        return menu
+            .item(run("Open", Lucide::FileText, |this, id, window, cx| {
+                this.open_note(id, window, cx)
+            }))
+            .item(run(
+                "Restore",
+                Lucide::ArchiveRestore,
+                |this, id, window, cx| this.restore_note(id, window, cx),
+            ));
+    }
+    menu.item(run("Open", Lucide::FileText, |this, id, window, cx| {
+        this.open_note(id, window, cx)
+    }))
+    .separator()
+    .item(if pinned {
+        run("Unpin", Lucide::PinOff, |this, id, window, cx| {
+            this.set_pinned(id, false, window, cx)
+        })
+    } else {
+        run("Pin to top", Lucide::Pin, |this, id, window, cx| {
+            this.set_pinned(id, true, window, cx)
+        })
+    })
+    .separator()
+    .item(run(
+        "Move to trash",
+        Lucide::Trash,
+        |this, id, window, cx| this.trash_note(id, window, cx),
+    ))
 }
 
 impl Focusable for NotesView {

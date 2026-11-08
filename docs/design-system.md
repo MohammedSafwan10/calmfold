@@ -68,6 +68,22 @@ Lucide (1,800+ icons, one consistent stroke style, ISC). Use
 
 Never confirm reversible actions. Never use "OK" or "Yes" as the confirm label.
 
+## Menus
+
+Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`):
+
+1. **Open** (details / open).
+2. **Change** values. A property with several options becomes a submenu whose
+   label shows the current value ("Due: Tomorrow", "Priority: High"); the
+   current option is checked inside it.
+3. **Status** actions: only transitions the state machine allows.
+4. **Destructive** last, after a separator ("Move to trash"; in Trash: "Restore", "Delete forever…").
+
+- Max ~7 top-level items; group with separators, never section headers inside the top level.
+- Every item has an icon from the same Lucide set.
+- The "…" button and right-click on the row open the same menu (one builder).
+- "…" in a label means another step follows (a dialog or confirmation).
+
 ## Shared components (`crates/ui/src/components.rs`)
 
 `segmented` (controlled segmented control), `page_header`, `empty_state`,

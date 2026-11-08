@@ -613,3 +613,69 @@ fn task_detail_edits_status_due_notes_and_title(cx: &mut TestAppContext) {
     assert!(!sheet_open(cx));
     assert_eq!(task(cx).title(), "Pay rent and water bill");
 }
+
+/// Clicks the element whose accessibility label is exactly `label`.
+fn click_label(app: &App, cx: &mut TestAppContext, label: &str) {
+    use gpui_kit::test::{TestEventExt, TestQueryExt};
+    cx.update_window(app.window, |_, window, cx| {
+        window.render_frame(cx);
+        let center = window.find_by_label(label).bounds().center();
+        window.pointer_down(center, gpui_kit::MouseButton::Left, cx);
+        window.pointer_up(center, gpui_kit::MouseButton::Left, cx);
+    })
+    .expect("window");
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn task_menu_sets_priority_and_due_through_submenus(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let id = cx.update(|cx| {
+        app.shell
+            .read(cx)
+            .library()
+            .clone()
+            .update(cx, |lib, cx| lib.create_task("Call bank", None, cx))
+            .expect("create")
+    });
+    dispatch(&app, cx, GoTasks);
+    cx.update_window(app.window, |_, _, cx| {
+        app.shell
+            .read(cx)
+            .tasks()
+            .clone()
+            .update(cx, |t, cx| t.set_tab(TaskTab::All, cx));
+    })
+    .expect("window");
+    cx.run_until_parked();
+    let menu: &'static str = Box::leak(format!("task-{id}-menu").into_boxed_str());
+    let task = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            app.shell
+                .read(cx)
+                .library()
+                .read(cx)
+                .tasks_by_id(id)
+                .expect("task")
+        })
+    };
+
+    click(&app, cx, menu);
+    click_label(&app, cx, "Priority");
+    click_label(&app, cx, "High");
+    assert_eq!(task(cx).priority(), keepstone_core::Priority::High);
+
+    // The submenu label now shows the current value.
+    click(&app, cx, menu);
+    click_label(&app, cx, "Due date");
+    click_label(&app, cx, "Tomorrow");
+    assert_eq!(
+        task(cx).due(),
+        keepstone_core::clock::today().tomorrow().ok()
+    );
+
+    click(&app, cx, menu);
+    click_label(&app, cx, "Start");
+    assert_eq!(task(cx).status(), TaskStatus::InProgress);
+}
