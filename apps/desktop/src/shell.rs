@@ -28,13 +28,13 @@ use keepstone_core::NoteId;
 use keepstone_ui::appearance::{self, ThemePreference};
 
 use crate::actions::{
-    GoNotes, GoSettings, GoTasks, GoToday, NewNote, NewTask, OpenCommandPalette, ToggleSidebar,
-    UseDarkTheme, UseLightTheme, UseSystemTheme,
+    GoNotes, GoSettings, GoTasks, GoToday, NewNote, NewTask, OpenCommandPalette, ToggleListPanel,
+    ToggleSidebar, UseDarkTheme, UseLightTheme, UseSystemTheme,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
 use crate::paths::AppPaths;
-use crate::ui_state::{self, LayoutState};
+use crate::ui_state::{self, LayoutState, LayoutStore};
 use crate::views::notes::NotesView;
 use crate::views::settings::SettingsView;
 use crate::views::tasks::TasksView;
@@ -55,9 +55,7 @@ impl Render for ResizeSidebar {
 
 pub struct AppShell {
     route: Route,
-    layout: LayoutState,
-    layout_file: std::path::PathBuf,
-    pending_layout_save: Option<gpui_kit::Task<()>>,
+    layout: Entity<LayoutStore>,
     due_now: usize,
     library: Entity<Library>,
     today: Entity<TodayView>,
@@ -83,12 +81,14 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let layout = cx.new(|_| LayoutStore::load(&paths.data_dir));
         let today = cx.new(|cx| TodayView::new(library.clone(), cx));
-        let notes = cx.new(|cx| NotesView::new(library.clone(), window, cx));
+        let notes = cx.new(|cx| NotesView::new(library.clone(), layout.clone(), window, cx));
         let tasks = cx.new(|cx| TasksView::new(library.clone(), window, cx));
         let settings = cx.new(|cx| SettingsView::new(paths.data_dir.clone(), cx));
 
         let subscriptions = vec![
+            cx.observe(&layout, |_, _, cx| cx.notify()),
             cx.subscribe_in(&today, window, |this, _, nav, window, cx| {
                 this.handle_nav(*nav, window, cx)
             }),
@@ -120,12 +120,9 @@ impl AppShell {
             }),
         ];
 
-        let layout_file = ui_state::layout_file(&paths.data_dir);
         let mut this = Self {
             route: Route::Today,
-            layout: LayoutState::load(&layout_file),
-            layout_file,
-            pending_layout_save: None,
+            layout,
             due_now: 0,
             library,
             today,
@@ -141,8 +138,7 @@ impl AppShell {
 
     /// Flushes everything that is saved lazily.
     pub fn save_everything(&mut self, cx: &mut Context<Self>) {
-        self.pending_layout_save = None;
-        self.layout.save(&self.layout_file);
+        self.layout.update(cx, |layout, _| layout.save_now());
         if let Err(err) = self.notes.update(cx, |notes, cx| notes.save_pending(cx)) {
             eprintln!("keepstone: could not save the open note on exit: {err:#}");
         }
@@ -154,23 +150,9 @@ impl AppShell {
         cx.notify();
     }
 
-    /// Saves layout shortly after the last change, so a drag writes once.
-    fn save_layout_soon(&mut self, cx: &mut Context<Self>) {
-        self.pending_layout_save = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(300))
-                .await;
-            _ = this.update(cx, |this, _| this.layout.save(&this.layout_file));
-        }));
-    }
-
     fn set_sidebar_width(&mut self, width: f32, cx: &mut Context<Self>) {
-        let width = LayoutState::clamp_width(width);
-        if (width - self.layout.sidebar_width).abs() >= 0.5 {
-            self.layout.sidebar_width = width;
-            self.save_layout_soon(cx);
-            cx.notify();
-        }
+        self.layout
+            .update(cx, |layout, cx| layout.set_sidebar_width(width, cx));
     }
 
     /// Opens a sidebar deep link.
@@ -267,9 +249,8 @@ impl AppShell {
     }
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        self.layout.sidebar_collapsed = !self.layout.sidebar_collapsed;
-        self.save_layout_soon(cx);
-        cx.notify();
+        self.layout
+            .update(cx, |layout, cx| layout.toggle_sidebar(cx));
     }
 
     pub fn route(&self) -> Route {
@@ -288,8 +269,15 @@ impl AppShell {
         &self.tasks
     }
 
-    pub fn layout(&self) -> LayoutState {
-        self.layout
+    pub fn layout(&self, cx: &App) -> LayoutState {
+        self.layout.read(cx).state().clone()
+    }
+
+    /// Collapses or expands the list panel of the current screen (Notes today).
+    pub fn toggle_list_panel(&mut self, cx: &mut Context<Self>) {
+        self.layout.update(cx, |layout, cx| {
+            layout.toggle_panel(ui_state::NOTES_LIST, cx)
+        });
     }
 
     pub fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -370,8 +358,9 @@ impl AppShell {
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let collapsed = self.layout.sidebar_collapsed;
-        let width = px(self.layout.sidebar_width);
+        let layout = self.layout.read(cx).state().clone();
+        let collapsed = layout.sidebar_collapsed;
+        let width = px(layout.sidebar_width);
         let theme = cx.theme();
 
         let brand = h_flex()
@@ -462,7 +451,7 @@ impl AppShell {
         // new width every frame, so resizing tracks the pointer with no easing lag.
         let sidebar = Sidebar::new(gpui_kit::SharedString::from(format!(
             "main-sidebar-{}",
-            self.layout.sidebar_width.round() as i32
+            layout.sidebar_width.round() as i32
         )))
         .collapsible(SidebarCollapsible::Icon)
         .collapsed(collapsed)
@@ -508,13 +497,30 @@ impl AppShell {
                 .pr_2()
                 .justify_between()
                 .items_center()
+                // Panel toggles live here so they never move when a panel collapses.
                 .child(
-                    Button::new("toggle-sidebar")
-                        .ghost()
-                        .xsmall()
-                        .icon(Lucide::PanelLeft)
-                        .tooltip("Toggle sidebar")
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Button::new("toggle-sidebar")
+                                .ghost()
+                                .xsmall()
+                                .icon(Lucide::PanelLeft)
+                                .tooltip_with_action("Toggle sidebar", &ToggleSidebar, None)
+                                .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
+                        )
+                        .when(self.route == Route::Notes, |this| {
+                            this.child(
+                                Button::new("toggle-list-panel")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(Lucide::PanelLeftDashed)
+                                    .tooltip_with_action("Toggle note list", &ToggleListPanel, None)
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.toggle_list_panel(cx)),
+                                    ),
+                            )
+                        }),
                 )
                 .child(
                     Button::new("open-palette")
@@ -631,6 +637,13 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &[],
         ),
         cmd(
+            "Toggle note list",
+            Lucide::PanelLeftDashed,
+            Box::new(ToggleListPanel),
+            sc(8),
+            &["notes", "panel", "focus"],
+        ),
+        cmd(
             "Use light theme",
             Lucide::Sun,
             Box::new(UseLightTheme),
@@ -690,6 +703,15 @@ pub fn register_commands(cx: &mut App) {
         with_shell(cx, |s, w, cx| s.navigate(Route::Settings, w, cx))
     });
     cx.on_action(|_: &ToggleSidebar, cx| with_shell(cx, |s, _, cx| s.toggle_sidebar(cx)));
+    cx.on_action(|_: &ToggleListPanel, cx| {
+        with_shell(cx, |s, w, cx| {
+            // The list belongs to Notes: show the screen it toggles.
+            if s.route() != Route::Notes {
+                s.navigate(Route::Notes, w, cx);
+            }
+            s.toggle_list_panel(cx);
+        });
+    });
     cx.on_action(|_: &UseLightTheme, cx| {
         appearance::update(cx, |s| s.theme = ThemePreference::Light)
     });

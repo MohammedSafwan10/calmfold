@@ -13,6 +13,7 @@ pub mod assets;
 pub mod components;
 pub mod feedback;
 pub mod fonts;
+pub mod panel;
 pub mod theme;
 
 use std::path::PathBuf;

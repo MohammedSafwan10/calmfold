@@ -40,6 +40,7 @@ icon_assets!(
         NotebookText,
         Palette,
         PanelLeft,
+        PanelLeftDashed,
         Pin,
         PinOff,
         Plus,

@@ -44,6 +44,19 @@ impl CompletionProvider for NoteLinkCompletions {
     }
 }
 
+/// The part of `title` that the typed `query` matches as a case-insensitive prefix.
+fn matched_prefix<'a>(title: &'a str, query: &str) -> &'a str {
+    let mut end = 0;
+    let mut title_chars = title.char_indices();
+    for q in query.chars() {
+        match title_chars.next() {
+            Some((i, t)) if t.to_lowercase().eq(q.to_lowercase()) => end = i + t.len_utf8(),
+            _ => return "",
+        }
+    }
+    &title[..end]
+}
+
 impl NoteLinkCompletions {
     fn items(&self, text: &Rope, offset: usize, cx: &App) -> Vec<CompletionItem> {
         // Only the current line matters; avoid copying the whole document.
@@ -74,6 +87,10 @@ impl NoteLinkCompletions {
             .filter(|(id, _)| Some(*id) != self.current)
             .take(MAX_SUGGESTIONS)
             .map(|(_, title)| CompletionItem {
+                // The menu highlights `filter_text.len()` bytes from the start of the
+                // label. Highlight exactly the typed prefix, or nothing for a
+                // "contains" match (the editor's own query would be off by `[[`).
+                filter_text: Some(matched_prefix(&title, query).to_owned()),
                 label: title.clone(),
                 kind: Some(CompletionItemKind::REFERENCE),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
@@ -83,5 +100,18 @@ impl NoteLinkCompletions {
                 ..Default::default()
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matched_prefix;
+
+    #[test]
+    fn prefix_highlight_matches_only_typed_letters() {
+        assert_eq!(matched_prefix("Service log", "serv"), "Serv");
+        assert_eq!(matched_prefix("Service log", ""), "");
+        assert_eq!(matched_prefix("Old car", "car"), "");
+        assert_eq!(matched_prefix("Ölwechsel", "öl"), "Öl");
     }
 }

@@ -229,9 +229,9 @@ fn quick_add_creates_task_due_today_and_clears_input(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn sidebar_toggle_persists_layout(cx: &mut TestAppContext) {
     let app = launch(cx);
-    assert!(!cx.read(|cx| app.shell.read(cx).layout().sidebar_collapsed));
+    assert!(!cx.read(|cx| app.shell.read(cx).layout(cx).sidebar_collapsed));
     dispatch(&app, cx, ToggleSidebar);
-    assert!(cx.read(|cx| app.shell.read(cx).layout().sidebar_collapsed));
+    assert!(cx.read(|cx| app.shell.read(cx).layout(cx).sidebar_collapsed));
 
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
@@ -678,4 +678,52 @@ fn task_menu_sets_priority_and_due_through_submenus(cx: &mut TestAppContext) {
     click(&app, cx, menu);
     click_label(&app, cx, "Start");
     assert_eq!(task(cx).status(), TaskStatus::InProgress);
+}
+
+#[gpui_kit::test]
+fn note_list_panel_collapses_resizes_and_persists(cx: &mut TestAppContext) {
+    use keepstone_desktop::actions::ToggleListPanel;
+    use keepstone_desktop::ui_state::{LayoutState, NOTES_LIST, layout_file};
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let panel =
+        |cx: &mut TestAppContext| cx.read(|cx| app.shell.read(cx).layout(cx).panel(NOTES_LIST));
+    assert!(!panel(cx).collapsed);
+    assert_eq!(panel(cx).width, NOTES_LIST.default);
+
+    // The shortcut also switches to Notes, where the list lives.
+    dispatch(&app, cx, ToggleListPanel);
+    assert_eq!(route(&app, cx), Route::Notes);
+    assert!(panel(cx).collapsed);
+
+    // The title-bar toggle stays in place and reopens it.
+    click(&app, cx, "toggle-list-panel");
+    assert!(!panel(cx).collapsed);
+
+    // Drag the panel edge 60 px to the right.
+    use gpui_kit::test::TestEventExt;
+    cx.update_window(app.window, |_, window, cx| {
+        window.render_frame(cx);
+        let edge = window.find("notes-list-edge").bounds().center();
+        let to = edge + gpui_kit::point(gpui_kit::px(60.), gpui_kit::px(0.));
+        window.pointer_down(edge, gpui_kit::MouseButton::Left, cx);
+        // Like a real mouse: several moves (the first one only starts the drag).
+        for step in 1..=6 {
+            let p = edge + gpui_kit::point(gpui_kit::px(10. * step as f32), gpui_kit::px(0.));
+            window.pointer_move(p, Some(gpui_kit::MouseButton::Left), cx);
+        }
+        window.pointer_up(to, gpui_kit::MouseButton::Left, cx);
+    })
+    .expect("window");
+    cx.run_until_parked();
+    let width = panel(cx).width;
+    assert!(
+        (width - (NOTES_LIST.default + 60.)).abs() < 0.5,
+        "moves exactly with the pointer, no jump: {width}"
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    let saved = LayoutState::load(&layout_file(&app.paths.data_dir)).panel(NOTES_LIST);
+    assert!((saved.width - width).abs() < 0.5, "width saved to disk");
 }

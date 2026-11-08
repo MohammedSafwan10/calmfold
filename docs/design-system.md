@@ -68,6 +68,17 @@ Lucide (1,800+ icons, one consistent stroke style, ISC). Use
 
 Never confirm reversible actions. Never use "OK" or "Yes" as the confirm label.
 
+## Panels
+
+One layout grammar for every screen: **Sidebar (app nav) → List panel → Content → optional Inspector**.
+
+- List panels and inspectors use `keepstone_ui::panel::SidePanel`: drag the
+  inner edge to resize (follows the pointer exactly, clamped by its `PanelSpec`),
+  double-click the edge to reset, collapse/expand animates ~180 ms (snaps with reduced motion).
+- Width and collapsed state live in the shared `LayoutStore` (`layout.json`), one entry per panel id.
+- Toggle buttons sit in the title bar so they never move when a panel collapses.
+  Sidebar ⌘\\, note list ⌘⇧L. A new panel adds a `PanelSpec`, an action, and a title-bar toggle shown on its screen.
+
 ## Menus
 
 Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`):

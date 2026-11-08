@@ -33,8 +33,10 @@ use keepstone_storage::NoteSummary;
 use keepstone_ui::appearance;
 use keepstone_ui::components::{empty_state, section_label, segmented};
 use keepstone_ui::feedback::{self, Confirm};
+use keepstone_ui::panel::{PanelSide, SidePanel};
 
 use crate::library::{Library, LibraryEvent};
+use crate::ui_state::{LayoutStore, NOTES_LIST};
 use crate::views::Navigate;
 use crate::views::link_completion::NoteLinkCompletions;
 use crate::views::task_row::notify_err;
@@ -58,6 +60,7 @@ struct OpenNote {
 
 pub struct NotesView {
     library: Entity<Library>,
+    layout: Entity<LayoutStore>,
     search: Entity<InputState>,
     title: Entity<InputState>,
     body: Entity<EditorState>,
@@ -76,7 +79,12 @@ pub struct NotesView {
 impl EventEmitter<Navigate> for NotesView {}
 
 impl NotesView {
-    pub fn new(library: Entity<Library>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        library: Entity<Library>,
+        layout: Entity<LayoutStore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let search = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Search notes")
@@ -103,6 +111,7 @@ impl NotesView {
         });
 
         let subscriptions = vec![
+            cx.observe(&layout, |_, _, cx| cx.notify()),
             cx.subscribe(&library, |this, _, event, cx| {
                 if *event == LibraryEvent::NotesChanged {
                     this.reload_list(cx);
@@ -133,6 +142,7 @@ impl NotesView {
         ];
 
         let mut this = Self {
+            layout,
             library,
             search,
             title,
@@ -630,9 +640,7 @@ impl NotesView {
         };
 
         v_flex()
-            .w(rems(18.))
-            .flex_shrink_0()
-            .h_full()
+            .size_full()
             .border_r_1()
             .border_color(theme.border)
             .child(v_flex().px_3().pt_4().pb_2().gap_2().child(header).when(
@@ -930,10 +938,24 @@ impl Focusable for NotesView {
 
 impl Render for NotesView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let layout = self.layout.read(cx);
+        let panel = layout.panel(NOTES_LIST);
+        let toggles = layout.panel_toggles(NOTES_LIST);
+        let store = self.layout.clone();
         h_flex()
             .track_focus(&self.focus)
             .size_full()
-            .child(self.render_list(cx))
+            .child(
+                SidePanel::new(NOTES_LIST.id, PanelSide::Left)
+                    .width(panel.width, NOTES_LIST.default)
+                    .collapsed(panel.collapsed, toggles)
+                    .on_resize(move |width, _, cx| {
+                        store.update(cx, |layout, cx| {
+                            layout.set_panel_width(NOTES_LIST, width, cx)
+                        });
+                    })
+                    .child(self.render_list(cx)),
+            )
             .child(self.render_editor(window, cx))
     }
 }

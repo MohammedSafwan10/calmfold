@@ -46,6 +46,15 @@ scripts/screenshot.sh target/shot.png
 
 ## Log
 
+### 2026-11-08: Panels and menus
+
+- Reusable `SidePanel` (`crates/ui/src/panel.rs`) + shared `LayoutStore`
+  (`apps/desktop/src/ui_state.rs`); the notes list is the first user.
+  ⌘⇧L / title-bar button toggles it. Tested headless and with real keystrokes.
+- Row menus reorganized (submenus show current value, icons, right-click = same menu).
+- `[[` completion highlights exactly the typed prefix.
+- Git identity: global `Mohammed Safwan <itzmesafwan1@gmail.com>`.
+
 ### 2026-11-08: Links, autocomplete, task detail
 
 - Note body is now gpui-kit `Editor` (UI font, soft wrap, no gutter) with a

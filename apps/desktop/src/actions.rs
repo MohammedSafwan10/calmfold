@@ -16,6 +16,7 @@ actions!(
         GoTasks,
         GoSettings,
         ToggleSidebar,
+        ToggleListPanel,
         UseLightTheme,
         UseDarkTheme,
         UseSystemTheme,
@@ -45,6 +46,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     (shortcut!("3"), "Go to Tasks"),
     (shortcut!(","), "Open settings"),
     (shortcut!("\\"), "Toggle sidebar"),
+    (shortcut!("shift-l"), "Toggle note list"),
 ];
 
 pub fn modifier_label() -> &'static str {
@@ -65,6 +67,7 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new(shortcut!("3"), GoTasks, None),
         KeyBinding::new(shortcut!(","), GoSettings, None),
         KeyBinding::new(shortcut!("\\"), ToggleSidebar, None),
+        KeyBinding::new(shortcut!("shift-l"), ToggleListPanel, None),
         KeyBinding::new(shortcut!("q"), Quit, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -89,6 +92,7 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::action("Tasks", GoTasks),
             MenuItem::separator(),
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Toggle Note List", ToggleListPanel),
         ]),
     ]);
 }
