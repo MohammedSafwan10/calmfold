@@ -2,6 +2,7 @@
 //! reads data through [`crate::library::Library`].
 
 pub mod code_highlight;
+pub mod diagram;
 pub mod note_editor;
 pub mod notes;
 pub mod settings;

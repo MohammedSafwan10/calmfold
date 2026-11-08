@@ -137,6 +137,8 @@ Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`)
   editor's right-click menu are inline HTML (`<span style>`, `<u>`, `<mark>`),
   which Obsidian and GitHub also render.
 - `$$…$$` math renders (ratex); the caret inside shows the LaTeX.
+- ```` ```mermaid ```` renders as a diagram in theme colors on a transparent
+  background; the caret inside shows the source.
 - Fenced code is colored by language (`views/code_highlight.rs`); colors live in
   `keepstone.json` under `highlight.syntax`, so every theme defines its own.
 - The writing column is centered with a max width (Settings → Content width).

@@ -28,7 +28,8 @@ Calm, organized, not noisy; keyboard path; empty/error states; one source of tru
       counts follow edits, scrolls the match into view. UI test.
 - [x] Code-block syntax colors: syntect + two-face (~200 languages, aliases like py/ts/sh),
       cached per block, colors from the theme JSON `highlight.syntax` (GitHub-like palettes).
-- [ ] Mermaid diagrams rendered (`set_block_mermaid_provider`), raw on caret.
+- [x] Mermaid diagrams: `mermaid-rs-renderer` (pinned git rev, pure Rust) → themed SVG →
+      GPUI SVG raster, natural size, cached; source on caret; bad source stays text.
 - [ ] Spell-check (macOS native via `os-spellcheck`, squiggles + suggestions), with a Settings toggle.
 
 ## 3. Settings → Appearance, themes, typography

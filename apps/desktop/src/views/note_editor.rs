@@ -110,6 +110,7 @@ pub struct NoteEditor {
     /// Rendered formulas by LaTeX source; cleared when color or scale changes.
     math_cache: Rc<RefCell<HashMap<String, MathRender>>>,
     code: Rc<crate::views::code_highlight::CodeHighlighter>,
+    diagrams: Rc<crate::views::diagram::Diagrams>,
     scale: Rc<Cell<f32>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -142,6 +143,11 @@ impl NoteEditor {
             math_cache: Rc::new(RefCell::new(HashMap::new())),
             code: crate::views::code_highlight::CodeHighlighter::new(
                 cx.theme().highlight_theme.clone(),
+            ),
+            diagrams: crate::views::diagram::Diagrams::new(
+                cx.svg_renderer(),
+                crate::views::diagram::DiagramColors::from_theme(cx.theme()),
+                window.scale_factor(),
             ),
             scale: Rc::new(Cell::new(window.scale_factor())),
             _subscriptions: subscriptions,
@@ -359,6 +365,10 @@ impl NoteEditor {
     fn apply_style(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.math_cache.borrow_mut().clear();
         self.code.set_theme(cx.theme().highlight_theme.clone());
+        self.diagrams.update(
+            crate::views::diagram::DiagramColors::from_theme(cx.theme()),
+            window.scale_factor(),
+        );
         self.scale.set(window.scale_factor());
         let style = (!self.source_mode).then(|| syntax_style(cx.theme()));
         let em = cx.theme().font_size.as_f32() * MATH_EM_SCALE;
@@ -385,7 +395,9 @@ impl NoteEditor {
                 em_in.set(cx.theme().font_size.as_f32() * MATH_EM_SCALE);
             }));
         let code = self.code.clone();
+        let diagrams = self.diagrams.clone();
         self.editor.update(cx, |e, _| {
+            e.set_block_mermaid_provider(move |src| diagrams.render(src));
             e.set_code_highlighter(move |lang, src| code.highlight(lang, src));
             e.set_code_languages(
                 crate::views::code_highlight::COMMON_LANGUAGES
@@ -766,9 +778,13 @@ impl Focusable for NoteEditor {
 impl Render for NoteEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.scale.get() != window.scale_factor() {
-            // Moved to a display with another scale: re-rasterize formulas sharply.
+            // Moved to a display with another scale: re-rasterize sharply.
             self.math_cache.borrow_mut().clear();
             self.scale.set(window.scale_factor());
+            self.diagrams.update(
+                crate::views::diagram::DiagramColors::from_theme(cx.theme()),
+                window.scale_factor(),
+            );
         }
         let theme = cx.theme();
         let link_menu = self
