@@ -52,6 +52,8 @@ pub fn start(
 ) -> Result<(AnyWindowHandle, Entity<AppShell>)> {
     gpui_kit::init(cx);
     keepstone_ui::init(paths.appearance.clone(), cx);
+    // The note editor's own keys first: ours are bound after, so they win on a tie.
+    zorite_editor::bind_keys(cx);
     actions::bind(cx);
     actions::set_menus(cx);
     shell::register_commands(cx);
@@ -90,13 +92,13 @@ pub fn start(
         window.update(cx, |_, window, cx| {
             shell.update(cx, |s, cx| s.navigate(route, window, cx))
         })?;
-        // KEEPSTONE_DEV_PREVIEW=1 with route=notes: open the first note in Preview.
-        if route == views::Route::Notes && std::env::var_os("KEEPSTONE_DEV_PREVIEW").is_some() {
+        // KEEPSTONE_DEV_SOURCE=1 with route=notes: open the first note as Markdown source.
+        if route == views::Route::Notes && std::env::var_os("KEEPSTONE_DEV_SOURCE").is_some() {
             window.update(cx, |_, window, cx| {
                 let notes = shell.read(cx).notes().clone();
                 notes.update(cx, |n, cx| {
                     n.ensure_selection(window, cx);
-                    n.toggle_mode(window, cx);
+                    n.toggle_source_mode(window, cx);
                 });
             })?;
         }

@@ -17,7 +17,7 @@ actions!(
         GoSettings,
         ToggleSidebar,
         ToggleListPanel,
-        TogglePreview,
+        ToggleMarkdownSource,
         OpenDailyNote,
         NewProject,
         ImportNotes,
@@ -127,7 +127,6 @@ pub const SHORTCUTS: &[Shortcut] = shortcuts![
     Navigate, "3", "Tasks", GoTasks;
     View, "\\", "Toggle sidebar", ToggleSidebar;
     View, "shift-l", "Toggle note list", ToggleListPanel;
-    View, "e", "Edit / preview note", TogglePreview;
 ];
 
 /// Formatting shortcuts, active only while typing in a note (Bear/Notion keys).
@@ -135,7 +134,7 @@ pub const FORMAT_SHORTCUTS: &[Shortcut] = shortcuts![
     General, "b", "Bold", FormatBold;
     General, "i", "Italic", FormatItalic;
     General, "shift-x", "Strikethrough", FormatStrikethrough;
-    General, "shift-c", "Inline code", FormatCode;
+    General, "e", "Inline code", FormatCode;
     General, "shift-h", "Highlight", FormatHighlight;
     General, "shift-k", "Link", FormatLink;
     General, "alt-1", "Heading 1", FormatHeading1;
@@ -148,10 +147,10 @@ pub const FORMAT_SHORTCUTS: &[Shortcut] = shortcuts![
     General, "enter", "Check / uncheck item", ToggleCheckbox;
 ];
 
-/// Built-in editing keys of the text editor (gpui-kit), shown for reference only.
+/// Built-in editing keys of the note editor (zorite-editor), shown for reference only.
 pub const EDITING_SHORTCUTS: &[(&str, &str)] = &[
-    (shortcut!("f"), "Find in note"),
     (shortcut!("z"), "Undo"),
+    (shortcut!("shift-z"), "Redo"),
     (shortcut!("a"), "Select all"),
 ];
 

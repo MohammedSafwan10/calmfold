@@ -500,27 +500,34 @@ fn typing_double_bracket_suggests_and_completes_note_titles(cx: &mut TestAppCont
     press(&app, cx, "enter");
     type_text(&app, cx, "See [[serv");
 
-    let editor = cx.read(|cx| app.shell.read(cx).notes().read(cx).body_editor().clone());
-    let (open, labels) = cx.read(|cx| {
-        let menu = editor.read(cx).completion_menu_state();
-        (
-            menu.open,
-            menu.items
-                .iter()
-                .map(|i| i.label.clone())
-                .collect::<Vec<_>>(),
-        )
-    });
-    assert!(open, "completion menu opens inside [[");
-    assert_eq!(labels, ["Service log"]);
+    let editor = cx.read(|cx| app.shell.read(cx).notes().read(cx).note_editor().clone());
+    let labels = |cx: &mut TestAppContext| {
+        cx.read(|cx| editor.read(cx).link_suggestions().map(<[String]>::to_vec))
+    };
+    assert_eq!(
+        labels(cx),
+        Some(vec!["Service log".to_owned()]),
+        "the menu opens inside [["
+    );
 
     press(&app, cx, "enter");
     let body = cx.read(|cx| app.shell.read(cx).notes().read(cx).body_text(cx));
-    assert_eq!(body, "See [[Service log]]");
+    assert_eq!(
+        body, "See [[Service log]]",
+        "Enter accepts instead of a new line"
+    );
 
     // Outside a link, nothing is suggested.
     type_text(&app, cx, " and more");
-    assert!(!cx.read(|cx| editor.read(cx).completion_menu_state().open));
+    assert_eq!(labels(cx), None);
+
+    // Escape closes the menu and keeps the typed text.
+    type_text(&app, cx, " [[Ser");
+    assert!(labels(cx).is_some());
+    press(&app, cx, "escape");
+    assert_eq!(labels(cx), None);
+    let body = cx.read(|cx| app.shell.read(cx).notes().read(cx).body_text(cx));
+    assert_eq!(body, "See [[Service log]] and more [[Ser");
 }
 
 #[gpui_kit::test]
@@ -1219,27 +1226,29 @@ fn long_notes_scroll_the_page_not_the_editor(cx: &mut TestAppContext) {
     .expect("window");
     cx.run_until_parked();
 
-    // Row counts are known after layout; the editor settles on the next frame.
-    let (editor, page, window_height) = cx
+    // Row counts are known after layout.
+    let (body, tail, page, window_height) = cx
         .update_window(app.window, |_, window, cx| {
             window.render_frame(cx);
             window.render_frame(cx);
             (
                 window.find("note-body").bounds(),
+                window.find("note-body-tail").bounds(),
                 window.find("note-scroll").bounds(),
                 window.bounds().size.height,
             )
         })
         .expect("window");
     let font = cx.read(|cx| Theme::global(cx).font_size);
-    let rows_shown = editor.size.height / (font * 1.5);
+    let text_height = body.size.height - tail.size.height;
+    let rows_shown = text_height / (font * zorite_editor::LINE_HEIGHT_RATIO);
     assert!(
-        rows_shown >= 81.,
-        "editor is as tall as its 81 rows, so it never scrolls inside: {rows_shown}"
+        rows_shown >= 80.,
+        "editor is as tall as its 80 lines, so it never scrolls inside: {rows_shown}"
     );
     assert!(
-        editor.size.height > page.size.height && page.size.height <= window_height,
-        "the page is the one scroll area: editor {editor:?}, page {page:?}"
+        body.size.height > page.size.height && page.size.height <= window_height,
+        "the page is the one scroll area: editor {body:?}, page {page:?}"
     );
 }
 
@@ -1289,4 +1298,213 @@ fn today_shows_the_week_and_the_next_seven_days(cx: &mut TestAppContext) {
         );
     })
     .expect("window");
+}
+
+// ---- Live-preview editor (zorite-editor, ADR 0004) ----
+
+fn note_editor(
+    app: &App,
+    cx: &mut TestAppContext,
+) -> Entity<keepstone_desktop::views::note_editor::NoteEditor> {
+    cx.read(|cx| app.shell.read(cx).notes().read(cx).note_editor().clone())
+}
+
+fn open_note_with(
+    app: &App,
+    cx: &mut TestAppContext,
+    title: &str,
+    body: &str,
+) -> keepstone_core::NoteId {
+    let lib = library(app, cx);
+    let id = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let id = l.create_note(title, cx).expect("create");
+            l.edit_note(id, title, body, cx).expect("edit");
+            id
+        })
+    });
+    cx.update_window(app.window, |_, window, cx| {
+        app.shell.update(cx, |s, cx| s.open_note(id, window, cx));
+        window.render_frame(cx);
+    })
+    .expect("window");
+    cx.run_until_parked();
+    id
+}
+
+#[gpui_kit::test]
+fn opening_and_saving_never_changes_a_notes_markdown(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    // Things block editors are known to rewrite: blank lines, loose lists,
+    // trailing spaces, tables, HTML, math, CRLF, no final newline.
+    let samples = [
+        "",
+        "Plain line",
+        "# Title\n\n\n\nThree blank lines above.\n",
+        "- a\n\n- loose list\n  - nested\n\n1) other\n2) numbering\n",
+        "Hard break with two spaces  \nnext line\t\ttabs",
+        "| A | B |\n|:--|--:|\n| 1 | 2 |\n\n<!-- table:striped -->\n",
+        "**bold** _it_ ~~s~~ ==hi== `code` <u>u</u> <span style=\"color:#f00\">red</span>",
+        "```rust\nfn main() {}\n```\n~~~\nraw\n~~~",
+        "> [!NOTE]\n> callout\n\n---\n\n[^1]: foot",
+        "$$\nx^2 + y^2\n$$\n\nInline $a+b$ math.",
+        "Windows\r\nline endings\r\n",
+        "Emoji 😀, accents é, RTL שלום, [[Link|alias]] #tag/nested",
+    ];
+    let editor = note_editor(&app, cx);
+    for sample in samples {
+        cx.update(|cx| editor.update(cx, |e, cx| e.set_note(None, sample, cx)));
+        cx.update_window(app.window, |_, window, cx| window.render_frame(cx))
+            .expect("window");
+        let back = cx.read(|cx| editor.read(cx).text(cx));
+        assert_eq!(back, sample, "loaded text must come back byte-identical");
+    }
+
+    // And through the real open → type → save path.
+    let id = open_note_with(&app, cx, "Round trip", samples[3]);
+    cx.update_window(app.window, |_, window, cx| {
+        app.shell
+            .read(cx)
+            .notes()
+            .clone()
+            .update(cx, |n, cx| n.focus_body(window, cx));
+    })
+    .expect("window");
+    press(&app, cx, &secondary("end"));
+    press(&app, cx, "ctrl-end");
+    type_text(&app, cx, "x");
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    let saved = cx.read(|cx| {
+        app.shell
+            .read(cx)
+            .library()
+            .read(cx)
+            .note(id)
+            .expect("load")
+            .expect("note")
+            .body()
+            .to_owned()
+    });
+    assert_eq!(saved, format!("{}x", samples[3]));
+}
+
+#[gpui_kit::test]
+fn selecting_text_shows_a_format_bar_that_keeps_focus(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    open_note_with(&app, cx, "Bar", "make this bold");
+    let editor = note_editor(&app, cx);
+    cx.update_window(app.window, |_, window, cx| {
+        editor.update(cx, |e, cx| e.focus(window, cx));
+        window.render_frame(cx);
+    })
+    .expect("window");
+    let bar_open = |cx: &mut TestAppContext| cx.read(|cx| editor.read(cx).is_selection_bar_open());
+    assert!(!bar_open(cx), "no bar without a selection");
+
+    press(&app, cx, &secondary("a"));
+    assert!(bar_open(cx), "selecting shows the bar");
+
+    click(&app, cx, "fmt-bold");
+    let body = cx.read(|cx| editor.read(cx).text(cx));
+    assert_eq!(body, "**make this bold**");
+    let focused = cx
+        .update_window(app.window, |_, window, cx| {
+            editor.read(cx).is_focused(window, cx)
+        })
+        .expect("window");
+    assert!(focused, "the bar never takes focus from the text");
+
+    // The change is saved like typing.
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert!(all_note_titles(&app, cx).contains(&"Bar".to_owned()));
+
+    press(&app, cx, "escape");
+    assert!(!bar_open(cx), "Escape hides the bar");
+    press(&app, cx, &secondary("a"));
+    assert!(bar_open(cx));
+    type_text(&app, cx, "new");
+    assert!(!bar_open(cx), "typing over the selection hides it");
+}
+
+#[gpui_kit::test]
+fn markdown_source_mode_toggles_without_changing_text(cx: &mut TestAppContext) {
+    use keepstone_desktop::actions::ToggleMarkdownSource;
+    let app = launch(cx);
+    open_note_with(&app, cx, "Source", "# Heading\n**bold**");
+    let notes = cx.read(|cx| app.shell.read(cx).notes().clone());
+    let source = |cx: &mut TestAppContext| cx.read(|cx| notes.read(cx).is_source_mode(cx));
+    assert!(!source(cx), "live preview is the default");
+    dispatch(&app, cx, ToggleMarkdownSource);
+    assert!(source(cx));
+    assert_eq!(
+        cx.read(|cx| notes.read(cx).body_text(cx)),
+        "# Heading\n**bold**"
+    );
+    dispatch(&app, cx, ToggleMarkdownSource);
+    assert!(!source(cx));
+}
+
+#[gpui_kit::test]
+fn clicking_links_and_tags_in_the_editor_navigates(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    let car = open_note_with(&app, cx, "Car", "Insurance");
+    open_note_with(&app, cx, "Trip", "Drive the [[Car]] to #coast");
+    let editor = note_editor(&app, cx);
+    let engine = cx.read(|cx| editor.read(cx).engine().clone());
+    let notes = cx.read(|cx| app.shell.read(cx).notes().clone());
+
+    cx.update(|cx| {
+        engine.update(cx, |_, cx| {
+            cx.emit(zorite_editor::EditorEvent::OpenWikiLink("coast".into()))
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| notes.read(cx).tag_filter().map(str::to_owned)),
+        Some("coast".to_owned()),
+        "a #tag filters the list"
+    );
+
+    cx.update(|cx| {
+        engine.update(cx, |_, cx| {
+            cx.emit(zorite_editor::EditorEvent::OpenWikiLink("Car".into()))
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| notes.read(cx).open_note_id()),
+        Some(car),
+        "a [[link]] opens the note"
+    );
+}
+
+#[gpui_kit::test]
+fn arrow_keys_move_through_math_blocks(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    open_note_with(&app, cx, "Math", "above\n$$\nx^2\n$$\nbelow");
+    let editor = note_editor(&app, cx);
+    let engine = cx.read(|cx| editor.read(cx).engine().clone());
+    cx.update_window(app.window, |_, window, cx| {
+        editor.update(cx, |e, cx| e.focus(window, cx));
+        window.render_frame(cx);
+    })
+    .expect("window");
+    let cursor = |cx: &mut TestAppContext| cx.read(|cx| engine.read(cx).cursor());
+    assert_eq!(cursor(cx), 0);
+    press(&app, cx, "down");
+    let inside = cursor(cx);
+    assert!(
+        (6..=15).contains(&inside),
+        "the caret enters the formula instead of stopping: {inside}"
+    );
+    for _ in 0..4 {
+        press(&app, cx, "down");
+    }
+    assert!(
+        cursor(cx) >= "above\n$$\nx^2\n$$\n".len(),
+        "and leaves it again"
+    );
 }

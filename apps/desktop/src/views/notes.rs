@@ -1,4 +1,7 @@
-//! Notes screen: searchable list on the left, editor or preview on the right.
+//! Notes screen: searchable list on the left, the note on the right.
+//!
+//! The body is a live-preview Markdown editor ([`NoteEditor`]); trashed notes
+//! show read-only rendered Markdown.
 //!
 //! Editor state machine:
 //!
@@ -11,25 +14,23 @@
 //! Content is always flushed before another note opens, so switching notes
 //! can never lose typing.
 
-use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{BufferPoint, Editor, EditorState, Input, InputEvent, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, ClickEvent, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    Task, TestSupportExt as _, Window, div, px, rems,
+    Focusable, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
+    TestSupportExt as _, Window, div, px, rems,
 };
 use keepstone_core::NoteId;
-use keepstone_core::format::{self, Block, Inline};
 use keepstone_core::links::{note_link_url, parse_note_link_url};
 use keepstone_storage::NoteSummary;
 use keepstone_ui::appearance;
@@ -40,22 +41,16 @@ use keepstone_ui::panel::{PanelSide, SidePanel};
 use crate::actions::{
     FormatBold, FormatBullets, FormatChecklist, FormatCode, FormatHeading1, FormatHeading2,
     FormatHeading3, FormatHighlight, FormatItalic, FormatLink, FormatNumbers, FormatParagraph,
-    FormatQuote, FormatStrikethrough, ToggleCheckbox,
+    FormatQuote, FormatStrikethrough,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::ui_state::{LayoutStore, NOTES_LIST};
 use crate::views::Navigate;
-use crate::views::link_completion::NoteLinkCompletions;
+use crate::views::note_editor::{NoteEditor, NoteEditorEvent};
 use crate::views::task_row::notify_err;
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(500);
 const SEARCH_LIMIT: usize = 200;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Edit,
-    Preview,
-}
 
 /// The note currently loaded in the editor.
 struct OpenNote {
@@ -70,22 +65,17 @@ pub struct NotesView {
     layout: Entity<LayoutStore>,
     search: Entity<InputState>,
     title: Entity<InputState>,
-    body: Entity<EditorState>,
+    body: Entity<NoteEditor>,
     list: Vec<NoteSummary>,
     load_error: bool,
     show_trash: bool,
     /// Shows only notes with this tag (lower-case, no `#`).
     tag_filter: Option<String>,
     mentions: Vec<NoteSummary>,
-    /// The note page's single scroll area (the editor never scrolls itself).
+    /// The note page's single scroll area (the editor grows with its text).
     page_scroll: ScrollHandle,
-    /// Body rows and caret row from the last frame, to size the editor to its
-    /// content and keep the caret in view.
-    body_rows: usize,
-    caret_row: usize,
     open: Option<OpenNote>,
     backlinks: Vec<NoteSummary>,
-    mode: Mode,
     dirty: bool,
     pending_save: Option<Task<()>>,
     focus: FocusHandle,
@@ -112,31 +102,10 @@ impl NotesView {
                 // Rejects keystrokes past the domain limit, so a save can never fail on length.
                 .validate(|text, _| text.chars().count() <= keepstone_core::MAX_TITLE_CHARS)
         });
-        // A text editor (not a plain textarea) so `[[` can offer note titles.
-        let body = cx.new(|cx| {
-            let mut state = EditorState::new(window, cx)
-                .line_number(false)
-                .folding(false)
-                // Prose, not code: no vertical indent guide lines.
-                .indent_guides(false)
-                .soft_wrap(true)
-                .placeholder("Start writing. Type [[ to link another note.");
-            state.lsp_mut().completion_provider = Some(Rc::new(NoteLinkCompletions {
-                library: library.downgrade(),
-                current: None,
-            }));
-            state
-        });
+        let body = cx.new(|cx| NoteEditor::new(library.downgrade(), window, cx));
 
         let subscriptions = vec![
             cx.observe(&layout, |_, _, cx| cx.notify()),
-            // Typing changes rows or the caret line: resize the editor and follow
-            // the caret. Other editor notifications (blink) don't re-render this view.
-            cx.observe(&body, |this, _, cx| {
-                if this.body_metrics(cx) != (this.body_rows, this.caret_row) {
-                    cx.notify();
-                }
-            }),
             cx.subscribe(&library, |this, _, event, cx| {
                 if *event == LibraryEvent::NotesChanged {
                     this.reload_list(cx);
@@ -149,20 +118,25 @@ impl NotesView {
             }),
             cx.subscribe_in(&title, window, |this, _, event, window, cx| match event {
                 InputEvent::Change => this.schedule_save(window, cx),
-                InputEvent::PressEnter { .. } => {
-                    this.body.update(cx, |body, cx| body.focus(window, cx));
-                }
+                InputEvent::PressEnter { .. } => this.focus_body(window, cx),
                 InputEvent::Blur => {
                     _ = this.flush(window, cx);
                 }
                 _ => {}
             }),
             cx.subscribe_in(&body, window, |this, _, event, window, cx| match event {
-                InputEvent::Change => this.schedule_save(window, cx),
-                InputEvent::Blur => {
+                NoteEditorEvent::Changed => this.schedule_save(window, cx),
+                // Layout is known after the next paint; scroll then.
+                NoteEditorEvent::CaretMoved => cx.on_next_frame(window, |_, window, cx| {
+                    cx.on_next_frame(window, |this, _, cx| this.follow_caret(cx));
+                }),
+                NoteEditorEvent::Blurred => {
                     _ = this.flush(window, cx);
                 }
-                _ => {}
+                NoteEditorEvent::OpenNote(target) => this.follow_link(target, window, cx),
+                NoteEditorEvent::OpenTag(tag) => {
+                    this.set_tag_filter(Some(tag.clone()), window, cx);
+                }
             }),
         ];
 
@@ -178,11 +152,8 @@ impl NotesView {
             tag_filter: None,
             mentions: Vec::new(),
             page_scroll: ScrollHandle::new(),
-            body_rows: 0,
-            caret_row: 0,
             open: None,
             backlinks: Vec::new(),
-            mode: Mode::Edit,
             dirty: false,
             pending_save: None,
             focus: cx.focus_handle(),
@@ -201,7 +172,6 @@ impl NotesView {
         match self.library.update(cx, |lib, cx| lib.create_note("", cx)) {
             Ok(id) => {
                 self.open_note(id, window, cx);
-                self.mode = Mode::Edit;
                 self.title.update(cx, |t, cx| t.focus(window, cx));
             }
             Err(err) => notify_err::<()>(Err(err), window, cx),
@@ -237,14 +207,8 @@ impl NotesView {
         };
         self.title
             .update(cx, |t, cx| t.set_value(title_text.to_owned(), window, cx));
-        let library = self.library.downgrade();
-        self.body.update(cx, |b, cx| {
-            b.set_value(note.body().to_owned(), window, cx);
-            b.lsp_mut().completion_provider = Some(Rc::new(NoteLinkCompletions {
-                library,
-                current: Some(id),
-            }));
-        });
+        self.body
+            .update(cx, |b, cx| b.set_note(Some(id), note.body(), cx));
         self.open = Some(OpenNote {
             id,
             title: note.title().to_owned(),
@@ -253,7 +217,6 @@ impl NotesView {
         });
         self.dirty = false;
         self.page_scroll.set_offset(gpui_kit::point(px(0.), px(0.)));
-        self.caret_row = 0;
         self.reload_backlinks(cx);
         cx.notify();
     }
@@ -272,8 +235,8 @@ impl NotesView {
         self.body.update(cx, |b, cx| b.focus(window, cx));
     }
 
-    /// The body editor (tests inspect its completion menu).
-    pub fn body_editor(&self) -> &Entity<EditorState> {
+    /// The body editor (tests inspect its link menu and selection bar).
+    pub fn note_editor(&self) -> &Entity<NoteEditor> {
         &self.body
     }
 
@@ -289,7 +252,7 @@ impl NotesView {
 
     /// Current editor body text (for tests and diagnostics).
     pub fn body_text(&self, cx: &App) -> String {
-        self.body.read(cx).value().to_string()
+        self.body.read(cx).text(cx)
     }
 
     pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -357,50 +320,12 @@ impl NotesView {
         self.tag_filter.as_deref()
     }
 
-    /// Applies a Markdown edit to the body at the current selection.
-    pub fn format_with(
-        &mut self,
-        f: impl FnOnce(&str, std::ops::Range<usize>) -> format::Edit,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.mode != Mode::Edit || self.open.as_ref().is_none_or(|o| o.trashed) {
-            return;
-        }
-        let (doc, sel) = {
-            let body = self.body.read(cx);
-            (body.value().to_string(), body.selected_range())
-        };
-        let edit = f(&doc, sel);
-        if edit.range.start == edit.range.end && edit.text.is_empty() {
-            return;
-        }
-        self.body.update(cx, |b, cx| {
-            b.set_selected_range(edit.range.clone(), cx);
-            b.replace(edit.text.clone(), window, cx);
-            b.set_selected_range(edit.selection.clone(), cx);
-            b.focus(window, cx);
-        });
-        self.schedule_save(window, cx);
-    }
-
-    pub fn format_inline(&mut self, style: Inline, window: &mut Window, cx: &mut Context<Self>) {
-        self.format_with(
-            |doc, sel| format::toggle_inline(doc, sel, style),
-            window,
-            cx,
-        );
-    }
-
-    pub fn format_block(&mut self, block: Block, window: &mut Window, cx: &mut Context<Self>) {
-        self.format_with(|doc, sel| format::set_block(doc, sel, block), window, cx);
-    }
-
     /// "Aa": the six everyday styles first, then Headings ▸ and Lists ▸.
     /// Items dispatch the same actions as the shortcuts, into the editor, so the
-    /// menu also teaches the keys.
+    /// menu also teaches the keys. (Selecting text shows the same inline styles
+    /// in a small bar above it.)
     fn format_menu(&self, cx: &Context<Self>) -> impl IntoElement {
-        let editor = self.body.focus_handle(cx);
+        let editor = self.body.read(cx).focus_handle(cx);
         Button::new("note-format")
             .ghost()
             .small()
@@ -472,9 +397,10 @@ impl NotesView {
             })
     }
 
-    /// "…" for the open note: pin, export, trash (same order as every row menu).
+    /// "…" for the open note: pin, view, export, trash (open → change → destructive).
     fn note_menu(&self, pinned: bool, cx: &Context<Self>) -> impl IntoElement {
         let view = cx.entity().downgrade();
+        let source = self.body.read(cx).is_source_mode();
         Button::new("note-more")
             .ghost()
             .small()
@@ -492,6 +418,10 @@ impl NotesView {
                 } else {
                     run("Pin to top", Lucide::Pin, |this, w, cx| this.toggle_pin_open(w, cx))
                 })
+                .item(
+                    run("Show Markdown source", Lucide::Code, |this, w, cx| this.toggle_source_mode(w, cx))
+                        .checked(source),
+                )
                 .item(run("Export all as Markdown…", Lucide::FolderOutput, |this, w, cx| this.export_notes(w, cx)))
                 .separator()
                 .item(run("Move to trash", Lucide::Trash, |this, w, cx| {
@@ -508,26 +438,21 @@ impl NotesView {
         }
     }
 
-    /// Switches between editing and the rendered preview (⌘E).
-    pub fn toggle_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Shows the raw Markdown instead of the live preview (and back).
+    pub fn toggle_source_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.open.as_ref().is_none_or(|o| o.trashed) {
             return;
         }
-        _ = self.flush(window, cx);
-        self.mode = match self.mode {
-            Mode::Edit => Mode::Preview,
-            Mode::Preview => Mode::Edit,
-        };
-        if self.mode == Mode::Edit {
-            self.body.update(cx, |b, cx| b.focus(window, cx));
-        } else {
-            window.focus(&self.focus, cx);
-        }
+        self.body.update(cx, |b, cx| {
+            let on = !b.is_source_mode();
+            b.set_source_mode(on, window, cx);
+            b.focus(window, cx);
+        });
         cx.notify();
     }
 
-    pub fn is_previewing(&self) -> bool {
-        self.mode == Mode::Preview
+    pub fn is_source_mode(&self, cx: &App) -> bool {
+        self.body.read(cx).is_source_mode()
     }
 
     /// Opens (creating if needed) today's daily note.
@@ -544,7 +469,7 @@ impl NotesView {
             self.tag_filter = None;
             self.reload_list(cx);
             self.open_note(id, window, cx);
-            self.body.update(cx, |b, cx| b.focus(window, cx));
+            self.focus_body(window, cx);
         }
     }
 
@@ -618,7 +543,7 @@ impl NotesView {
         };
         let id = open.id;
         let title = self.title.read(cx).value().to_string();
-        let body = self.body.read(cx).value().to_string();
+        let body = self.body.read(cx).text(cx);
         self.library
             .update(cx, |lib, cx| lib.edit_note(id, &title, &body, cx))?;
         self.dirty = false;
@@ -1100,24 +1025,6 @@ impl NotesView {
         let trashed = open.trashed;
         let pinned = open.pinned;
 
-        // One icon toggle instead of an Edit/Preview label pair: it shows what you
-        // switch *to* (eye = preview, pencil = edit). ⌘E does the same.
-        let previewing = self.mode == Mode::Preview;
-        let mode_toggle = Button::new("note-mode")
-            .ghost()
-            .small()
-            .icon(if previewing {
-                Lucide::Pencil
-            } else {
-                Lucide::Eye
-            })
-            .tooltip_with_action(
-                if previewing { "Edit" } else { "Preview" },
-                &crate::actions::TogglePreview,
-                None,
-            )
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_mode(window, cx)));
-
         let toolbar = h_flex()
             .justify_between()
             .items_center()
@@ -1152,24 +1059,16 @@ impl NotesView {
                             .on_click(cx.listener(Self::delete_open)),
                     )
                 } else {
-                    // Three controls: format, edit/preview, and "…" for the rest.
-                    this.when(self.mode == Mode::Edit, |this| {
-                        this.child(self.format_menu(cx))
-                    })
-                    .child(mode_toggle)
-                    .child(self.note_menu(pinned, cx))
+                    // Two controls: format, and "…" for the rest.
+                    this.child(self.format_menu(cx))
+                        .child(self.note_menu(pinned, cx))
                 }
             }));
 
-        let preview = self.mode == Mode::Preview || trashed;
-        let body_text = self.body.read(cx).value();
         let title_text = self.title.read(cx).value();
-
-        // One centered column per child, so the scroll handle knows where the
-        // editor (child 1) is and can keep the caret in view.
+        // One centered column per child; the editor is as tall as its text, so
+        // the page is the only scroll area.
         let column = || div().w_full().max_w(width).mx_auto().px_8();
-        let line_height = theme.font_size * 1.5; // gpui-kit editor rows are 1.5× the font size
-        let editor_height = self.editor_height(line_height);
 
         let page = v_flex()
             .id("note-scroll")
@@ -1179,8 +1078,13 @@ impl NotesView {
             .overflow_y_scroll()
             .pt_6()
             .pb_8()
+            // Floating menus belong to a spot in the text: close them when it moves away.
+            .on_scroll(cx.listener(|this, _, _, cx| {
+                this.body.update(cx, |b, cx| b.close_overlays(cx));
+            }))
             .map(|this| {
-                if preview {
+                if trashed {
+                    let body_text = self.body.read(cx).text(cx);
                     this.child(column().pb_4().child(
                         div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(
                             if title_text.is_empty() {
@@ -1194,88 +1098,20 @@ impl NotesView {
                 } else {
                     this.child(
                         column().pb_2().child(
-                            Input::new(&self.title)
-                                .appearance(false)
-                                .large()
-                                .text_2xl()
-                                .font_weight(FontWeight::SEMIBOLD),
-                        ),
-                    )
-                    .child(
-                        column().child(
-                            // Format shortcuts (⌘B, ⌘⌥1, …) are bound to this context.
+                            // Pull the field's inner padding out so the title's
+                            // first letter lines up with the body's.
                             div()
-                                .id("note-body")
-                                .test_support()
-                                .key_context(crate::actions::NOTE_EDITOR_CONTEXT)
-                                .on_action(cx.listener(|this, _: &FormatBold, w, cx| {
-                                    this.format_inline(Inline::Bold, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatItalic, w, cx| {
-                                    this.format_inline(Inline::Italic, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatStrikethrough, w, cx| {
-                                    this.format_inline(Inline::Strikethrough, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatCode, w, cx| {
-                                    this.format_inline(Inline::Code, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatHighlight, w, cx| {
-                                    this.format_inline(Inline::Highlight, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatLink, w, cx| {
-                                    this.format_with(format::insert_link, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatHeading1, w, cx| {
-                                    this.format_block(Block::Heading(1), w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatHeading2, w, cx| {
-                                    this.format_block(Block::Heading(2), w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatHeading3, w, cx| {
-                                    this.format_block(Block::Heading(3), w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatParagraph, w, cx| {
-                                    this.format_block(Block::Paragraph, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatBullets, w, cx| {
-                                    this.format_block(Block::Bullet, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatNumbers, w, cx| {
-                                    this.format_block(Block::Numbered, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatChecklist, w, cx| {
-                                    this.format_block(Block::Checklist, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &FormatQuote, w, cx| {
-                                    this.format_block(Block::Quote, w, cx)
-                                }))
-                                .on_action(cx.listener(|this, _: &ToggleCheckbox, w, cx| {
-                                    this.format_with(
-                                        |doc, sel| {
-                                            format::toggle_checkbox(doc, sel.start).unwrap_or(
-                                                format::Edit {
-                                                    range: sel.clone(),
-                                                    text: doc[sel.clone()].to_owned(),
-                                                    selection: sel,
-                                                },
-                                            )
-                                        },
-                                        w,
-                                        cx,
-                                    )
-                                }))
+                                .ml(-gpui_kit::component::Size::Large.input_px())
                                 .child(
-                                    Editor::new(&self.body)
+                                    Input::new(&self.title)
                                         .appearance(false)
-                                        // Notes are prose: the UI font, not the code font.
-                                        .font_family(theme.font_family.clone())
-                                        .text_size(theme.font_size)
-                                        // Exactly as tall as the text: the page scrolls, not the editor.
-                                        .h(editor_height),
+                                        .large()
+                                        .text_2xl()
+                                        .font_weight(FontWeight::SEMIBOLD),
                                 ),
                         ),
                     )
+                    .child(column().child(self.body.clone()))
                 }
             })
             .when(!self.backlinks.is_empty(), |this| {
@@ -1286,9 +1122,6 @@ impl NotesView {
             })
             .test_support();
 
-        if !preview {
-            self.follow_caret(line_height, cx);
-        }
         let _ = window;
         v_flex()
             .flex_1()
@@ -1298,61 +1131,31 @@ impl NotesView {
             .child(page)
     }
 
-    /// Height that fits every wrapped row, so the editor never scrolls on its
-    /// own. Re-renders once more when the row count changed (wrapping happens
-    /// during layout), which settles on the next frame.
-    fn editor_height(&mut self, line_height: Pixels) -> Pixels {
-        const MIN_ROWS: usize = 12; // a comfortable empty page to click into
-        const PADDING: f32 = 16.; // gpui-kit input padding, top + bottom
-        let rows = self.body_rows.max(1);
-        line_height * (rows.max(MIN_ROWS) as f32 + 1.) + px(PADDING)
-    }
-
-    /// (wrapped row count, caret row) of the body editor.
-    fn body_metrics(&self, cx: &App) -> (usize, usize) {
-        let body = self.body.read(cx);
-        let text = body.value();
-        let offset = body.cursor().min(text.len());
-        let line = text[..offset].matches('\n').count();
-        let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
-        let display = body.display_map();
-        let caret = display
-            .buffer_pos_to_display_pos(BufferPoint::new(line, offset - line_start))
-            .row;
-        (display.wrap_row_count(), caret)
-    }
-
-    /// Scrolls the page so the caret stays visible while typing or moving.
-    fn follow_caret(&mut self, line_height: Pixels, cx: &mut Context<Self>) {
-        let (rows, caret) = self.body_metrics(cx);
-        if rows != self.body_rows {
-            self.body_rows = rows;
-            cx.notify();
-        }
-        if caret == self.caret_row {
-            return;
-        }
-        self.caret_row = caret;
-        let (Some(editor), viewport) = (
-            self.page_scroll.bounds_for_item(1),
-            self.page_scroll.bounds(),
-        ) else {
+    /// Scrolls the page so the caret stays visible, with two lines of margin.
+    fn follow_caret(&mut self, cx: &mut Context<Self>) {
+        let Some(caret) = self.body.read(cx).caret_bounds(cx) else {
             return;
         };
-        let margin = line_height * 2.;
-        let top = editor.top() + px(8.) + line_height * caret as f32;
-        let bottom = top + line_height;
-        let mut offset = self.page_scroll.offset();
-        if bottom + margin > viewport.bottom() {
-            offset.y -= bottom + margin - viewport.bottom();
-        } else if top - margin < viewport.top() {
-            offset.y += viewport.top() - (top - margin);
+        let viewport = self.page_scroll.bounds();
+        if viewport.size.height <= px(0.) {
+            return;
         }
-        offset.y = offset.y.min(px(0.));
+        let margin = cx.theme().font_size * 3.;
+        let mut offset = self.page_scroll.offset();
+        if caret.bottom() + margin > viewport.bottom() {
+            offset.y -= caret.bottom() + margin - viewport.bottom();
+        } else if caret.top() - margin < viewport.top() {
+            offset.y += viewport.top() - (caret.top() - margin);
+        } else {
+            return;
+        }
+        let max = self.page_scroll.max_offset().y;
+        offset.y = offset.y.min(px(0.)).max(-max);
         self.page_scroll.set_offset(offset);
+        cx.notify();
     }
 
-    /// Markdown preview where `[[links]]` are clickable and open (or create) the target note.
+    /// Read-only rendered Markdown for trashed notes, where `[[links]]` and tags are clickable.
     fn render_preview(&self, body: &str, cx: &Context<Self>) -> impl IntoElement {
         let source = preview_markdown(body);
         let view = cx.entity().downgrade();

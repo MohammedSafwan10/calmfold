@@ -4,32 +4,23 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Current state (2026-11-08)
 
-- Branch `main`. `scripts/check.sh` passes: fmt, clippy `-D warnings`, 139 tests (29 UI).
+- Branch `main`. `scripts/check.sh` passes: fmt, clippy `-D warnings`, 148 tests (34 UI).
 - Dev loop: `scripts/dev.sh [--sample]` rebuilds and relaunches on save (watchexec).
-- Notes, Tasks and Today are feature-complete for plans 02-04 (see checklists):
-  tags, mentions, daily notes, import/export, Markdown formatting (Aa menu +
-  shortcuts), quick add with dates/priority/projects, repeats, steps, projects,
-  week chart, next 7 days.
-- Note editing is Markdown source with a separate Preview (⌘E).
+- Notes, Tasks and Today are feature-complete for plans 02-04.
+- Note body is a live-preview Markdown editor (`zorite-editor` 0.11.3, ADR 0004),
+  wrapped in `apps/desktop/src/views/note_editor.rs`. One mode; "Show Markdown
+  source" in the … menu. Selection bar, `[[` menu, `$$` math via `ratex-gpui`.
 - Crypto crate for the vault is built and tested; the vault feature is not.
 
 ## Next steps (in order)
 
-1. Live Preview editing (Obsidian-style) as the default, Source mode in "…",
-   Preview stays. Chosen candidate: `zorite-editor` 0.11 (MIT). Its buffer *is*
-   the Markdown text (markers hidden, revealed at the caret), so saving is
-   lossless; it has wiki-links, tags, `==highlight==`, suggestions, auto-grow.
-   Probe (2026-11-08): resolves to our single `gpui-pre 0.3.11` and compiles
-   with gpui-kit 0.9. Rejected `gpui-kit-markdown-editor`: block model
-   re-serializes Markdown (drops empty paragraphs, changes list spacing).
-   Risks: it depends on `gpui-pre` directly (record an ADR as an exception to
-   hard rule 2; upgrades must move in step with gpui-kit), single maintainer,
-   theme colors must be mapped from `cx.theme()`. Prototype on a branch;
-   gate on: byte-identical round-trip of every note, `[[` completion, undo,
-   paste, IME, 60 fps typing in a 2 MiB note.
-2. Window size/position restore; app icon (plan 01 open items).
-3. Vault (plan 05): migration, lock state machine with table test, setup/unlock UI.
-4. Verify a Windows build and fix anything platform-specific.
+1. Find in note (⌘F): a find bar on `EditorState::set_search` + `find_in_source`.
+   The old gpui-kit editor had it; zorite only paints matches.
+2. Code-block syntax colors (`set_code_highlighter` with gpui-kit's highlighter),
+   Mermaid (`set_block_mermaid_provider`), spell-check (`os-spellcheck` → `set_diagnostics`).
+3. Window size/position restore; app icon (plan 01 open items).
+4. Vault (plan 05): migration, lock state machine with table test, setup/unlock UI.
+5. Verify a Windows build and fix anything platform-specific.
 
 ## Known issues / risks
 
@@ -53,10 +44,24 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 rm -rf /tmp/ks && cargo run -p keepstone-storage --example seed -- /tmp/ks/keepstone.sqlite3
 KEEPSTONE_DATA_DIR=/tmp/ks KEEPSTONE_DEV_ROUTE=notes cargo run   # debug: open on a screen
 scripts/screenshot.sh target/shot.png
-KEEPSTONE_DEV_ROUTE=notes KEEPSTONE_DEV_PREVIEW=1 cargo run   # debug: first note in Preview
+KEEPSTONE_DEV_ROUTE=notes KEEPSTONE_DEV_SOURCE=1 cargo run    # debug: first note as Markdown source
 ```
 
 ## Log
+
+### 2026-11-08: Live-preview note editor
+
+- Replaced the gpui-kit `Editor` + Preview with `zorite-editor` (audited: no
+  `unsafe`, no production panics, env-gated logs). Same `gpui-pre 0.3.11` as
+  gpui-kit; hard rule 2 now names this one exception.
+- Host work in `note_editor.rs`: theme → `SyntaxStyle`, `[[` suggestions with
+  capture-phase keys, selection bar (base `Button`, `focusable(false)`),
+  block formats through `core::format` as single undo steps, math provider,
+  `EditMath`/`EditProperties` handling (zorite stops the caret otherwise),
+  tag-vs-link click routing, URL allow-list (http/https/mailto).
+- Verified in the real window (dark + light): bold, links, highlights, colors,
+  selection bar, Bold click saved `**Insurance**`.
+- Removed: `TogglePreview` (⌘E is now inline code), `link_completion.rs`, `lsp-types`.
 
 ### 2026-11-08: Italic and highlight render
 

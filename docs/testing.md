@@ -1,6 +1,6 @@
 # Testing
 
-Run everything: `scripts/check.sh`. Current count: 139 tests.
+Run everything: `scripts/check.sh`. Current count: 148 tests.
 
 | Layer | Where | Tool | What |
 | --- | --- | --- | --- |
@@ -8,7 +8,7 @@ Run everything: `scripts/check.sh`. Current count: 139 tests.
 | Persistence | `crates/storage/src/*.rs` | `#[test]`, in-memory SQLite | Round trips, ordering, filters, FTS search and syntax safety, backlinks, corrupt rows, reopen from file. |
 | Crypto | `crates/crypto/src/*.rs` | `#[test]` | Round trip, wrong key/AAD, every-bit tamper, truncation, version, param bounds, zeroize/redaction. |
 | Design system | `crates/ui/src/*.rs` | `#[test]` | Theme JSON parses, appearance load/save/clamp/corrupt, every used icon is embedded. |
-| UI flows | `apps/desktop/tests/ui.rs` | `#[gpui_kit::test]` + `gpui_kit::test::TestWindowExt` | Real app via `start()`, headless window: actions, typing, Enter, autosave timer, trash/Undo, delete confirmation, palette, theme switch, layout persistence, quick-add parsing, recurrence, steps, projects, daily note, tag filter, mentions, format shortcuts, editor height (no inner scroll), Today chart and upcoming. Elements a test queries need `.test_support()`. |
+| UI flows | `apps/desktop/tests/ui.rs` | `#[gpui_kit::test]` + `gpui_kit::test::TestWindowExt` | Real app via `start()`, headless window: actions, typing, Enter, autosave timer, trash/Undo, delete confirmation, palette, theme switch, layout persistence, quick-add parsing, recurrence, steps, projects, daily note, tag filter, mentions, format shortcuts, editor height (no inner scroll), Today chart and upcoming, note editor: byte-identical round trip, selection bar, `[[` menu keys, Markdown source mode, link/tag clicks, arrowing through math. Elements a test queries need `.test_support()`. |
 
 ## Writing a UI test
 

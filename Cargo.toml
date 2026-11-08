@@ -26,6 +26,11 @@ keepstone-ui = { path = "crates/ui" }
 
 # UI. gpui-kit re-exports a pinned GPUI snapshot (gpui-pre). Never add `gpui` directly.
 gpui-kit = "0.9.0"
+# Note editor (Obsidian-style live preview) and its LaTeX renderer. Both depend on
+# `gpui-pre` directly, so they are pinned exactly and must resolve to the SAME
+# gpui-pre as gpui-kit (`cargo tree -d -i gpui-pre` shows one). See ADR 0004.
+zorite-editor = "=0.11.3"
+ratex-gpui = { version = "=0.4.1", default-features = false }
 
 # Core
 serde = { version = "1", features = ["derive"] }
@@ -38,8 +43,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "6"
 
-# Must match the version gpui-kit uses (Cargo.lock), for the editor's completion API.
-lsp-types = "0.97"
 # Same version as gpui-kit's DatePicker uses.
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 

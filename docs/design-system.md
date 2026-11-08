@@ -121,18 +121,26 @@ Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`)
 
 ## Note editor
 
-- Toolbar has exactly three controls, right-aligned: **Aa** (format menu),
-  **eye/pencil** (Preview/Edit, ⌘E), **…** (pin, export, move to trash).
-- Format menu: the six everyday inline styles at the top level (bold, italic,
-  strikethrough, code, highlight, link), then **Headings ▸** and **Lists ▸**
-  submenus. No section labels. Each item shows its shortcut.
-- Formatting is Markdown text (`keepstone_core::format`): no font colors or
-  sizes; headings carry size. Notes stay portable to Obsidian.
+- One mode: live preview (ADR 0004). Formatting shows while typing; Markdown
+  markers are hidden and reappear only on the caret's line. No Edit/Preview
+  switch. "Show Markdown source" (… menu, palette) shows the raw text.
+- Toolbar has two controls, right-aligned: **Aa** (format menu) and **…**
+  (pin, Markdown source, export, move to trash).
+- Selecting text shows a small bar just above it: bold, italic,
+  strikethrough, highlight, code, link. It appears when the drag ends, hides
+  on typing, Escape, scroll or collapse, and never takes focus from the text.
+- Format menu: the six inline styles, then **Headings ▸** and **Lists ▸**.
+- `[[` opens note suggestions at the caret: ↑/↓ choose, Enter/Tab insert,
+  Esc closes. Links and wiki-links are blue (`theme.blue`) so they stand out
+  in running text.
+- Notes stay Markdown. Colors, underline and colored highlights from the
+  editor's right-click menu are inline HTML (`<span style>`, `<u>`, `<mark>`),
+  which Obsidian and GitHub also render.
+- `$$…$$` math renders (ratex); the caret inside shows the LaTeX.
 - The writing column is centered with a max width (Settings → Content width).
-- The editor is exactly as tall as its text; the page is the only scroll area.
-  Never put a scrolling editor inside a scrolling page.
-- Indent guides are off: notes are prose, not code.
-- Toasts sit bottom-right so they never cover the toolbar.
+- The editor is as tall as its text; the page is the only scroll area.
+  Clicking below the text continues writing at the end.
+- Trashed notes render read-only. Toasts sit bottom-right.
 
 ## Shared components (`crates/ui/src/components.rs`)
 

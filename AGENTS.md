@@ -68,7 +68,9 @@ Do the best version, not the quick one. The owner reviews the running app.
    Read `.kiro/skills/gpui-kit-design-guides` before any UI change.
 2. **One UI dependency.** Depend on `gpui-kit` only (it pins a `gpui-pre`
    snapshot). Never add `gpui` directly. Upgrade GPUI only by upgrading
-   gpui-kit, then rerun every test and look at the app.
+   gpui-kit, then rerun every test and look at the app. Sole exception: the
+   note editor (`zorite-editor`, `ratex-gpui`, ADR 0004), pinned with `=` and
+   only while it resolves to the same `gpui-pre` (`cargo tree -d -i gpui-pre`).
 3. **No hard-coded colors** in feature code. Use `cx.theme()` tokens. Raw hex
    lives only in `crates/ui/themes/keepstone.json`.
 4. **Views never touch SQLite.** They call `Library` methods
