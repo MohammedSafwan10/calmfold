@@ -119,7 +119,7 @@ fn add(today: Date, span: Span) -> Option<Date> {
 }
 
 /// (words consumed, date) for a date phrase at the end of `w`.
-fn trailing_date(w: &[String], today: Date) -> Option<(usize, Date)> {
+pub(crate) fn trailing_date(w: &[String], today: Date) -> Option<(usize, Date)> {
     let n = w.len();
     let last = w.last()?.as_str();
     let prev = n.checked_sub(2).map(|i| w[i].as_str());
@@ -169,7 +169,7 @@ fn trailing_date(w: &[String], today: Date) -> Option<(usize, Date)> {
 }
 
 /// (words consumed, rule) for a repeat phrase at the end of `w`.
-fn trailing_recurrence(w: &[String]) -> Option<(usize, Recurrence)> {
+pub(crate) fn trailing_recurrence(w: &[String]) -> Option<(usize, Recurrence)> {
     let n = w.len();
     let last = w.last()?.as_str();
     let prev = n.checked_sub(2).map(|i| w[i].as_str());
@@ -232,7 +232,7 @@ fn next_weekday(today: Date, day: Weekday) -> Date {
 }
 
 /// "nov" + "20" → the next Nov 20 on or after today.
-fn month_day(month: &str, day: &str, today: Date) -> Option<Date> {
+pub(crate) fn month_day(month: &str, day: &str, today: Date) -> Option<Date> {
     const MONTHS: [&str; 12] = [
         "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
     ];

@@ -15,6 +15,8 @@ pub enum DomainError {
     InvalidTransition { from: TaskStatus, to: TaskStatus },
     #[error("This item is in the trash.")]
     Deleted,
+    #[error("The end must be after the start, and an event can last at most a year.")]
+    InvalidTimeRange,
 }
 
 pub type DomainResult<T> = Result<T, DomainError>;

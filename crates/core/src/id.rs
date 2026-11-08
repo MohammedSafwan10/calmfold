@@ -73,6 +73,10 @@ define_id!(
     /// Identifies a [`crate::Project`].
     ProjectId
 );
+define_id!(
+    /// Identifies a [`crate::Event`].
+    EventId
+);
 
 #[cfg(test)]
 mod tests {

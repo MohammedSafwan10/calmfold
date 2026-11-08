@@ -6,6 +6,8 @@
 
 pub mod clock;
 mod error;
+pub mod event;
+pub mod event_quick_add;
 pub mod format;
 mod id;
 pub mod links;
@@ -18,7 +20,8 @@ pub mod task;
 mod text;
 
 pub use error::{DomainError, DomainResult};
-pub use id::{NoteId, ProjectId, TaskId};
+pub use event::{Event, EventRecord, Occurrence};
+pub use id::{EventId, NoteId, ProjectId, TaskId};
 pub use jiff::{Timestamp, civil::Date};
 pub use note::Note;
 pub use project::Project;
