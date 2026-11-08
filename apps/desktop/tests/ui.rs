@@ -1634,3 +1634,106 @@ fn picking_a_theme_card_applies_and_saves_it(cx: &mut TestAppContext) {
     dispatch(&app, cx, UseDarkTheme);
     assert_eq!(name(cx), "Catppuccin Mocha");
 }
+
+#[gpui_kit::test]
+fn calendar_quick_add_keyboard_views_and_moves(cx: &mut TestAppContext) {
+    use keepstone_desktop::actions::{GoCalendar, NewEvent};
+    use keepstone_desktop::views::calendar_layout::CalendarMode;
+
+    let app = launch(cx);
+    dispatch(&app, cx, GoCalendar);
+    assert_eq!(route(&app, cx), Route::Calendar);
+    let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
+    let today = keepstone_core::clock::today();
+
+    // Quick add from the "New event" command.
+    dispatch(&app, cx, NewEvent);
+    type_text(&app, cx, "Lunch with Sam tomorrow 1pm");
+    // Calendar keys must not fire while typing ("w", "t", "m" are in the text).
+    assert_eq!(cx.read(|cx| calendar.read(cx).mode()), CalendarMode::Month);
+    press(&app, cx, "enter");
+    let tomorrow = today.tomorrow().expect("date");
+    let span = cx.read(|cx| calendar.read(cx).span().clone());
+    let occ = span
+        .on_day(tomorrow)
+        .next()
+        .copied()
+        .expect("event shown on its day");
+    let event = span.events.get(&occ.event).expect("event");
+    assert_eq!(event.title(), "Lunch with Sam");
+    assert_eq!(
+        event.start(),
+        tomorrow.to_datetime(keepstone_core::Time::constant(13, 0, 0, 0))
+    );
+    assert_eq!(
+        cx.read(|cx| calendar.read(cx).anchor()),
+        tomorrow,
+        "selects where it landed"
+    );
+
+    // Grid keys once the grid has focus.
+    dispatch(&app, cx, GoCalendar);
+    press(&app, cx, "w");
+    assert_eq!(cx.read(|cx| calendar.read(cx).mode()), CalendarMode::Week);
+    press(&app, cx, "t");
+    assert_eq!(cx.read(|cx| calendar.read(cx).anchor()), today);
+    press(&app, cx, "right");
+    assert_eq!(cx.read(|cx| calendar.read(cx).anchor()), tomorrow);
+    press(&app, cx, "d");
+    assert_eq!(cx.read(|cx| calendar.read(cx).mode()), CalendarMode::Day);
+    press(&app, cx, "a");
+    assert_eq!(cx.read(|cx| calendar.read(cx).mode()), CalendarMode::Agenda);
+    press(&app, cx, "m");
+    assert_eq!(cx.read(|cx| calendar.read(cx).mode()), CalendarMode::Month);
+
+    // Moving it (what a drag does) refreshes the view.
+    let id = event.id();
+    let later = tomorrow.tomorrow().expect("date");
+    cx.update(|cx| {
+        app.shell.read(cx).library().clone().update(cx, |lib, cx| {
+            lib.move_event(id, later, cx).expect("move");
+        })
+    });
+    cx.run_until_parked();
+    let span = cx.read(|cx| calendar.read(cx).span().clone());
+    assert!(span.on_day(tomorrow).next().is_none());
+    assert_eq!(span.on_day(later).next().map(|o| o.event), Some(id));
+}
+
+#[gpui_kit::test]
+fn every_calendar_view_renders_events_and_tasks(cx: &mut TestAppContext) {
+    use keepstone_desktop::actions::GoCalendar;
+    use keepstone_desktop::views::calendar_layout::CalendarMode;
+
+    let app = launch(cx);
+    let today = keepstone_core::clock::today();
+    cx.update(|cx| {
+        app.shell.read(cx).library().clone().update(cx, |lib, cx| {
+            for text in [
+                "Standup 9:30-9:45 every weekday",
+                "Review 9-10am",
+                "Overlap 9:30-11am",
+                "Trip nov 20-22",
+                "Flight 10pm-2am",
+            ] {
+                lib.quick_add_event(text, today, cx).expect("event");
+            }
+            lib.create_task("Pay rent", Some(today), cx).expect("task");
+        })
+    });
+    dispatch(&app, cx, GoCalendar);
+    let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
+    for (mode, _) in CalendarMode::OPTIONS {
+        cx.update(|cx| calendar.update(cx, |c, cx| c.set_mode(mode, cx)));
+        cx.run_until_parked();
+        cx.update_window(app.window, |_, window, _| window.refresh())
+            .expect("window");
+        cx.run_until_parked();
+        let span = cx.read(|cx| calendar.read(cx).span().clone());
+        assert!(
+            span.on_day(today).count() >= 3,
+            "{mode:?} shows today's events"
+        );
+        assert_eq!(span.tasks_on(today).count(), 1, "{mode:?} shows the task");
+    }
+}

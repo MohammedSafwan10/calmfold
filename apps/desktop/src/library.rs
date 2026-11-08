@@ -9,10 +9,11 @@
 use anyhow::{Context as _, Result};
 use gpui_kit::{Context, EventEmitter};
 use std::collections::HashMap;
+use std::ops::Range;
 
 use keepstone_core::{
-    Date, Note, NoteId, Priority, Project, ProjectId, Recurrence, Task, TaskId, TaskStatus, clock,
-    parse_quick_add,
+    Date, DateTime, Event, EventId, Note, NoteId, Occurrence, Priority, Project, ProjectId,
+    Recurrence, Task, TaskId, TaskStatus, clock, parse_event, parse_quick_add,
 };
 use keepstone_storage::{NoteSummary, Progress, Store, TaskCounts, TaskFilter};
 
@@ -20,6 +21,7 @@ use keepstone_storage::{NoteSummary, Progress, Store, TaskCounts, TaskFilter};
 pub enum LibraryEvent {
     NotesChanged,
     TasksChanged,
+    EventsChanged,
 }
 
 pub struct Library {
@@ -579,6 +581,201 @@ impl Library {
             cx.emit(LibraryEvent::TasksChanged);
         }
         Ok(())
+    }
+
+    // ---- Calendar --------------------------------------------------------
+
+    /// Everything a calendar shows for `days` (end exclusive): event
+    /// occurrences in time order (all-day first within a day) and tasks due
+    /// in the range.
+    pub fn calendar(&self, days: Range<Date>) -> Result<CalendarSpan> {
+        let events = self.store.events_between(days.clone())?;
+        let mut occurrences: Vec<Occurrence> = events
+            .iter()
+            .flat_map(|e| e.occurrences(days.clone(), MAX_OCCURRENCES_PER_EVENT))
+            .collect();
+        occurrences.sort_by_key(|o| (o.start.date(), !o.all_day, o.start, o.end));
+        let tasks = self.store.tasks_due_between(days.clone())?;
+        Ok(CalendarSpan {
+            days,
+            occurrences,
+            events: events.into_iter().map(|e| (e.id(), e)).collect(),
+            tasks,
+        })
+    }
+
+    /// One event by ID, or `None` if it was deleted (or can't be read).
+    pub fn event(&self, id: EventId) -> Option<Event> {
+        self.store.event(id).ok().flatten()
+    }
+
+    /// Creates an event from quick-add text ("Lunch with Sam fri 1pm").
+    /// Text without a day lands on `default_day` (the selected day).
+    pub fn quick_add_event(
+        &mut self,
+        input: &str,
+        default_day: Date,
+        cx: &mut Context<Self>,
+    ) -> Result<EventId> {
+        let draft = parse_event(input, clock::today()).on_default_day(default_day);
+        let now = clock::now();
+        let mut event = if draft.all_day {
+            Event::new_all_day(&draft.title, draft.start.date(), draft.last_day(), now)?
+        } else {
+            Event::new_timed(&draft.title, draft.start, draft.end, now)?
+        };
+        event.set_recurrence(draft.recurrence, now)?;
+        self.save_new_event(&event, cx)
+    }
+
+    /// A timed event (double-click on the time grid).
+    pub fn create_timed_event(
+        &mut self,
+        title: &str,
+        start: DateTime,
+        end: DateTime,
+        cx: &mut Context<Self>,
+    ) -> Result<EventId> {
+        let event = Event::new_timed(title, start, end, clock::now())?;
+        self.save_new_event(&event, cx)
+    }
+
+    /// An all-day event on one day (double-click on a month day).
+    pub fn create_all_day_event(
+        &mut self,
+        title: &str,
+        day: Date,
+        cx: &mut Context<Self>,
+    ) -> Result<EventId> {
+        let event = Event::new_all_day(title, day, day, clock::now())?;
+        self.save_new_event(&event, cx)
+    }
+
+    fn save_new_event(&mut self, event: &Event, cx: &mut Context<Self>) -> Result<EventId> {
+        self.store
+            .save_event(event)
+            .context("Couldn't create the event")?;
+        cx.emit(LibraryEvent::EventsChanged);
+        Ok(event.id())
+    }
+
+    pub fn rename_event(&mut self, id: EventId, title: &str, cx: &mut Context<Self>) -> Result<()> {
+        self.update_event(id, cx, |e| e.rename(title, clock::now()))
+    }
+
+    pub fn set_event_notes(
+        &mut self,
+        id: EventId,
+        notes: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_event(id, cx, |e| e.set_notes(notes, clock::now()))
+    }
+
+    pub fn set_event_location(
+        &mut self,
+        id: EventId,
+        location: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_event(id, cx, |e| e.set_location(location, clock::now()))
+    }
+
+    /// Makes the event timed, `start..end`.
+    pub fn set_event_times(
+        &mut self,
+        id: EventId,
+        start: DateTime,
+        end: DateTime,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_event(id, cx, |e| e.set_times(start, end, clock::now()))
+    }
+
+    /// Makes the event all-day on `first..=last`.
+    pub fn set_event_all_day(
+        &mut self,
+        id: EventId,
+        first: Date,
+        last: Date,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_event(id, cx, |e| e.set_all_day_dates(first, last, clock::now()))
+    }
+
+    /// Moves the event to start on `day`, keeping its times and length.
+    pub fn move_event(&mut self, id: EventId, day: Date, cx: &mut Context<Self>) -> Result<()> {
+        self.update_event(id, cx, |e| e.move_to_date(day, clock::now()))
+    }
+
+    pub fn set_event_recurrence(
+        &mut self,
+        id: EventId,
+        rule: Option<Recurrence>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_event(id, cx, |e| e.set_recurrence(rule, clock::now()))
+    }
+
+    pub fn trash_event(&mut self, id: EventId, cx: &mut Context<Self>) -> Result<()> {
+        self.update_event(id, cx, |e| e.trash(clock::now()))
+    }
+
+    pub fn restore_event(&mut self, id: EventId, cx: &mut Context<Self>) -> Result<()> {
+        let mut event = self
+            .store
+            .event(id)?
+            .context("That event no longer exists")?;
+        event.restore(clock::now());
+        self.store
+            .save_event(&event)
+            .context("Couldn't save the event")?;
+        cx.emit(LibraryEvent::EventsChanged);
+        Ok(())
+    }
+
+    fn update_event(
+        &mut self,
+        id: EventId,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut Event) -> keepstone_core::DomainResult<()>,
+    ) -> Result<()> {
+        let mut event = self
+            .store
+            .event(id)?
+            .context("That event no longer exists")?;
+        change(&mut event)?;
+        self.store
+            .save_event(&event)
+            .context("Couldn't save the event")?;
+        cx.emit(LibraryEvent::EventsChanged);
+        Ok(())
+    }
+}
+
+/// Repeats expanded per event and range; bounds work for daily repeats over a long agenda.
+const MAX_OCCURRENCES_PER_EVENT: usize = 500;
+
+/// What a calendar range shows.
+#[derive(Debug, Clone, Default)]
+pub struct CalendarSpan {
+    pub days: Range<Date>,
+    pub occurrences: Vec<Occurrence>,
+    pub events: HashMap<EventId, Event>,
+    pub tasks: Vec<Task>,
+}
+
+impl CalendarSpan {
+    /// Occurrences that touch `day`, in display order.
+    pub fn on_day(&self, day: Date) -> impl Iterator<Item = &Occurrence> {
+        self.occurrences
+            .iter()
+            .filter(move |o| o.days().contains(&day))
+    }
+
+    /// Tasks due on `day`.
+    pub fn tasks_on(&self, day: Date) -> impl Iterator<Item = &Task> {
+        self.tasks.iter().filter(move |t| t.due() == Some(day))
     }
 }
 

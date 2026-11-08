@@ -158,6 +158,17 @@ Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`)
   to the text at the match. Only on the Notes screen.
 - Trashed notes render read-only. Toasts sit bottom-right.
 
+## Calendar
+
+- Events use `primary` at 16 % (24 % hover); past items fade to 60 % opacity.
+  Today is a filled `primary` pill; the now line is `primary`. No colored
+  leading bars.
+- Geometry in rems (`calendar_grid.rs`): day header 1.75, line 1.375, hour 3.
+  Multi-day and all-day events are bars that stack (`pack_spans`); overlapping
+  timed events split the column (`lay_out_timed`).
+- Plain-key shortcuts (`CALENDAR_SHORTCUTS`) live only on the grid, never in
+  the quick-add field.
+
 ## Shared components (`crates/ui/src/components.rs`)
 
 `segmented` (controlled segmented control), `page_header`, `empty_state`,

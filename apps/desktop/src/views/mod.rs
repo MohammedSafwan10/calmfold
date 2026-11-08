@@ -1,8 +1,12 @@
 //! Feature screens. Each screen is an `Entity` that owns its own state and
 //! reads data through [`crate::library::Library`].
 
+pub mod calendar;
+pub mod calendar_grid;
+pub mod calendar_layout;
 pub mod code_highlight;
 pub mod diagram;
+pub mod event_detail;
 pub mod note_editor;
 pub mod notes;
 pub mod settings;
@@ -19,13 +23,20 @@ pub enum Route {
     Today,
     Notes,
     Tasks,
+    Calendar,
     Settings,
 }
 
 impl Route {
-    pub const ALL: [Self; 4] = [Self::Today, Self::Notes, Self::Tasks, Self::Settings];
+    pub const ALL: [Self; 5] = [
+        Self::Today,
+        Self::Notes,
+        Self::Tasks,
+        Self::Calendar,
+        Self::Settings,
+    ];
 
-    /// Parses a lower-case route name ("today", "notes", "tasks", "settings").
+    /// Parses a route name ("today", "notes", "tasks", "calendar", "settings").
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL
@@ -39,6 +50,7 @@ impl Route {
             Self::Today => "Today",
             Self::Notes => "Notes",
             Self::Tasks => "Tasks",
+            Self::Calendar => "Calendar",
             Self::Settings => "Settings",
         }
     }

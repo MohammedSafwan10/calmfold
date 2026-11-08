@@ -107,6 +107,17 @@ pub fn start(
                 });
             })?;
         }
+        // KEEPSTONE_DEV_CALENDAR=month|week|day|agenda: open the calendar in that view.
+        if let Ok(name) = std::env::var("KEEPSTONE_DEV_CALENDAR") {
+            let mode = views::calendar_layout::CalendarMode::OPTIONS
+                .into_iter()
+                .find(|(_, label)| label.eq_ignore_ascii_case(name.trim()))
+                .map(|(mode, _)| mode);
+            if let Some(mode) = mode {
+                let calendar = shell.read(cx).calendar().clone();
+                calendar.update(cx, |c, cx| c.set_mode(mode, cx));
+            }
+        }
         // KEEPSTONE_DEV_NOTE=<title>: open that note with the caret at the end of its body.
         if let Ok(title) = std::env::var("KEEPSTONE_DEV_NOTE") {
             window.update(cx, |_, window, cx| {

@@ -2,21 +2,22 @@
 
 Overwrite **Current state** and **Next steps** every session. Append to the log.
 
-## Current state (2026-11-08)
+## Current state (2026-11-09)
 
-- Branch `main`. `scripts/check.sh` passes: fmt, clippy `-D warnings`, 148 tests (34 UI).
-- Dev loop: `scripts/dev.sh [--sample]` rebuilds and relaunches on save (watchexec).
-- Notes, Tasks and Today are feature-complete for plans 02-04.
-- Note body is a live-preview Markdown editor (`zorite-editor` 0.11.3, ADR 0004),
-  wrapped in `apps/desktop/src/views/note_editor.rs`. One mode; "Show Markdown
-  source" in the … menu. Selection bar, `[[` menu, `$$` math via `ratex-gpui`.
+- Branch `main`. `scripts/check.sh` passes (fmt, clippy `-D warnings`, all tests).
+- Done from `docs/TASKS.md`: editor perf (to 50 KB), find, code colors, Mermaid,
+  spell-check, 20 themes + typography, **Calendar** (§4).
+- Calendar: `core::event` (+ quick add `event_quick_add`), migration 0003,
+  `storage/events.rs`, `Library::calendar` / event methods (`EventsChanged`),
+  `views/calendar.rs` (state, header, agenda), `calendar_grid.rs` (month, week/day
+  time grid), `calendar_layout.rs` (pure geometry, unit-tested), `event_detail.rs`
+  (sheet). Settings → Calendar: week start, 12/24-hour clock.
 - Crypto crate for the vault is built and tested; the vault feature is not.
 
 ## Next steps (in order)
 
-Work from `docs/TASKS.md` top to bottom (the owner's ordered backlog):
-editor features (find, code colors, Mermaid, spell-check) → Settings appearance
-+ themes + typography → Calendar → Habits → Today rebuild → Password vault.
+`docs/TASKS.md` §5 Habits → §6 Today rebuild → §7 Password vault; then the
+500 KB+ editor item in §1.
 
 ## Known issues / risks
 
@@ -33,6 +34,11 @@ editor features (find, code colors, Mermaid, spell-check) → Settings appearanc
 - "System" reduce motion is read once at startup.
 - Storage limits (VACUUM + FTS rowid, ASCII-only `lower()`): see `crates/storage/AGENTS.md`.
 - Global quick-capture hotkey and tray icon are unproven with GPUI; prototype first.
+- Calendar: repeating events can't be dragged (only whole-series edits exist; no
+  per-occurrence exceptions yet). Deleted events have no trash view: Undo is the
+  way back. No time zones (local wall-clock times) and no ICS import yet.
+- Calendar month cells fit as many lines as the window height allows (estimated
+  from the viewport, `MONTH_CHROME`); the rest go behind "N more".
 
 ## Useful commands
 
@@ -41,9 +47,27 @@ rm -rf /tmp/ks && cargo run -p keepstone-storage --example seed -- /tmp/ks/keeps
 KEEPSTONE_DATA_DIR=/tmp/ks KEEPSTONE_DEV_ROUTE=notes cargo run   # debug: open on a screen
 scripts/screenshot.sh target/shot.png
 KEEPSTONE_DEV_ROUTE=notes KEEPSTONE_DEV_SOURCE=1 cargo run    # debug: first note as Markdown source
+KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: calendar view (month|week|day|agenda)
 ```
 
 ## Log
+
+### 2026-11-09: Calendar
+
+- Research (Fantastical, Apple Calendar, Notion Calendar): one natural-language
+  field, month/week/day/agenda, multi-day bars, side-by-side overlaps, a now
+  line, drag to reschedule, ⌘←/⌘→ periods, T for today.
+- Events are local civil times; all-day ends are exclusive midnights; monthly
+  repeats count from the first date (31st stays at month end). Quick add reads
+  only the end of the text; undated text lands on the selected day.
+- Drag: month cells and the all-day row take events (timed → all-day) and tasks
+  (sets the due date); the time grid snaps to 15 min and keeps the length.
+  Double-click empty time or a day creates "New event" with its title selected.
+- Calendar keys are bound only on the grid (`CalendarGrid` context), so typing
+  in quick add never switches views (UI test covers it).
+- Month view checked in the real window (dark). Week/day/agenda are covered by
+  UI tests only: this session the reader couldn't open fresh screenshots and
+  real keys/clicks didn't reach the window.
 
 ### 2026-11-09: Measured editor performance
 

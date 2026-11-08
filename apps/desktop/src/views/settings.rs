@@ -1,6 +1,6 @@
 //! Settings screen, built on GPUI Kit's searchable `Settings` component.
 //!
-//! Pages: Appearance, General, Keyboard, About. Add a feature's settings as a
+//! Pages: Appearance, General, Calendar, Keyboard, About. Add a feature's settings as a
 //! new `SettingPage` (or group) here; the search box covers every page.
 
 use std::path::PathBuf;
@@ -21,12 +21,12 @@ use gpui_kit::{
     TestSupportExt as _, Window, div,
 };
 use keepstone_ui::appearance::{
-    self, AppearanceSettings, ContentWidth, LineSpacing, MonoFont, MotionPreference,
-    ThemePreference, UiFont,
+    self, AppearanceSettings, ClockFormat, ContentWidth, LineSpacing, MonoFont, MotionPreference,
+    ThemePreference, UiFont, WeekStart,
 };
 use keepstone_ui::components::segmented;
 
-use crate::actions::{EDITING_SHORTCUTS, SHORTCUTS, ShortcutGroup};
+use crate::actions::{CALENDAR_SHORTCUTS, EDITING_SHORTCUTS, SHORTCUTS, ShortcutGroup};
 
 pub struct SettingsView {
     data_dir: PathBuf,
@@ -303,6 +303,41 @@ impl SettingsView {
         )
     }
 
+    fn calendar_page() -> SettingPage {
+        let week = SettingItem::new(
+            "Week starts on",
+            SettingField::render(|_, _, cx| {
+                segmented(
+                    "set-week-start",
+                    &[(WeekStart::Monday, "Monday"), (WeekStart::Sunday, "Sunday")],
+                    appearance::settings(cx).week_start,
+                    |v, _, cx| appearance::update(cx, |s| s.week_start = v),
+                )
+            }),
+        )
+        .description("The first column of the month and week views.")
+        .keywords(["calendar", "week", "monday", "sunday"]);
+        let clock = SettingItem::new(
+            "Time format",
+            SettingField::render(|_, _, cx| {
+                segmented(
+                    "set-clock",
+                    &[
+                        (ClockFormat::TwelveHour, "12-hour"),
+                        (ClockFormat::TwentyFourHour, "24-hour"),
+                    ],
+                    appearance::settings(cx).clock,
+                    |v, _, cx| appearance::update(cx, |s| s.clock = v),
+                )
+            }),
+        )
+        .description("How times are written: 2:30 PM or 14:30.")
+        .keywords(["calendar", "clock", "time", "24 hour", "am pm"]);
+        SettingPage::new("Calendar")
+            .icon(Lucide::CalendarDays)
+            .group(SettingGroup::new().items(vec![week, clock]))
+    }
+
     fn keyboard_page() -> SettingPage {
         let key_row = |keys: &'static str, label: &'static str| {
             SettingItem::new(
@@ -329,6 +364,15 @@ impl SettingsView {
                 SettingGroup::new().title(group.title()).items(items)
             })
             .collect();
+
+        groups.push(
+            SettingGroup::new().title("Calendar").items(
+                CALENDAR_SHORTCUTS
+                    .iter()
+                    .map(|s| key_row(s.keys, s.label))
+                    .collect::<Vec<_>>(),
+            ),
+        );
 
         let link = SettingItem::new(
             "Link to another note",
@@ -550,6 +594,7 @@ impl Render for SettingsView {
                 .pages(vec![
                     Self::appearance_page(),
                     Self::general_page(self.data_dir.clone()),
+                    Self::calendar_page(),
                     Self::keyboard_page(),
                     Self::about_page(),
                 ]),

@@ -1,4 +1,4 @@
-//! Fills a database with sample notes and tasks for manual testing and screenshots.
+//! Fills a database with sample notes, tasks and events for manual testing and screenshots.
 //!
 //!     cargo run -p keepstone-storage --example seed -- /tmp/ks/keepstone.sqlite3
 //!     KEEPSTONE_DATA_DIR=/tmp/ks cargo run
@@ -6,7 +6,7 @@
 //! Never point this at a real data folder.
 #![allow(clippy::expect_used)]
 
-use keepstone_core::{Note, Priority, Task, TaskStatus, clock};
+use keepstone_core::{Event, Note, Priority, Recurrence, Task, TaskStatus, clock, parse_event};
 use keepstone_storage::Store;
 
 fn main() {
@@ -76,6 +76,41 @@ fn main() {
         task.set_priority(priority, now).expect("priority");
         task.transition(status, now).expect("status");
         store.save_task(&task).expect("save task");
+    }
+
+    // Events, written the way a user types them in quick add.
+    for (text, offset) in [
+        ("Standup 9:30-9:45 every weekday", 0),
+        ("Design review 2pm-3:30pm", 1),
+        ("Lunch with Sam 1pm", 2),
+        ("Dentist 4pm for 45m", 5),
+        ("Gym 7am", 0),
+        ("Focus block 10am-12pm", 1),
+        ("Call with Priya 10:30am", 1),
+        ("Trip to Coorg", 12),
+        ("Mom's birthday yearly", 9),
+        ("Flight 10pm-2am", 6),
+    ] {
+        let draft = parse_event(text, today).on_default_day(day(offset));
+        let mut event = if draft.all_day {
+            Event::new_all_day(&draft.title, draft.start.date(), draft.last_day(), now)
+        } else {
+            Event::new_timed(&draft.title, draft.start, draft.end, now)
+        }
+        .expect("event");
+        if draft.title == "Trip to Coorg" {
+            event
+                .set_all_day_dates(day(12), day(14), now)
+                .expect("trip");
+            event.set_location("Madikeri", now).expect("location");
+        }
+        event.set_recurrence(draft.recurrence, now).expect("repeat");
+        if draft.title == "Gym" {
+            event
+                .set_recurrence(Some(Recurrence::DAILY), now)
+                .expect("repeat");
+        }
+        store.save_event(&event).expect("save event");
     }
     println!("Seeded {path}");
 }

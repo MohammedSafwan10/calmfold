@@ -125,6 +125,14 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
             ],
             dynamic: Some(DynamicChildren::Projects),
         },
+        NavEntry {
+            label: "Calendar",
+            icon: Lucide::CalendarDays,
+            route: Route::Calendar,
+            badge: Badge::None,
+            children: &[],
+            dynamic: None,
+        },
     ],
 }];
 

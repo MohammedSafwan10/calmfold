@@ -18,3 +18,12 @@ pub fn now() -> Timestamp {
 pub fn today() -> jiff::civil::Date {
     jiff::Zoned::now().date()
 }
+
+/// The local wall-clock time, to the minute (for calendars).
+#[must_use]
+pub fn now_local() -> jiff::civil::DateTime {
+    let now = jiff::Zoned::now().datetime();
+    now.date().to_datetime(
+        jiff::civil::Time::new(now.hour(), now.minute(), 0, 0).unwrap_or(jiff::civil::Time::MIN),
+    )
+}

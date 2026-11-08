@@ -83,6 +83,24 @@ impl ContentWidth {
     }
 }
 
+/// First column of calendar weeks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeekStart {
+    #[default]
+    Monday,
+    Sunday,
+}
+
+/// How times of day are written ("2:30 PM" or "14:30").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClockFormat {
+    #[default]
+    TwelveHour,
+    TwentyFourHour,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MotionPreference {
@@ -111,6 +129,8 @@ pub struct AppearanceSettings {
     /// Underline misspelled words in notes (the OS spell checker).
     pub spell_check: bool,
     pub line_spacing: LineSpacing,
+    pub week_start: WeekStart,
+    pub clock: ClockFormat,
 }
 
 impl AppearanceSettings {
@@ -191,6 +211,8 @@ impl Default for AppearanceSettings {
             reduce_motion: MotionPreference::default(),
             spell_check: true,
             line_spacing: LineSpacing::default(),
+            week_start: WeekStart::default(),
+            clock: ClockFormat::default(),
         }
     }
 }
@@ -312,6 +334,8 @@ mod tests {
             light_theme: "Solarized Light".into(),
             dark_theme: "Catppuccin Mocha".into(),
             line_spacing: LineSpacing::Relaxed,
+            week_start: WeekStart::Sunday,
+            clock: ClockFormat::TwentyFourHour,
         };
         settings.save(&path).expect("save");
         assert_eq!(AppearanceSettings::load(&path), settings);

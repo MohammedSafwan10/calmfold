@@ -14,6 +14,8 @@ actions!(
         GoToday,
         GoNotes,
         GoTasks,
+        GoCalendar,
+        NewEvent,
         GoSettings,
         ToggleSidebar,
         ToggleListPanel,
@@ -54,8 +56,32 @@ actions!(
     ]
 );
 
+// Calendar navigation (bound only on the calendar grid, context "CalendarGrid",
+// so typing in quick add never triggers them).
+actions!(
+    keepstone_calendar,
+    [
+        CalendarToday,
+        CalendarPreviousPeriod,
+        CalendarNextPeriod,
+        CalendarPreviousDay,
+        CalendarNextDay,
+        CalendarPreviousWeek,
+        CalendarNextWeek,
+        CalendarMonthView,
+        CalendarWeekView,
+        CalendarDayView,
+        CalendarAgendaView,
+        CalendarOpenDay,
+        CalendarQuickAdd,
+    ]
+);
+
 /// Key context set on the note editor; format shortcuts only work there.
 pub const NOTE_EDITOR_CONTEXT: &str = "NoteEditor";
+
+/// Key context set on the calendar grid (not its quick-add field).
+pub const CALENDAR_CONTEXT: &str = "CalendarGrid";
 
 /// `cmd-<keys>` on macOS, `ctrl-<keys>` elsewhere, as a `&'static str`.
 macro_rules! shortcut {
@@ -125,9 +151,11 @@ pub const SHORTCUTS: &[Shortcut] = shortcuts![
     Create, "n", "New note", NewNote;
     Create, "shift-n", "New task", NewTask;
     Create, "shift-d", "Today's note", OpenDailyNote;
+    Create, "shift-e", "New event", NewEvent;
     Navigate, "1", "Today", GoToday;
     Navigate, "2", "Notes", GoNotes;
     Navigate, "3", "Tasks", GoTasks;
+    Navigate, "4", "Calendar", GoCalendar;
     View, "\\", "Toggle sidebar", ToggleSidebar;
     View, "shift-l", "Toggle note list", ToggleListPanel;
     View, "f", "Find in note", FindInNote;
@@ -152,6 +180,41 @@ pub const FORMAT_SHORTCUTS: &[Shortcut] = shortcuts![
     General, "shift-9", "Checklist", FormatChecklist;
     General, "enter", "Check / uncheck item", ToggleCheckbox;
 ];
+
+/// Calendar keys, active while the calendar grid has focus (Apple Calendar /
+/// Fantastical conventions). Plain keys, so they never reach a text field.
+pub const CALENDAR_SHORTCUTS: &[Shortcut] = &[
+    plain(shortcut!("left"), "Previous period", || {
+        Box::new(CalendarPreviousPeriod)
+    }),
+    plain(shortcut!("right"), "Next period", || {
+        Box::new(CalendarNextPeriod)
+    }),
+    plain("t", "Go to today", || Box::new(CalendarToday)),
+    plain("left", "Previous day", || Box::new(CalendarPreviousDay)),
+    plain("right", "Next day", || Box::new(CalendarNextDay)),
+    plain("up", "Previous week", || Box::new(CalendarPreviousWeek)),
+    plain("down", "Next week", || Box::new(CalendarNextWeek)),
+    plain("enter", "Open selected day", || Box::new(CalendarOpenDay)),
+    plain("m", "Month", || Box::new(CalendarMonthView)),
+    plain("w", "Week", || Box::new(CalendarWeekView)),
+    plain("d", "Day", || Box::new(CalendarDayView)),
+    plain("a", "Agenda", || Box::new(CalendarAgendaView)),
+    plain("n", "New event", || Box::new(CalendarQuickAdd)),
+];
+
+const fn plain(
+    keys: &'static str,
+    label: &'static str,
+    action: fn() -> Box<dyn Action>,
+) -> Shortcut {
+    Shortcut {
+        keys,
+        label,
+        group: ShortcutGroup::General,
+        action,
+    }
+}
 
 /// Built-in editing keys of the note editor (zorite-editor), shown for reference only.
 pub const EDITING_SHORTCUTS: &[(&str, &str)] = &[
@@ -189,6 +252,12 @@ pub fn bind(cx: &mut App) {
     bindings.extend(FORMAT_SHORTCUTS.iter().filter_map(|s| {
         KeyBinding::load(s.keys, s.action(), editor.clone(), false, None, cx).ok()
     }));
+    let calendar = gpui_kit::KeyBindingContextPredicate::parse(CALENDAR_CONTEXT)
+        .ok()
+        .map(std::rc::Rc::new);
+    bindings.extend(CALENDAR_SHORTCUTS.iter().filter_map(|s| {
+        KeyBinding::load(s.keys, s.action(), calendar.clone(), false, None, cx).ok()
+    }));
     // Quitting by shortcut is a macOS convention; Windows and Linux close the window.
     if cfg!(target_os = "macos") {
         bindings.push(KeyBinding::new("cmd-q", Quit, None));
@@ -207,6 +276,7 @@ pub fn set_menus(cx: &mut App) {
         Menu::new("File").items([
             MenuItem::action("New Note", NewNote),
             MenuItem::action("New Task", NewTask),
+            MenuItem::action("New Event", NewEvent),
             MenuItem::action("New Project…", NewProject),
             MenuItem::action("Today's Note", OpenDailyNote),
             MenuItem::separator(),
@@ -219,6 +289,7 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::action("Today", GoToday),
             MenuItem::action("Notes", GoNotes),
             MenuItem::action("Tasks", GoTasks),
+            MenuItem::action("Calendar", GoCalendar),
             MenuItem::separator(),
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::action("Toggle Note List", ToggleListPanel),
@@ -250,6 +321,20 @@ mod tests {
                 s.keys
             );
             assert!(format_keys.insert(s.keys), "{} is bound twice", s.keys);
+            assert!(
+                !seen.contains(s.keys),
+                "{} clashes with an app shortcut",
+                s.keys
+            );
+        }
+        let mut calendar_keys = std::collections::HashSet::new();
+        for s in CALENDAR_SHORTCUTS {
+            assert!(
+                gpui_kit::Keystroke::parse(s.keys).is_ok(),
+                "{} does not parse",
+                s.keys
+            );
+            assert!(calendar_keys.insert(s.keys), "{} is bound twice", s.keys);
             assert!(
                 !seen.contains(s.keys),
                 "{} clashes with an app shortcut",

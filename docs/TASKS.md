@@ -46,10 +46,11 @@ Calm, organized, not noisy; keyboard path; empty/error states; one source of tru
 
 ## 4. Calendar
 
-- [ ] Research native calendar UX (Fantastical, Apple Calendar, Notion Calendar, Cron).
-- [ ] Domain: events (all-day, timed, recurring), storage + migration, tests.
-- [ ] UI: month / week / day / agenda, keyboard nav, quick add with natural language,
-      event detail, tasks with due dates shown, today line. Empty/error states.
+- [x] Research native calendar UX (Fantastical, Apple Calendar, Notion Calendar, Cron).
+- [x] Domain: events (all-day, timed, recurring), storage + migration 0003, tests.
+- [x] UI: month / week / day / agenda, keyboard nav, quick add with natural language,
+      event detail sheet, tasks with due dates shown (drag to reschedule), today line,
+      empty/error states, Settings → Calendar (week start, clock). UI tests.
 
 ## 5. Habits
 

@@ -352,7 +352,6 @@ impl Event {
         }
         let length = self.end - self.start;
         let mut start = self.start;
-        // Skip quickly to near the range for long-running repeats.
         let make = |start: DateTime| -> Option<Occurrence> {
             Some(Occurrence {
                 event: self.id,
@@ -361,6 +360,7 @@ impl Event {
                 all_day: self.all_day,
             })
         };
+        let mut k = 0_i64;
         for _ in 0..100_000 {
             let Some(occ) = make(start) else { break };
             let span = occ.days();
@@ -374,7 +374,10 @@ impl Event {
                 }
             }
             let Some(rule) = self.recurrence else { break };
-            let next_date = rule.next_after(start.date());
+            k += 1;
+            let Some(next_date) = nth_date(rule, self.start.date(), start.date(), k) else {
+                break;
+            };
             if next_date <= start.date() {
                 break;
             }
@@ -382,6 +385,19 @@ impl Event {
         }
         out
     }
+}
+
+/// The `k`-th repeat after `first`. Months and years count from the first
+/// date so a series on the 31st stays on month ends instead of drifting to
+/// the 28th after February. Weekly rules step from the previous date.
+fn nth_date(rule: Recurrence, first: Date, previous: Date, k: i64) -> Option<Date> {
+    let span = match rule {
+        Recurrence::Days(n) => Span::new().try_days(i64::from(n.max(1)) * k).ok()?,
+        Recurrence::Months(n) => Span::new().try_months(i64::from(n.max(1)) * k).ok()?,
+        Recurrence::Years(n) => Span::new().try_years(i64::from(n.max(1)) * k).ok()?,
+        Recurrence::Weeks { .. } => return Some(rule.next_after(previous)),
+    };
+    first.checked_add(span).ok()
 }
 
 #[cfg(test)]
@@ -491,6 +507,28 @@ mod tests {
             e.occurrences(d("2026-10-01")..d("2026-11-01"), 10)
                 .is_empty(),
             "nothing before the first"
+        );
+    }
+
+    #[test]
+    fn monthly_repeats_on_the_31st_stay_at_month_end() {
+        let mut e =
+            Event::new_all_day("Rent", d("2026-01-31"), d("2026-01-31"), now()).expect("event");
+        e.set_recurrence(Some(Recurrence::MONTHLY), now())
+            .expect("repeat");
+        let starts: Vec<Date> = e
+            .occurrences(d("2026-01-01")..d("2026-05-01"), 10)
+            .iter()
+            .map(|o| o.start.date())
+            .collect();
+        assert_eq!(
+            starts,
+            [
+                d("2026-01-31"),
+                d("2026-02-28"),
+                d("2026-03-31"),
+                d("2026-04-30")
+            ]
         );
     }
 
