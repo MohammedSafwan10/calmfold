@@ -1,0 +1,42 @@
+# Build output
+/target/
+**/*.rs.bk
+*.pdb
+
+# Packaging output
+/dist/
+*.dmg
+*.msi
+*.app/
+
+# Local app data used during development (never commit user data)
+/.keepstone-dev/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.ksvault
+
+# Secrets and env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.mobileprovision
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*~
+Thumbs.db
+
+# Test artifacts
+/tests/output/
+*.profraw
+lcov.info

@@ -1,0 +1,4 @@
+# `unwrap`/`expect` are linted in production code (see [workspace.lints]).
+# Tests may use them: a panic there is the failure report.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

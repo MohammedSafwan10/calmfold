@@ -1,0 +1,36 @@
+# Testing
+
+Run everything: `scripts/check.sh`. Current count: 81 tests.
+
+| Layer | Where | Tool | What |
+| --- | --- | --- | --- |
+| Domain rules | `crates/core/src/*.rs` `#[cfg(test)]` | `#[test]` | Invariants, state-machine tables, parsing edge cases (Unicode, malformed links). |
+| Persistence | `crates/storage/src/*.rs` | `#[test]`, in-memory SQLite | Round trips, ordering, filters, FTS search and syntax safety, backlinks, corrupt rows, reopen from file. |
+| Crypto | `crates/crypto/src/*.rs` | `#[test]` | Round trip, wrong key/AAD, every-bit tamper, truncation, version, param bounds, zeroize/redaction. |
+| Design system | `crates/ui/src/*.rs` | `#[test]` | Theme JSON parses, appearance load/save/clamp/corrupt, every used icon is embedded. |
+| UI flows | `apps/desktop/tests/ui.rs` | `#[gpui_kit::test]` + `gpui_kit::test::TestWindowExt` | Real app via `start()`, headless window: actions, typing, Enter, autosave timer, trash/Undo, delete confirmation, palette, theme switch, layout persistence. |
+
+## Writing a UI test
+
+```rust
+#[gpui_kit::test]
+fn my_flow(cx: &mut TestAppContext) {
+    let app = launch(cx);                 // real startup, temp data dir
+    dispatch(&app, cx, NewNote);          // run a command
+    type_text(&app, cx, "Title");         // type into focused input
+    press(&app, cx, "enter");
+    click(&app, cx, "note-trash");        // by ElementId
+    cx.executor().advance_clock(Duration::from_millis(600)); // timers
+    // assert on Library state, not on internals
+}
+```
+
+- Prefer asserting the stored result (via `Library`) over UI internals.
+- Animated surfaces (toasts, dialogs) use wall-clock animation: call
+  `cx.set_reduce_motion(true)` first.
+- Element IDs are part of the test contract (`note-trash`, `note-delete`, `undo`, `task-list`...).
+
+## Manual check
+
+`KEEPSTONE_DATA_DIR=/tmp/ks cargo run`, then `scripts/screenshot.sh /tmp/k.png`
+captures only the Keepstone window. Check light and dark mode.

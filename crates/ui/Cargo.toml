@@ -1,0 +1,19 @@
+[package]
+name = "keepstone-ui"
+description = "Keepstone design system: themes, tokens, appearance settings and reusable components."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,23 @@
+[package]
+name = "keepstone-storage"
+description = "SQLite persistence and migrations for Keepstone."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+keepstone-core.workspace = true
+rusqlite.workspace = true
+rusqlite_migration.workspace = true
+jiff.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
