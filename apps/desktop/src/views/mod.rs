@@ -1,6 +1,7 @@
 //! Feature screens. Each screen is an `Entity` that owns its own state and
 //! reads data through [`crate::library::Library`].
 
+pub mod code_highlight;
 pub mod note_editor;
 pub mod notes;
 pub mod settings;

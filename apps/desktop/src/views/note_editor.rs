@@ -38,7 +38,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Action, AnchoredPositionMode, App, AppContext as _, Bounds, Context, ElementId, Entity,
     EntityInputHandler as _, EventEmitter, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Pixels, Render, RenderImage,
+    IntoElement, MouseButton, ParentElement as _, Pixels, Render, RenderImage, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, WeakEntity,
     Window, anchored, deferred, div, font, point, px, rems,
 };
@@ -109,6 +109,7 @@ pub struct NoteEditor {
     pointer_down: bool,
     /// Rendered formulas by LaTeX source; cleared when color or scale changes.
     math_cache: Rc<RefCell<HashMap<String, MathRender>>>,
+    code: Rc<crate::views::code_highlight::CodeHighlighter>,
     scale: Rc<Cell<f32>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -139,6 +140,9 @@ impl NoteEditor {
             selection_bar: None,
             pointer_down: false,
             math_cache: Rc::new(RefCell::new(HashMap::new())),
+            code: crate::views::code_highlight::CodeHighlighter::new(
+                cx.theme().highlight_theme.clone(),
+            ),
             scale: Rc::new(Cell::new(window.scale_factor())),
             _subscriptions: subscriptions,
         };
@@ -354,6 +358,7 @@ impl NoteEditor {
 
     fn apply_style(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.math_cache.borrow_mut().clear();
+        self.code.set_theme(cx.theme().highlight_theme.clone());
         self.scale.set(window.scale_factor());
         let style = (!self.source_mode).then(|| syntax_style(cx.theme()));
         let em = cx.theme().font_size.as_f32() * MATH_EM_SCALE;
@@ -379,7 +384,15 @@ impl NoteEditor {
                 color_in.set(cx.theme().foreground);
                 em_in.set(cx.theme().font_size.as_f32() * MATH_EM_SCALE);
             }));
+        let code = self.code.clone();
         self.editor.update(cx, |e, _| {
+            e.set_code_highlighter(move |lang, src| code.highlight(lang, src));
+            e.set_code_languages(
+                crate::views::code_highlight::COMMON_LANGUAGES
+                    .iter()
+                    .map(|l| SharedString::from(*l))
+                    .collect(),
+            );
             e.set_block_math_provider(move |latex| {
                 cache
                     .borrow_mut()

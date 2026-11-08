@@ -27,12 +27,16 @@ keepstone-crypto = { path = "crates/crypto" }
 keepstone-ui = { path = "crates/ui" }
 
 # UI. gpui-kit re-exports a pinned GPUI snapshot (gpui-pre). Never add `gpui` directly.
-gpui-kit = "0.9.0"
+gpui-kit = { version = "0.9.0", features = ["syntect"] }
 # Note editor (Obsidian-style live preview) and its LaTeX renderer. Both depend on
 # `gpui-pre` directly, so they are pinned exactly and must resolve to the SAME
 # gpui-pre as gpui-kit (`cargo tree -d -i gpui-pre` shows one). See ADR 0004.
 zorite-editor = "=0.11.3"
 ratex-gpui = { version = "=0.4.1", default-features = false }
+# Code-block colors in notes: the same syntect + two-face versions gpui-kit's
+# `syntect` feature uses (one copy in the tree), ~200 languages, no tree-sitter.
+syntect = { version = "5.3", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
+two-face = { version = "0.4.5", default-features = false, features = ["syntect-fancy"] }
 
 # Core
 serde = { version = "1", features = ["derive"] }
