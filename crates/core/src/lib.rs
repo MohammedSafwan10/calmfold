@@ -21,8 +21,12 @@ mod text;
 
 pub use error::{DomainError, DomainResult};
 pub use event::{Event, EventRecord, Occurrence};
+pub use event_quick_add::{EventDraft, parse_event};
 pub use id::{EventId, NoteId, ProjectId, TaskId};
-pub use jiff::{Timestamp, civil::Date};
+pub use jiff::{
+    Timestamp,
+    civil::{Date, DateTime, Time},
+};
 pub use note::Note;
 pub use project::Project;
 pub use quick_add::{QuickAdd, parse_quick_add};

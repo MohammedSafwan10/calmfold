@@ -11,6 +11,7 @@ fn migrations() -> Migrations<'static> {
             include_str!("../migrations/0002_tags_projects_subtasks.sql"),
             backfill_tags,
         ),
+        M::up(include_str!("../migrations/0003_events.sql")),
     ])
 }
 

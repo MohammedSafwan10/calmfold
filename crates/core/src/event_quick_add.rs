@@ -27,9 +27,26 @@ pub struct EventDraft {
     pub start: DateTime,
     pub end: DateTime,
     pub recurrence: Option<Recurrence>,
+    /// Whether the text named a day (or a repeat that picked one).
+    pub dated: bool,
 }
 
 impl EventDraft {
+    /// Moves an undated draft to `day` (the day a calendar has selected),
+    /// keeping its times and length.
+    #[must_use]
+    pub fn on_default_day(mut self, day: Date) -> Self {
+        if self.dated {
+            return self;
+        }
+        let shift = day - self.start.date();
+        if let (Ok(start), Ok(end)) = (self.start.checked_add(shift), self.end.checked_add(shift)) {
+            self.start = start;
+            self.end = end;
+        }
+        self
+    }
+
     /// Inclusive last day of an all-day draft.
     #[must_use]
     pub fn last_day(&self) -> Date {
@@ -94,6 +111,7 @@ pub fn parse_event(input: &str, today: Date) -> EventDraft {
         break;
     }
 
+    let dated = day_range.is_some() || recurrence.is_some();
     let (first, last) = day_range.unwrap_or_else(|| {
         let d = recurrence.map_or(today, |r| r.first_on_or_after(today));
         (d, d)
@@ -121,6 +139,7 @@ pub fn parse_event(input: &str, today: Date) -> EventDraft {
                 start,
                 end,
                 recurrence,
+                dated,
             }
         }
         None => EventDraft {
@@ -132,6 +151,7 @@ pub fn parse_event(input: &str, today: Date) -> EventDraft {
                 .unwrap_or(last)
                 .to_datetime(Time::midnight()),
             recurrence,
+            dated,
         },
     }
 }
@@ -303,6 +323,23 @@ mod tests {
         assert!(e.all_day);
         assert_eq!(e.recurrence, Some(Recurrence::YEARLY));
         assert_eq!(e.start, dt("2026-12-03T00:00"));
+    }
+
+    #[test]
+    fn undated_drafts_move_to_the_selected_day() {
+        let day: Date = "2026-11-20".parse().expect("date");
+        let e = parse("Call 9-10am").on_default_day(day);
+        assert_eq!(
+            (e.start, e.end),
+            (dt("2026-11-20T09:00"), dt("2026-11-20T10:00"))
+        );
+        let e = parse("Call tomorrow 9am").on_default_day(day);
+        assert_eq!(e.start, dt("2026-11-09T09:00"), "a named day wins");
+        let e = parse("Holiday").on_default_day(day);
+        assert_eq!(
+            (e.start, e.end),
+            (dt("2026-11-20T00:00"), dt("2026-11-21T00:00"))
+        );
     }
 
     #[test]

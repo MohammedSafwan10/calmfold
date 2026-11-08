@@ -6,6 +6,7 @@
 
 mod codec;
 mod error;
+mod events;
 mod notes;
 mod schema;
 mod tasks;
