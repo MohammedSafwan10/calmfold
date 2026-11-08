@@ -74,6 +74,8 @@ icon_assets!(
         PinOff,
         Plus,
         Search,
+        ChevronUp,
+        ChevronDown,
         Settings,
         SquarePen,
         Sun,

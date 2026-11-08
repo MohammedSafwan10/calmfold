@@ -18,6 +18,9 @@ actions!(
         ToggleSidebar,
         ToggleListPanel,
         ToggleMarkdownSource,
+        FindInNote,
+        FindNext,
+        FindPrevious,
         OpenDailyNote,
         NewProject,
         ImportNotes,
@@ -127,6 +130,9 @@ pub const SHORTCUTS: &[Shortcut] = shortcuts![
     Navigate, "3", "Tasks", GoTasks;
     View, "\\", "Toggle sidebar", ToggleSidebar;
     View, "shift-l", "Toggle note list", ToggleListPanel;
+    View, "f", "Find in note", FindInNote;
+    View, "g", "Next match", FindNext;
+    View, "shift-g", "Previous match", FindPrevious;
 ];
 
 /// Formatting shortcuts, active only while typing in a note (Bear/Notion keys).

@@ -13,6 +13,7 @@
 //! - a selection toolbar (bold, italic, strikethrough, highlight, code, link);
 //! - Markdown block formats (headings, lists, quote) via `keepstone_core::format`;
 //! - `$$…$$` math rendered by `ratex-gpui`;
+//! - find in note (⌘F): matches highlighted in place, ⌘G / ⇧⌘G or Enter / ⇧Enter step;
 //! - routing of link, tag and math events.
 //!
 //! Overlay states (at most one is open):
@@ -30,6 +31,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName as Lucide;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, Theme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -70,6 +72,8 @@ pub enum NoteEditorEvent {
     OpenNote(String),
     /// A `#tag` was clicked: filter the list by it.
     OpenTag(String),
+    /// The active find match moved; scroll it into view.
+    FindMoved,
 }
 
 /// `[[` suggestions at the caret.
@@ -82,6 +86,14 @@ struct LinkMenu {
 
 type MathRender = Option<(Arc<RenderImage>, f32, f32)>;
 
+/// The find bar's state. Matches are case-insensitive, in source byte offsets.
+pub struct Find {
+    pub input: Entity<InputState>,
+    matches: Vec<Range<usize>>,
+    active: Option<usize>,
+    _subscription: Subscription,
+}
+
 pub struct NoteEditor {
     editor: Entity<EditorState>,
     library: WeakEntity<Library>,
@@ -89,6 +101,8 @@ pub struct NoteEditor {
     current: Option<NoteId>,
     source_mode: bool,
     link_menu: Option<LinkMenu>,
+    /// Find in note, while the find bar is open.
+    find: Option<Find>,
     /// Window-space bounds of the selection's first character, while the bar shows.
     selection_bar: Option<Bounds<Pixels>>,
     /// A mouse drag is selecting: show the bar only once it ends.
@@ -121,6 +135,7 @@ impl NoteEditor {
             current: None,
             source_mode: false,
             link_menu: None,
+            find: None,
             selection_bar: None,
             pointer_down: false,
             math_cache: Rc::new(RefCell::new(HashMap::new())),
@@ -139,6 +154,8 @@ impl NoteEditor {
         self.current = id;
         self.close_overlays(cx);
         self.editor.update(cx, |e, cx| e.set_text(text, cx));
+        // Same query, new note: matches follow (from the top).
+        self.refresh_find(true, cx);
     }
 
     pub fn text(&self, cx: &App) -> String {
@@ -205,6 +222,134 @@ impl NoteEditor {
         }
     }
 
+    // ---- Find in note ----
+
+    pub fn find(&self) -> Option<&Find> {
+        self.find.as_ref()
+    }
+
+    /// (active match number, 1-based, and total), for the bar's counter.
+    pub fn find_status(&self) -> Option<(usize, usize)> {
+        let f = self.find.as_ref()?;
+        Some((f.active.map_or(0, |a| a + 1), f.matches.len()))
+    }
+
+    /// Opens the find bar (or focuses it), seeded with the selection if it is one line.
+    pub fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let seed = {
+            let sel = self.selection(window, cx);
+            let text = self.text(cx);
+            text.get(sel)
+                .filter(|s| !s.is_empty() && !s.contains('\n') && s.len() <= 200)
+                .map(str::to_owned)
+        };
+        if self.find.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in note"));
+            let sub = cx.subscribe_in(&input, window, |this, _, event, _, cx| match event {
+                InputEvent::Change => this.refresh_find(true, cx),
+                InputEvent::PressEnter { shift, .. } => {
+                    this.step_find(if *shift { -1 } else { 1 }, cx);
+                }
+                _ => {}
+            });
+            self.find = Some(Find {
+                input,
+                matches: Vec::new(),
+                active: None,
+                _subscription: sub,
+            });
+        }
+        let Some(find) = self.find.as_ref() else {
+            return;
+        };
+        let input = find.input.clone();
+        input.update(cx, |i, cx| {
+            if let Some(seed) = seed {
+                i.set_value(seed, window, cx);
+            }
+            i.focus(window, cx);
+            i.select_all(window, cx);
+        });
+        self.close_overlays(cx);
+        self.refresh_find(true, cx);
+        cx.notify();
+    }
+
+    /// Closes the find bar and returns to the text at the active match.
+    pub fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(find) = self.find.take() else {
+            return;
+        };
+        let at = find
+            .active
+            .and_then(|a| find.matches.get(a))
+            .map(|r| r.start);
+        self.editor.update(cx, |e, cx| {
+            e.set_search(Vec::new(), None, cx);
+            if let Some(at) = at {
+                e.set_cursor(at, cx);
+            }
+            e.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Recomputes matches. With `from_caret`, the active match is the first at
+    /// or after the caret (typing a query); otherwise it keeps its place (edits).
+    fn refresh_find(&mut self, from_caret: bool, cx: &mut Context<Self>) {
+        let Some(find) = self.find.as_mut() else {
+            return;
+        };
+        let query = find.input.read(cx).value().to_string();
+        let (matches, caret) = {
+            let e = self.editor.read(cx);
+            (zorite_editor::find_in_source(e.text(), &query), e.cursor())
+        };
+        let previous = find
+            .active
+            .and_then(|a| find.matches.get(a))
+            .map(|r| r.start);
+        let anchor = if from_caret { Some(caret) } else { previous };
+        find.active = (!matches.is_empty()).then(|| {
+            anchor
+                .and_then(|at| matches.iter().position(|r| r.start >= at))
+                .unwrap_or(0)
+        });
+        find.matches = matches.clone();
+        let active = find.active;
+        self.editor
+            .update(cx, |e, cx| e.set_search(matches, active, cx));
+        cx.emit(NoteEditorEvent::FindMoved);
+        cx.notify();
+    }
+
+    /// Moves to the next (`1`) or previous (`-1`) match, wrapping around.
+    pub fn step_find(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(find) = self.find.as_mut() else {
+            return;
+        };
+        let n = find.matches.len() as isize;
+        if n == 0 {
+            return;
+        }
+        let at = find
+            .active
+            .map_or(if delta > 0 { -1 } else { 0 }, |a| a as isize);
+        find.active = Some((at + delta).rem_euclid(n) as usize);
+        let (matches, active) = (find.matches.clone(), find.active);
+        self.editor
+            .update(cx, |e, cx| e.set_search(matches, active, cx));
+        cx.emit(NoteEditorEvent::FindMoved);
+        cx.notify();
+    }
+
+    /// Window-space top of the active match's row, after layout.
+    pub fn active_match_top(&self, cx: &App) -> Option<Pixels> {
+        let f = self.find.as_ref()?;
+        let r = f.matches.get(f.active?)?;
+        self.editor.read(cx).offset_screen_top(r.start)
+    }
+
     // ---- Style and providers ----
 
     fn apply_style(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -261,6 +406,7 @@ impl NoteEditor {
             EditorEvent::Changed => {
                 self.selection_bar = None;
                 self.refresh_link_menu(cx);
+                self.refresh_find(false, cx);
                 cx.emit(NoteEditorEvent::Changed);
                 cx.emit(NoteEditorEvent::CaretMoved);
             }

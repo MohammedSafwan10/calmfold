@@ -1508,3 +1508,73 @@ fn arrow_keys_move_through_math_blocks(cx: &mut TestAppContext) {
         "and leaves it again"
     );
 }
+
+#[gpui_kit::test]
+fn find_in_note_counts_steps_wraps_and_closes(cx: &mut TestAppContext) {
+    use keepstone_desktop::actions::{FindInNote, FindNext, FindPrevious};
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    dispatch(&app, cx, GoNotes);
+    open_note_with(
+        &app,
+        cx,
+        "Groceries",
+        "Milk, eggs.\nMore milk later.\nNo MILK at all",
+    );
+    let editor = note_editor(&app, cx);
+    let status = |cx: &mut TestAppContext| cx.read(|cx| editor.read(cx).find_status());
+
+    assert_eq!(status(cx), None, "closed until asked for");
+    dispatch(&app, cx, FindInNote);
+    assert_eq!(status(cx), Some((0, 0)), "open with an empty query");
+    type_text(&app, cx, "milk");
+    assert_eq!(
+        status(cx),
+        Some((1, 3)),
+        "case-insensitive, active on the first"
+    );
+
+    dispatch(&app, cx, FindNext);
+    assert_eq!(status(cx), Some((2, 3)));
+    press(&app, cx, "enter");
+    assert_eq!(
+        status(cx),
+        Some((3, 3)),
+        "Enter in the field goes to the next"
+    );
+    dispatch(&app, cx, FindNext);
+    assert_eq!(status(cx), Some((1, 3)), "wraps to the first");
+    dispatch(&app, cx, FindPrevious);
+    assert_eq!(status(cx), Some((3, 3)), "and back to the last");
+    press(&app, cx, "shift-enter");
+    assert_eq!(status(cx), Some((2, 3)));
+
+    // Edits keep the count current.
+    cx.update(|cx| {
+        let engine = editor.read(cx).engine().clone();
+        engine.update(cx, |e, cx| e.replace_range(0..4, "Oat", cx));
+        engine.update(cx, |_, cx| cx.emit(zorite_editor::EditorEvent::Changed));
+    });
+    cx.run_until_parked();
+    assert_eq!(status(cx).map(|s| s.1), Some(2), "matches follow the text");
+
+    press(&app, cx, "escape");
+    assert_eq!(status(cx), None, "Escape closes the bar");
+    let focused = cx
+        .update_window(app.window, |_, window, cx| {
+            editor.read(cx).is_focused(window, cx)
+        })
+        .expect("window");
+    assert!(focused, "and puts you back in the text");
+
+    // ⌘F with a selection searches for it.
+    press(&app, cx, &secondary("a"));
+    cx.update(|cx| {
+        let engine = editor.read(cx).engine().clone();
+        engine.update(cx, |e, cx| e.set_cursor(0, cx));
+    });
+    cx.run_until_parked();
+    dispatch(&app, cx, FindInNote);
+    type_text(&app, cx, "zzz");
+    assert_eq!(status(cx), Some((0, 0)), "no match shows zero");
+}

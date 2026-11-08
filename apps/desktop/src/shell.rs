@@ -27,9 +27,9 @@ use keepstone_core::NoteId;
 use keepstone_ui::appearance::{self, ThemePreference};
 
 use crate::actions::{
-    ExportNotes, GoNotes, GoSettings, GoTasks, GoToday, ImportNotes, NewNote, NewProject, NewTask,
-    OpenCommandPalette, OpenDailyNote, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar,
-    UseDarkTheme, UseLightTheme, UseSystemTheme,
+    ExportNotes, FindInNote, FindNext, FindPrevious, GoNotes, GoSettings, GoTasks, GoToday,
+    ImportNotes, NewNote, NewProject, NewTask, OpenCommandPalette, OpenDailyNote, ToggleListPanel,
+    ToggleMarkdownSource, ToggleSidebar, UseDarkTheme, UseLightTheme, UseSystemTheme,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
@@ -700,6 +700,12 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["notes", "panel", "focus"],
         ),
         cmd(
+            "Find in note",
+            Lucide::Search,
+            Box::new(FindInNote),
+            &["search", "replace", "match"],
+        ),
+        cmd(
             "Show or hide Markdown source",
             Lucide::Code,
             Box::new(ToggleMarkdownSource),
@@ -772,6 +778,28 @@ pub fn register_commands(cx: &mut App) {
         });
     });
     cx.on_action(|_: &OpenDailyNote, cx| with_shell(cx, |s, w, cx| s.open_daily_note(w, cx)));
+    cx.on_action(|_: &FindInNote, cx| {
+        // Find belongs to the open note; other screens have their own search.
+        with_shell(cx, |s, w, cx| {
+            if s.route() == Route::Notes {
+                s.notes.update(cx, |n, cx| n.open_find(w, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &FindNext, cx| {
+        with_shell(cx, |s, w, cx| {
+            if s.route() == Route::Notes {
+                s.notes.update(cx, |n, cx| n.step_find(1, w, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &FindPrevious, cx| {
+        with_shell(cx, |s, w, cx| {
+            if s.route() == Route::Notes {
+                s.notes.update(cx, |n, cx| n.step_find(-1, w, cx));
+            }
+        })
+    });
     cx.on_action(|_: &ToggleMarkdownSource, cx| {
         with_shell(cx, |s, w, cx| {
             if s.route() == Route::Notes {

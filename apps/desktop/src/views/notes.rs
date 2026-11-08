@@ -22,7 +22,9 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, ClickEvent, Context, ElementId, Entity, EventEmitter, FocusHandle,
@@ -137,6 +139,9 @@ impl NotesView {
                 NoteEditorEvent::OpenTag(tag) => {
                     this.set_tag_filter(Some(tag.clone()), window, cx);
                 }
+                NoteEditorEvent::FindMoved => cx.on_next_frame(window, |_, window, cx| {
+                    cx.on_next_frame(window, |this, _, cx| this.reveal_match(cx));
+                }),
             }),
         ];
 
@@ -449,6 +454,137 @@ impl NotesView {
         if let Some((id, pinned)) = self.open.as_ref().map(|o| (o.id, o.pinned)) {
             self.set_pinned(id, !pinned, window, cx);
         }
+    }
+
+    /// Opens the find bar for the open note (⌘F).
+    pub fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open.as_ref().is_none_or(|o| o.trashed) {
+            return;
+        }
+        self.body.update(cx, |b, cx| b.open_find(window, cx));
+        cx.notify();
+    }
+
+    /// Next (`1`) or previous (`-1`) match (⌘G / ⇧⌘G). Opens the bar if closed.
+    pub fn step_find(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.body.read(cx).find().is_none() {
+            return self.open_find(window, cx);
+        }
+        self.body.update(cx, |b, cx| b.step_find(delta, cx));
+    }
+
+    fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.body.update(cx, |b, cx| b.close_find(window, cx));
+        cx.notify();
+    }
+
+    /// Scrolls so the active find match sits in the upper third of the page.
+    fn reveal_match(&mut self, cx: &mut Context<Self>) {
+        let Some(top) = self.body.read(cx).active_match_top(cx) else {
+            return;
+        };
+        let viewport = self.page_scroll.bounds();
+        if viewport.size.height <= px(0.) {
+            return;
+        }
+        let line = cx.theme().font_size * 2.;
+        if top >= viewport.top() + line && top + line <= viewport.bottom() - line {
+            return; // already comfortably visible
+        }
+        let mut offset = self.page_scroll.offset();
+        offset.y += viewport.top() + viewport.size.height / 3. - top;
+        let max = self.page_scroll.max_offset().y;
+        offset.y = offset.y.min(px(0.)).max(-max);
+        self.page_scroll.set_offset(offset);
+        cx.notify();
+    }
+
+    /// The find bar, in the toolbar's left slot: field, "2 of 7", ↑ ↓, close.
+    fn render_find_bar(&self, cx: &Context<Self>) -> Option<gpui_kit::AnyElement> {
+        let body = self.body.read(cx);
+        let find = body.find()?;
+        let (at, total) = body.find_status().unwrap_or((0, 0));
+        let query_empty = find.input.read(cx).value().is_empty();
+        let theme = cx.theme();
+        let status: SharedString = match (query_empty, total) {
+            (true, _) => "".into(),
+            (false, 0) => "No matches".into(),
+            (false, n) => format!("{at} of {n}").into(),
+        };
+        let nav = |id: &'static str,
+                   icon: Lucide,
+                   label: &'static str,
+                   action: Box<dyn gpui_kit::Action>,
+                   delta: isize,
+                   cx: &Context<Self>| {
+            Button::new(id)
+                .ghost()
+                .xsmall()
+                .icon(icon)
+                .disabled(total == 0)
+                .tooltip_with_action(label, action.as_ref(), None)
+                .on_click(cx.listener(move |this, _, window, cx| this.step_find(delta, window, cx)))
+        };
+        Some(
+            h_flex()
+                .id("find-bar")
+                .test_support()
+                .gap_1()
+                .items_center()
+                .w(rems(22.))
+                .key_context("FindBar")
+                .on_action(cx.listener(
+                    |this, _: &gpui_kit::component::input::Escape, window, cx| {
+                        this.close_find(window, cx)
+                    },
+                ))
+                .child(
+                    div().flex_1().min_w_0().child(
+                        Input::new(&find.input).small().prefix(
+                            Icon::new(Lucide::Search)
+                                .xsmall()
+                                .text_color(theme.muted_foreground),
+                        ),
+                    ),
+                )
+                .child(
+                    div()
+                        .id("find-status")
+                        .min_w(rems(4.5))
+                        .text_xs()
+                        .text_color(if total == 0 && !query_empty {
+                            theme.danger
+                        } else {
+                            theme.muted_foreground
+                        })
+                        .child(status),
+                )
+                .child(nav(
+                    "find-prev",
+                    Lucide::ChevronUp,
+                    "Previous match",
+                    Box::new(crate::actions::FindPrevious),
+                    -1,
+                    cx,
+                ))
+                .child(nav(
+                    "find-next",
+                    Lucide::ChevronDown,
+                    "Next match",
+                    Box::new(crate::actions::FindNext),
+                    1,
+                    cx,
+                ))
+                .child(
+                    Button::new("find-close")
+                        .ghost()
+                        .xsmall()
+                        .icon(Lucide::X)
+                        .tooltip("Close (Esc)")
+                        .on_click(cx.listener(|this, _, window, cx| this.close_find(window, cx))),
+                )
+                .into_any_element(),
+        )
     }
 
     /// Shows the raw Markdown instead of the live preview (and back).
@@ -1052,7 +1188,8 @@ impl NotesView {
                     .child("In trash · read-only")
                     .into_any_element()
             } else {
-                div().into_any_element()
+                self.render_find_bar(cx)
+                    .unwrap_or_else(|| div().into_any_element())
             })
             .child(h_flex().gap_1().map(|this| {
                 if trashed {

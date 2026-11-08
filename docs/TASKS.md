@@ -23,8 +23,9 @@ Calm, organized, not noisy; keyboard path; empty/error states; one source of tru
 
 ## 2. Editor features left over
 
-- [ ] Find in note (⌘F): find bar, next/prev (Enter/⇧Enter), match count, Esc,
-      scroll match into view (`EditorState::set_search`, `find_in_source`).
+- [x] Find in note (⌘F): bar in the toolbar's left slot, "2 of 7", ⌘G/⇧⌘G and
+      Enter/⇧Enter, wraps, Esc returns to the text, seeded from a one-line selection,
+      counts follow edits, scrolls the match into view. UI test.
 - [ ] Code-block syntax colors (`set_code_highlighter`, theme-aware).
 - [ ] Mermaid diagrams rendered (`set_block_mermaid_provider`), raw on caret.
 - [ ] Spell-check (macOS native via `os-spellcheck`, squiggles + suggestions), with a Settings toggle.
