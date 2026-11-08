@@ -15,10 +15,18 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Next steps (in order)
 
-1. Decide on live (visual) editing. Candidate: `gpui-kit-markdown-editor`
-   (git dep, block WYSIWYG on `gpui_kit::base::text::editor_host`). Prototype on a
-   branch first; must keep `[[links]]` + autocomplete, `#tags`, exact Markdown
-   round-trip of existing notes, undo, paste. Known gap: empty paragraphs are dropped.
+1. Live Preview editing (Obsidian-style) as the default, Source mode in "…",
+   Preview stays. Chosen candidate: `zorite-editor` 0.11 (MIT). Its buffer *is*
+   the Markdown text (markers hidden, revealed at the caret), so saving is
+   lossless; it has wiki-links, tags, `==highlight==`, suggestions, auto-grow.
+   Probe (2026-11-08): resolves to our single `gpui-pre 0.3.11` and compiles
+   with gpui-kit 0.9. Rejected `gpui-kit-markdown-editor`: block model
+   re-serializes Markdown (drops empty paragraphs, changes list spacing).
+   Risks: it depends on `gpui-pre` directly (record an ADR as an exception to
+   hard rule 2; upgrades must move in step with gpui-kit), single maintainer,
+   theme colors must be mapped from `cx.theme()`. Prototype on a branch;
+   gate on: byte-identical round-trip of every note, `[[` completion, undo,
+   paste, IME, 60 fps typing in a 2 MiB note.
 2. Window size/position restore; app icon (plan 01 open items).
 3. Vault (plan 05): migration, lock state machine with table test, setup/unlock UI.
 4. Verify a Windows build and fix anything platform-specific.
@@ -45,9 +53,18 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 rm -rf /tmp/ks && cargo run -p keepstone-storage --example seed -- /tmp/ks/keepstone.sqlite3
 KEEPSTONE_DATA_DIR=/tmp/ks KEEPSTONE_DEV_ROUTE=notes cargo run   # debug: open on a screen
 scripts/screenshot.sh target/shot.png
+KEEPSTONE_DEV_ROUTE=notes KEEPSTONE_DEV_PREVIEW=1 cargo run   # debug: first note in Preview
 ```
 
 ## Log
+
+### 2026-11-08: Italic and highlight render
+
+- Italic looked upright: Inter italics weren't bundled. Added Inter 4.1
+  Italic/Medium/SemiBold/Bold Italic (same release as the others).
+- `==highlight==` showed raw: CommonMark has no highlight. `core::format::highlight_spans`
+  + preview turns them into `<mark>` (code, links and tags untouched).
+- Editor research and decision: see Next steps #1.
 
 ### 2026-11-08: Finish Notes, Tasks, Today
 

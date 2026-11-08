@@ -16,6 +16,11 @@ static FONT_FILES: &[&[u8]] = &[
     include_bytes!("../assets/fonts/inter/Inter-Medium.ttf"),
     include_bytes!("../assets/fonts/inter/Inter-SemiBold.ttf"),
     include_bytes!("../assets/fonts/inter/Inter-Bold.ttf"),
+    // Without real italics, *emphasis* falls back to upright Regular.
+    include_bytes!("../assets/fonts/inter/Inter-Italic.ttf"),
+    include_bytes!("../assets/fonts/inter/Inter-MediumItalic.ttf"),
+    include_bytes!("../assets/fonts/inter/Inter-SemiBoldItalic.ttf"),
+    include_bytes!("../assets/fonts/inter/Inter-BoldItalic.ttf"),
     include_bytes!("../assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"),
     include_bytes!("../assets/fonts/jetbrains-mono/JetBrainsMono-Bold.ttf"),
 ];

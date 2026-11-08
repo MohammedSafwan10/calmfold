@@ -204,12 +204,85 @@ fn clamp(doc: &str, sel: Range<usize>) -> Range<usize> {
     a.min(b)..a.max(b)
 }
 
+/// The `==` delimiters of each `==highlight==` (Obsidian syntax), as
+/// (opening range, closing range) pairs. CommonMark has no highlight, so
+/// renderers turn these into `<mark>`. Like Obsidian: the text inside must not
+/// start or end with a space, highlights stay on one line, code is skipped.
+#[must_use]
+pub fn highlight_spans(doc: &str) -> Vec<(Range<usize>, Range<usize>)> {
+    let mut out = Vec::new();
+    let mut fenced = false;
+    let mut offset = 0;
+    for line in doc.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        let bytes = line.as_bytes();
+        let mut in_code = false;
+        let mut open: Option<usize> = None;
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'`' => {
+                    in_code = !in_code;
+                    i += 1;
+                }
+                b'=' if !in_code && bytes.get(i + 1) == Some(&b'=') => {
+                    let after = line[i + 2..].chars().next();
+                    match open {
+                        Some(o) if !line[..i].ends_with(char::is_whitespace) && i > o + 2 => {
+                            out.push((start + o..start + o + 2, start + i..start + i + 2));
+                            open = None;
+                        }
+                        _ if after.is_some_and(|c| !c.is_whitespace() && c != '=') => {
+                            open = Some(i);
+                        }
+                        _ => {}
+                    }
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn apply(doc: &str, e: &Edit) -> String {
         format!("{}{}{}", &doc[..e.range.start], e.text, &doc[e.range.end..])
+    }
+
+    fn highlighted(doc: &str) -> Vec<&str> {
+        highlight_spans(doc)
+            .into_iter()
+            .map(|(open, close)| &doc[open.end..close.start])
+            .collect()
+    }
+
+    #[test]
+    fn finds_highlights_like_obsidian() {
+        assert_eq!(
+            highlighted("a ==one== and ==two words== z"),
+            ["one", "two words"]
+        );
+        assert_eq!(highlighted("==s==\nsfs"), ["s"]);
+        // Spaces inside the markers, empty, unclosed, across lines: not highlights.
+        assert!(highlighted("== no == ==== ==open\nclose==").is_empty());
+        // Code is left alone.
+        assert!(highlighted("`==code==`\n```\n==fenced==\n```").is_empty());
+        assert_eq!(highlighted("x == y and ==real=="), ["real"]);
+        assert_eq!(highlighted("é ==ünï== ü"), ["ünï"]);
     }
 
     #[test]

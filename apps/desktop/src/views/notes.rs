@@ -1521,6 +1521,19 @@ fn preview_markdown(body: &str) -> String {
             (range, format!("[{}]({url})", escape_link_text(&text)))
         }))
         .collect();
+    // ==highlight== → <mark>…</mark> (the renderer understands the HTML tag).
+    // Delimiters inside a link or tag are left as typed.
+    let marks: Vec<_> = keepstone_core::format::highlight_spans(body)
+        .into_iter()
+        .filter(|(open, close)| {
+            !spans.iter().any(|(r, _)| {
+                (r.start < open.end && open.start < r.end)
+                    || (r.start < close.end && close.start < r.end)
+            })
+        })
+        .flat_map(|(open, close)| [(open, "<mark>".to_owned()), (close, "</mark>".to_owned())])
+        .collect();
+    spans.extend(marks);
     spans.sort_by_key(|(r, _)| r.start);
     let mut out = String::with_capacity(body.len() + 64);
     let mut last = 0;
@@ -1630,5 +1643,21 @@ impl Render for NotesView {
                     .child(self.render_list(cx)),
             )
             .child(self.render_editor(window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preview_markdown;
+
+    #[test]
+    fn preview_turns_highlights_into_mark_tags() {
+        assert_eq!(
+            preview_markdown("Pay ==rent== by `==code==`"),
+            "Pay <mark>rent</mark> by `==code==`"
+        );
+        let linked = preview_markdown("==See [[Car]]== now");
+        assert!(linked.starts_with("<mark>See ["), "{linked}");
+        assert!(linked.ends_with("</mark> now"), "{linked}");
     }
 }

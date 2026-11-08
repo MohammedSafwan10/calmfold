@@ -90,6 +90,16 @@ pub fn start(
         window.update(cx, |_, window, cx| {
             shell.update(cx, |s, cx| s.navigate(route, window, cx))
         })?;
+        // KEEPSTONE_DEV_PREVIEW=1 with route=notes: open the first note in Preview.
+        if route == views::Route::Notes && std::env::var_os("KEEPSTONE_DEV_PREVIEW").is_some() {
+            window.update(cx, |_, window, cx| {
+                let notes = shell.read(cx).notes().clone();
+                notes.update(cx, |n, cx| {
+                    n.ensure_selection(window, cx);
+                    n.toggle_mode(window, cx);
+                });
+            })?;
+        }
     }
     Ok((window, shell))
 }
