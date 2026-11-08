@@ -45,6 +45,7 @@ icon_assets!(
         SunMoon,
         Sunrise,
         Trash,
+        TriangleAlert,
     ]
 );
 

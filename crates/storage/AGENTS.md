@@ -16,6 +16,13 @@ SQLite persistence. One `Store` owns one connection.
   include the stored value.
 - List queries return lightweight summaries (`NoteSummary`); load full bodies by ID.
 
+## Known limits
+
+- `notes_fts` is an external-content index keyed by SQLite's implicit `rowid`.
+  Never run `VACUUM` without `INSERT INTO notes_fts(notes_fts) VALUES('rebuild')` after it.
+- `lower()` is ASCII-only, so `find_note_by_title` misses non-ASCII capitals.
+  Add a normalized `title_key` column (migration) before relying on it.
+
 ## Test
 
 `cargo test -p keepstone-storage` (in-memory databases; one test uses a temp file).

@@ -218,6 +218,12 @@ impl Library {
         Ok(n)
     }
 
+    pub fn delete_task_permanently(&mut self, id: TaskId, cx: &mut Context<Self>) -> Result<()> {
+        self.store.delete_task_permanently(id)?;
+        cx.emit(LibraryEvent::TasksChanged);
+        Ok(())
+    }
+
     fn update_task(
         &mut self,
         id: TaskId,

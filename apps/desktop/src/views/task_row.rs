@@ -117,6 +117,7 @@ pub fn task_row(task: &Task, today: Date, library: &Entity<Library>, cx: &App) -
             &key,
             id,
             task.priority(),
+            task.status(),
             trashed,
             today,
             library,
@@ -127,6 +128,7 @@ fn task_menu(
     key: &SharedString,
     id: TaskId,
     priority: Priority,
+    status: TaskStatus,
     trashed: bool,
     today: Date,
     library: &Entity<Library>,
@@ -139,7 +141,13 @@ fn task_menu(
         .tooltip("Task actions")
         .dropdown_menu(move |menu, _, _| {
             let lib = library.clone();
-            let item = move |label: &'static str, f: fn(&mut Library, TaskId, Date, &mut gpui_kit::Context<Library>) -> anyhow::Result<()>| {
+            let item = move |label: &'static str,
+                             f: fn(
+                &mut Library,
+                TaskId,
+                Date,
+                &mut gpui_kit::Context<Library>,
+            ) -> anyhow::Result<()>| {
                 let lib = lib.clone();
                 PopupMenuItem::new(label).on_click(move |_, window, cx| {
                     notify_err(lib.update(cx, |l, cx| f(l, id, today, cx)), window, cx);
@@ -150,25 +158,33 @@ fn task_menu(
                 return menu
                     .item(item("Restore", |l, id, _, cx| l.restore_task(id, cx)))
                     .separator()
-                    .item(PopupMenuItem::new("Empty trash…").on_click(move |_, window, cx| {
-                        let lib = lib.clone();
-                        feedback::confirm_destructive(
-                            Confirm::new(
-                                "Empty task trash?",
-                                "Every task in the trash will be deleted forever. This can't be undone.",
-                                "Empty trash",
-                            ),
-                            window,
-                            cx,
-                            move |window, cx| {
-                                notify_err(lib.update(cx, |l, cx| l.empty_task_trash(cx)), window, cx);
-                            },
-                        );
-                    }));
+                    .item(
+                        PopupMenuItem::new("Delete forever…").on_click(move |_, window, cx| {
+                            let lib = lib.clone();
+                            feedback::confirm_destructive(
+                                Confirm::new(
+                                    "Delete this task forever?",
+                                    "This can't be undone.",
+                                    "Delete",
+                                ),
+                                window,
+                                cx,
+                                move |window, cx| {
+                                    notify_err(
+                                        lib.update(cx, |l, cx| l.delete_task_permanently(id, cx)),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            );
+                        }),
+                    );
             }
             let check = |p: Priority| priority == p;
             menu.label("Due")
-                .item(item("Today", |l, id, today, cx| l.set_task_due(id, Some(today), cx)))
+                .item(item("Today", |l, id, today, cx| {
+                    l.set_task_due(id, Some(today), cx)
+                }))
                 .item(item("Tomorrow", |l, id, today, cx| {
                     l.set_task_due(id, Some(today.tomorrow()?), cx)
                 }))
@@ -178,22 +194,76 @@ fn task_menu(
                 .item(item("No date", |l, id, _, cx| l.set_task_due(id, None, cx)))
                 .separator()
                 .label("Priority")
-                .item(item("High", |l, id, _, cx| l.set_task_priority(id, Priority::High, cx)).checked(check(Priority::High)))
-                .item(item("Medium", |l, id, _, cx| l.set_task_priority(id, Priority::Medium, cx)).checked(check(Priority::Medium)))
-                .item(item("Low", |l, id, _, cx| l.set_task_priority(id, Priority::Low, cx)).checked(check(Priority::Low)))
-                .item(item("None", |l, id, _, cx| l.set_task_priority(id, Priority::None, cx)).checked(check(Priority::None)))
+                .item(
+                    item("High", |l, id, _, cx| {
+                        l.set_task_priority(id, Priority::High, cx)
+                    })
+                    .checked(check(Priority::High)),
+                )
+                .item(
+                    item("Medium", |l, id, _, cx| {
+                        l.set_task_priority(id, Priority::Medium, cx)
+                    })
+                    .checked(check(Priority::Medium)),
+                )
+                .item(
+                    item("Low", |l, id, _, cx| {
+                        l.set_task_priority(id, Priority::Low, cx)
+                    })
+                    .checked(check(Priority::Low)),
+                )
+                .item(
+                    item("None", |l, id, _, cx| {
+                        l.set_task_priority(id, Priority::None, cx)
+                    })
+                    .checked(check(Priority::None)),
+                )
                 .separator()
-                .item(item("Start", |l, id, _, cx| l.set_task_status(id, TaskStatus::InProgress, cx)))
-                .item(item("Cancel task", |l, id, _, cx| l.set_task_status(id, TaskStatus::Cancelled, cx)))
+                // Only offer transitions the state machine allows from the current status.
+                .when(status == TaskStatus::Todo, |m| {
+                    m.item(item("Start", |l, id, _, cx| {
+                        l.set_task_status(id, TaskStatus::InProgress, cx)
+                    }))
+                })
+                .when(status == TaskStatus::InProgress, |m| {
+                    m.item(item("Pause", |l, id, _, cx| {
+                        l.set_task_status(id, TaskStatus::Todo, cx)
+                    }))
+                })
+                .when(status.is_open(), |m| {
+                    m.item(item("Cancel task", |l, id, _, cx| {
+                        l.set_task_status(id, TaskStatus::Cancelled, cx)
+                    }))
+                })
+                .when(!status.is_open(), |m| {
+                    m.item(item("Reopen", |l, id, _, cx| {
+                        l.set_task_status(id, TaskStatus::Todo, cx)
+                    }))
+                })
                 .separator()
                 .item({
                     let lib = library.clone();
                     PopupMenuItem::new("Move to trash").on_click(move |_, window, cx| {
-                        if feedback::report(lib.update(cx, |l, cx| l.trash_task(id, cx)), window, cx).is_some() {
+                        if feedback::report(
+                            lib.update(cx, |l, cx| l.trash_task(id, cx)),
+                            window,
+                            cx,
+                        )
+                        .is_some()
+                        {
                             let lib = lib.clone();
-                            feedback::undo_toast("Task moved to trash.", window, cx, move |window, cx| {
-                                notify_err(lib.update(cx, |l, cx| l.restore_task(id, cx)), window, cx);
-                            });
+                            feedback::undo_toast(
+                                "Task moved to trash.",
+                                window,
+                                cx,
+                                move |window, cx| {
+                                    notify_err(
+                                        lib.update(cx, |l, cx| l.restore_task(id, cx)),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            );
                         }
                     })
                 })

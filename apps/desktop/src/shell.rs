@@ -100,6 +100,12 @@ impl AppShell {
                     this.refresh_badges(cx);
                 }
             }),
+            // ⌘Q or closing the window must not drop typing that is still
+            // waiting for the autosave timer, or an unsaved sidebar width.
+            cx.on_app_quit(|this, cx| {
+                this.save_everything(cx);
+                async {}
+            }),
             cx.observe_window_appearance(window, |_, window, cx| {
                 appearance::system_appearance_changed(window, cx);
             }),
@@ -107,6 +113,9 @@ impl AppShell {
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
                     this.today.update(cx, |today, cx| today.reload(cx));
+                    this.tasks
+                        .update(cx, |tasks, cx| tasks.refresh_if_new_day(cx));
+                    this.refresh_badges(cx);
                 }
             }),
         ];
@@ -128,6 +137,15 @@ impl AppShell {
         };
         this.refresh_badges(cx);
         this
+    }
+
+    /// Flushes everything that is saved lazily.
+    pub fn save_everything(&mut self, cx: &mut Context<Self>) {
+        self.pending_layout_save = None;
+        self.layout.save(&self.layout_file);
+        if let Err(err) = self.notes.update(cx, |notes, cx| notes.save_pending(cx)) {
+            eprintln!("keepstone: could not save the open note on exit: {err:#}");
+        }
     }
 
     fn refresh_badges(&mut self, cx: &mut Context<Self>) {
@@ -293,9 +311,15 @@ impl AppShell {
             })
             .collect();
         let shell = cx.entity().downgrade();
+        let (command_items, command_actions): (Vec<_>, Vec<_>) =
+            palette_commands().into_iter().unzip();
+        let command_actions = std::rc::Rc::new(command_actions);
+        let search_focus = state.focus_handle(cx);
 
         window.open_dialog(cx, move |dialog, _, _| {
             let state = state.clone();
+            let command_items = command_items.clone();
+            let command_actions = command_actions.clone();
             let note_items = note_items.clone();
             let note_ids = note_ids.clone();
             let shell = shell.clone();
@@ -307,6 +331,7 @@ impl AppShell {
                 .content(move |content, _, _| {
                     let note_ids = note_ids.clone();
                     let shell = shell.clone();
+                    let command_actions = command_actions.clone();
                     content.child(
                         Command::new(&state)
                             .bordered(false)
@@ -315,7 +340,7 @@ impl AppShell {
                             .group(
                                 CommandGroup::new()
                                     .label("Commands")
-                                    .items(palette_commands()),
+                                    .items(command_items.clone()),
                             )
                             .when(!note_items.is_empty(), |cmd| {
                                 cmd.group(
@@ -323,9 +348,14 @@ impl AppShell {
                                 )
                             })
                             .on_confirm(move |index, window, cx| {
+                                // Close first: closing restores the previous focus, and
+                                // commands like "New note" must be able to move it.
                                 window.close_dialog(cx);
-                                // Section 0 items carry an Action that already ran.
-                                if index.section == 1
+                                if index.section == 0
+                                    && let Some(action) = command_actions.get(index.row)
+                                {
+                                    window.dispatch_action(action.boxed_clone(), cx);
+                                } else if index.section == 1
                                     && let Some(id) = note_ids.get(index.row).copied()
                                 {
                                     _ = shell
@@ -335,6 +365,8 @@ impl AppShell {
                     )
                 })
         });
+        // Type straight away: the search field takes focus when the palette opens.
+        window.focus(&search_focus, cx);
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -516,68 +548,107 @@ impl AppShell {
 
 /// Commands shown in the palette. Each carries its Action, so the palette also
 /// shows the shortcut.
-fn palette_commands() -> Vec<CommandItem> {
-    let cmd = |label: &str, icon: Lucide, action: Box<dyn Action>, keywords: &[&str]| {
-        CommandItem::new()
-            .label(label.to_owned())
+fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
+    let cmd = |label: &'static str,
+               icon: Lucide,
+               action: Box<dyn Action>,
+               shortcut: Option<&'static str>,
+               keywords: &[&str]| {
+        // A custom row so the shortcut hint shows without attaching the Action:
+        // the palette runs the command itself, after it has closed (see on_confirm).
+        let item = CommandItem::new()
+            .label(label)
             .icon(icon)
-            .action(action)
             .keywords(keywords.iter().map(|k| (*k).to_owned()).collect::<Vec<_>>())
+            .child(move |_, cx| {
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Icon::new(icon)
+                            .small()
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .child(div().flex_1().child(label))
+                    .children(
+                        shortcut
+                            .and_then(|s| Keystroke::parse(s).ok())
+                            .map(|k| Kbd::new(k).appearance(false)),
+                    )
+            });
+        (item, action)
     };
+    let sc = |i: usize| Some(crate::actions::SHORTCUTS[i].0);
     vec![
         cmd(
             "New note",
             Lucide::SquarePen,
             Box::new(NewNote),
+            sc(1),
             &["create", "write"],
         ),
         cmd(
             "New task",
             Lucide::Plus,
             Box::new(NewTask),
+            sc(2),
             &["create", "todo"],
         ),
         cmd(
             "Go to Today",
             Lucide::House,
             Box::new(GoToday),
+            sc(3),
             &["dashboard", "home"],
         ),
-        cmd("Go to Notes", Lucide::NotebookPen, Box::new(GoNotes), &[]),
+        cmd(
+            "Go to Notes",
+            Lucide::NotebookPen,
+            Box::new(GoNotes),
+            sc(4),
+            &[],
+        ),
         cmd(
             "Go to Tasks",
             Lucide::ListTodo,
             Box::new(GoTasks),
+            sc(5),
             &["todo"],
         ),
         cmd(
             "Open settings",
             Lucide::Settings,
             Box::new(GoSettings),
+            sc(6),
             &["preferences"],
         ),
         cmd(
             "Toggle sidebar",
             Lucide::PanelLeft,
             Box::new(ToggleSidebar),
+            sc(7),
             &[],
         ),
         cmd(
             "Use light theme",
             Lucide::Sun,
             Box::new(UseLightTheme),
+            None,
             &["appearance"],
         ),
         cmd(
             "Use dark theme",
             Lucide::Moon,
             Box::new(UseDarkTheme),
+            None,
             &["appearance"],
         ),
         cmd(
             "Use system theme",
             Lucide::SunMoon,
             Box::new(UseSystemTheme),
+            None,
             &["appearance"],
         ),
     ]

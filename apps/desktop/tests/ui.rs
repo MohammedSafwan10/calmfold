@@ -368,3 +368,98 @@ fn delete_forever_requires_confirmation(cx: &mut TestAppContext) {
     assert!(!dialog_open(&app, cx));
     assert_eq!(note_state(&app, cx, id), None, "confirming deletes it");
 }
+
+fn all_note_titles(app: &App, cx: &mut TestAppContext) -> Vec<String> {
+    cx.read(|cx| {
+        app.shell
+            .read(cx)
+            .library()
+            .read(cx)
+            .notes(false)
+            .expect("notes")
+            .into_iter()
+            .map(|n| n.title)
+            .collect()
+    })
+}
+
+#[gpui_kit::test]
+fn title_input_stops_at_the_length_limit(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    dispatch(&app, cx, NewNote);
+    type_text(&app, cx, &"x".repeat(keepstone_core::MAX_TITLE_CHARS + 20));
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    let titles = all_note_titles(&app, cx);
+    assert!(
+        titles
+            .iter()
+            .any(|t| t.chars().count() == keepstone_core::MAX_TITLE_CHARS),
+        "long title is capped and saved: {:?}",
+        titles.iter().map(|t| t.len()).collect::<Vec<_>>()
+    );
+}
+
+#[gpui_kit::test]
+fn failed_save_keeps_the_editor_open(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    let first = create_and_open_note(&app, cx, "First");
+    let second = cx.update(|cx| {
+        app.shell
+            .read(cx)
+            .library()
+            .clone()
+            .update(cx, |lib, cx| lib.create_note("Second", cx))
+            .expect("create")
+    });
+    // Type into the open note, then make its save fail by deleting it underneath.
+    cx.update_window(app.window, |_, window, cx| {
+        app.shell
+            .read(cx)
+            .notes()
+            .clone()
+            .update(cx, |notes, cx| notes.focus_body(window, cx));
+    })
+    .expect("window");
+    cx.run_until_parked();
+    type_text(&app, cx, " unsaved words");
+    cx.update(|cx| {
+        app.shell
+            .read(cx)
+            .library()
+            .clone()
+            .update(cx, |lib, cx| lib.delete_note_permanently(first, cx))
+            .expect("delete");
+    });
+    // Switching must refuse rather than discard the typing.
+    cx.update_window(app.window, |_, window, cx| {
+        app.shell
+            .update(cx, |shell, cx| shell.open_note(second, window, cx));
+    })
+    .expect("window");
+    cx.run_until_parked();
+    let body = cx.read(|cx| app.shell.read(cx).notes().read(cx).body_text(cx));
+    assert!(
+        body.contains("unsaved words"),
+        "editor kept the typing: {body:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn palette_new_note_leaves_focus_in_the_title(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    dispatch(&app, cx, OpenCommandPalette);
+    type_text(&app, cx, "New note");
+    press(&app, cx, "enter");
+    cx.run_until_parked();
+    assert_eq!(route(&app, cx), Route::Notes);
+    type_text(&app, cx, "From palette");
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert!(
+        all_note_titles(&app, cx).contains(&"From palette".to_owned()),
+        "{:?}",
+        all_note_titles(&app, cx)
+    );
+}

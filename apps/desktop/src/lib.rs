@@ -70,6 +70,15 @@ pub fn start(
         cx.new(|cx| AppShell::new(library, paths, window, cx))
     })?;
     AppShell::install(&shell, window, cx);
+    {
+        let shell = shell.downgrade();
+        window.update(cx, |_, window, cx| {
+            window.on_window_should_close(cx, move |_, cx| {
+                _ = shell.update(cx, |shell, cx| shell.save_everything(cx));
+                true
+            });
+        })?;
+    }
 
     // Debug builds only: start on a given screen, for screenshot scripts.
     #[cfg(debug_assertions)]

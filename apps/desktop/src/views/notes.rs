@@ -58,6 +58,7 @@ pub struct NotesView {
     title: Entity<InputState>,
     body: Entity<TextareaState>,
     list: Vec<NoteSummary>,
+    load_error: bool,
     show_trash: bool,
     open: Option<OpenNote>,
     backlinks: Vec<NoteSummary>,
@@ -77,7 +78,12 @@ impl NotesView {
                 .placeholder("Search notes")
                 .clean_on_escape()
         });
-        let title = cx.new(|cx| InputState::new(window, cx).placeholder("Untitled"));
+        let title = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Untitled")
+                // Rejects keystrokes past the domain limit, so a save can never fail on length.
+                .validate(|text, _| text.chars().count() <= keepstone_core::MAX_TITLE_CHARS)
+        });
         let body = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .soft_wrap(true)
@@ -100,12 +106,16 @@ impl NotesView {
                 InputEvent::PressEnter { .. } => {
                     this.body.update(cx, |body, cx| body.focus(window, cx));
                 }
-                InputEvent::Blur => this.flush(window, cx),
+                InputEvent::Blur => {
+                    _ = this.flush(window, cx);
+                }
                 _ => {}
             }),
             cx.subscribe_in(&body, window, |this, _, event, window, cx| match event {
                 InputEvent::Change => this.schedule_save(window, cx),
-                InputEvent::Blur => this.flush(window, cx),
+                InputEvent::Blur => {
+                    _ = this.flush(window, cx);
+                }
                 _ => {}
             }),
         ];
@@ -116,6 +126,7 @@ impl NotesView {
             title,
             body,
             list: Vec::new(),
+            load_error: false,
             show_trash: false,
             open: None,
             backlinks: Vec::new(),
@@ -131,7 +142,9 @@ impl NotesView {
 
     /// Creates a note and opens it with the title focused.
     pub fn new_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.flush(window, cx);
+        if !self.flush(window, cx) {
+            return;
+        }
         self.show_trash = false;
         match self.library.update(cx, |lib, cx| lib.create_note("", cx)) {
             Ok(id) => {
@@ -145,7 +158,9 @@ impl NotesView {
 
     /// Opens `id`, saving the current note first.
     pub fn open_note(&mut self, id: NoteId, window: &mut Window, cx: &mut Context<Self>) {
-        self.flush(window, cx);
+        if !self.flush(window, cx) {
+            return;
+        }
         let note = match self.library.read(cx).note(id) {
             Ok(Some(note)) => note,
             Ok(None) => {
@@ -193,6 +208,15 @@ impl NotesView {
         }
     }
 
+    pub fn focus_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.body.update(cx, |b, cx| b.focus(window, cx));
+    }
+
+    /// Current editor body text (for tests and diagnostics).
+    pub fn body_text(&self, cx: &App) -> String {
+        self.body.read(cx).value().to_string()
+    }
+
     pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.search.update(cx, |s, cx| s.focus(window, cx));
     }
@@ -208,8 +232,15 @@ impl NotesView {
             library.search_notes(&query, SEARCH_LIMIT)
         };
         match result {
-            Ok(list) => self.list = list,
-            Err(err) => eprintln!("keepstone: failed to load notes: {err:#}"),
+            Ok(list) => {
+                self.list = list;
+                self.load_error = false;
+            }
+            Err(err) => {
+                eprintln!("keepstone: failed to load notes: {err:#}");
+                self.list.clear();
+                self.load_error = true;
+            }
         }
         cx.notify();
     }
@@ -240,36 +271,43 @@ impl NotesView {
         }));
     }
 
-    /// Writes pending edits now. Safe to call at any time.
-    fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Writes pending edits now. Returns `false` if saving failed: the editor
+    /// stays Dirty and callers must not replace its content (that would lose typing).
+    fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        match self.save_pending(cx) {
+            Ok(()) => true,
+            Err(err) => {
+                notify_err::<()>(Err(err), window, cx);
+                false
+            }
+        }
+    }
+
+    /// Saves pending edits without UI feedback (used on quit and window close).
+    pub fn save_pending(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
         self.pending_save = None;
         if !self.dirty {
-            return;
+            return Ok(());
         }
         let Some(open) = &self.open else {
             self.dirty = false;
-            return;
+            return Ok(());
         };
         let id = open.id;
         let title = self.title.read(cx).value().to_string();
         let body = self.body.read(cx).value().to_string();
-        let result = self
-            .library
-            .update(cx, |lib, cx| lib.edit_note(id, &title, &body, cx));
-        match result {
-            Ok(_) => {
-                self.dirty = false;
-                let saved_title = keepstone_core::normalize_title(&title)
-                    .unwrap_or_else(|_| keepstone_core::note::UNTITLED.to_owned());
-                if let Some(open) = &mut self.open
-                    && open.title != saved_title
-                {
-                    open.title = saved_title;
-                    self.reload_backlinks(cx);
-                }
-            }
-            Err(err) => notify_err::<()>(Err(err), window, cx),
+        self.library
+            .update(cx, |lib, cx| lib.edit_note(id, &title, &body, cx))?;
+        self.dirty = false;
+        let saved_title = keepstone_core::normalize_title(&title)
+            .unwrap_or_else(|_| keepstone_core::note::UNTITLED.to_owned());
+        if let Some(open) = &mut self.open
+            && open.title != saved_title
+        {
+            open.title = saved_title;
+            self.reload_backlinks(cx);
         }
+        Ok(())
     }
 
     fn toggle_pin(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -285,7 +323,9 @@ impl NotesView {
     }
 
     fn trash_open(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.flush(window, cx);
+        if !self.flush(window, cx) {
+            return;
+        }
         let Some(open) = self.open.take() else { return };
         let id = open.id;
         match self.library.update(cx, |lib, cx| lib.trash_note(id, cx)) {
@@ -395,7 +435,9 @@ impl NotesView {
         if self.show_trash == show {
             return;
         }
-        self.flush(window, cx);
+        if !self.flush(window, cx) {
+            return;
+        }
         self.show_trash = show;
         self.open = None;
         self.reload_list(cx);
@@ -508,6 +550,12 @@ impl NotesView {
         });
 
         let empty = match (self.show_trash, searching) {
+            _ if self.load_error => empty_state(
+                Lucide::TriangleAlert,
+                "Couldn't load notes",
+                "Your notes are still on disk. Restart Keepstone; if this keeps happening, check the data folder in Settings.",
+                cx,
+            ),
             (true, _) => empty_state(
                 Lucide::Trash,
                 "Trash is empty",
@@ -585,7 +633,7 @@ impl NotesView {
             self.mode,
             move |mode, window, cx| {
                 _ = view.update(cx, |this, cx| {
-                    this.flush(window, cx);
+                    _ = this.flush(window, cx);
                     this.mode = mode;
                     cx.notify();
                 });

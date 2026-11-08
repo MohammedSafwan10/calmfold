@@ -1,6 +1,7 @@
 //! Tasks screen: quick add plus Today / Upcoming / All / Done / Trash lists.
 
 use gpui_kit::assets::IconName as Lucide;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -12,6 +13,7 @@ use gpui_kit::{
 use keepstone_core::{Date, Task, clock};
 use keepstone_storage::TaskFilter;
 use keepstone_ui::components::{empty_state, page_header, segmented};
+use keepstone_ui::feedback::{self, Confirm};
 
 use crate::library::{Library, LibraryEvent};
 use crate::views::task_row::{notify_err, task_row};
@@ -50,6 +52,7 @@ pub struct TasksView {
     input: Entity<InputState>,
     tab: TaskTab,
     tasks: Vec<Task>,
+    load_error: bool,
     today: Date,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -76,6 +79,7 @@ impl TasksView {
             input,
             tab: TaskTab::Today,
             tasks: Vec::new(),
+            load_error: false,
             today: clock::today(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -103,11 +107,25 @@ impl TasksView {
         }
     }
 
+    /// Reloads when the date changed since the last load (app left open overnight).
+    pub fn refresh_if_new_day(&mut self, cx: &mut Context<Self>) {
+        if clock::today() != self.today {
+            self.reload(cx);
+        }
+    }
+
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.today = clock::today();
         match self.library.read(cx).tasks(self.tab.filter(self.today)) {
-            Ok(tasks) => self.tasks = tasks,
-            Err(err) => eprintln!("keepstone: failed to load tasks: {err:#}"),
+            Ok(tasks) => {
+                self.tasks = tasks;
+                self.load_error = false;
+            }
+            Err(err) => {
+                eprintln!("keepstone: failed to load tasks: {err:#}");
+                self.tasks.clear();
+                self.load_error = true;
+            }
         }
         cx.notify();
     }
@@ -117,8 +135,13 @@ impl TasksView {
         if title.trim().is_empty() {
             return;
         }
-        // New tasks land where the user is looking: "Today" gets today's date.
-        let due = (self.tab == TaskTab::Today).then_some(self.today);
+        // New tasks land where the user is looking: Today → due today,
+        // Upcoming → due tomorrow, otherwise no date.
+        let due = match self.tab {
+            TaskTab::Today => Some(self.today),
+            TaskTab::Upcoming => self.today.tomorrow().ok(),
+            _ => None,
+        };
         let result = self
             .library
             .update(cx, |lib, cx| lib.create_task(&title, due, cx));
@@ -127,6 +150,36 @@ impl TasksView {
                 .update(cx, |input, cx| input.set_value("", window, cx));
         }
         notify_err(result, window, cx);
+    }
+}
+
+impl TasksView {
+    fn empty_trash(
+        &mut self,
+        _: &gpui_kit::ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let library = self.library.clone();
+        feedback::confirm_destructive(
+            Confirm::new(
+                "Empty task trash?",
+                format!(
+                    "{} task(s) will be deleted forever. This can't be undone.",
+                    self.tasks.len()
+                ),
+                "Empty trash",
+            ),
+            window,
+            cx,
+            move |window, cx| {
+                notify_err(
+                    library.update(cx, |lib, cx| lib.empty_task_trash(cx)),
+                    window,
+                    cx,
+                );
+            },
+        );
     }
 }
 
@@ -149,6 +202,10 @@ impl Render for TasksView {
         );
 
         let (empty_title, empty_desc) = match self.tab {
+            _ if self.load_error => (
+                "Couldn't load tasks",
+                "Your tasks are still on disk. Restart Keepstone; if this keeps happening, check the data folder in Settings.",
+            ),
             TaskTab::Today => (
                 "Nothing due today",
                 "Add a task above. Tasks added here are due today.",
@@ -180,7 +237,23 @@ impl Render for TasksView {
                             .items_end()
                             .gap_4()
                             .child(page_header("Tasks", None, cx))
-                            .child(tab_bar),
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .when(
+                                        self.tab == TaskTab::Trash && !self.tasks.is_empty(),
+                                        |this| {
+                                            this.child(
+                                                Button::new("tasks-empty-trash")
+                                                    .ghost()
+                                                    .small()
+                                                    .label("Empty trash")
+                                                    .on_click(cx.listener(Self::empty_trash)),
+                                            )
+                                        },
+                                    )
+                                    .child(tab_bar),
+                            ),
                     )
                     .children(show_input.then(|| {
                         Input::new(&self.input).prefix(

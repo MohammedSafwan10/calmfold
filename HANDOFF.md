@@ -4,7 +4,8 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Current state (2026-11-08)
 
-- Branch `main`. `scripts/check.sh` passes: fmt, clippy `-D warnings`, 81 tests.
+- Branch `main`. `scripts/check.sh` passes: fmt, clippy `-D warnings`, 84 tests.
+- Full-tree review: `docs/reviews/2026-11-08-201127-pr-full-tree.md`. High/medium findings fixed (see log).
 - Phase 1 foundation is done and runs on macOS (Apple Silicon, macOS 27).
   Windows is untested on a real machine (CI matrix includes it).
 - Screens: Today, Notes, Tasks, Settings. Command palette, shortcuts, menus.
@@ -27,6 +28,11 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 - If the Mac display is idle, windows are off-screen; `scripts/screenshot.sh`
   falls back to off-screen windows.
 - Note list isn't virtualized yet (fine for hundreds of notes).
+- Sidebar element id includes its width so drag-resize tracks the pointer
+  without easing lag; side effect: submenu expansion resets after a resize
+  (current route's submenu reopens). Fix properly by keying only while dragging.
+- "System" reduce motion is read once at startup.
+- Storage limits (VACUUM + FTS rowid, ASCII-only `lower()`): see `crates/storage/AGENTS.md`.
 - Global quick-capture hotkey and tray icon are unproven with GPUI; prototype first.
 
 ## Useful commands
@@ -50,3 +56,11 @@ scripts/screenshot.sh target/shot.png
   (window borrowed during dispatch, now deferred); extra Lucide icons rendered
   blank (now embedded + guarded by a test); list previews repeated the title.
 - Did not code-sign anything; dev builds never touch the keychain.
+- Review fixes: notes and layout now save on ⌘Q and window close; a failed
+  save no longer lets the editor switch notes and drop typing; title input
+  capped at 300 chars; palette runs commands after it closes and focuses its
+  search on open (New note from ⌘K now focuses the title); task menu only
+  offers allowed transitions (Start/Pause/Cancel/Reopen); tasks get "Delete
+  forever" (confirmed) and an "Empty trash" button on the Trash tab; Upcoming
+  quick-add is due tomorrow; Tasks/badges refresh after midnight; load
+  failures show an error state instead of an empty list. 3 regression tests added.
