@@ -727,3 +727,35 @@ fn note_list_panel_collapses_resizes_and_persists(cx: &mut TestAppContext) {
     let saved = LayoutState::load(&layout_file(&app.paths.data_dir)).panel(NOTES_LIST);
     assert!((saved.width - width).abs() < 0.5, "width saved to disk");
 }
+
+#[gpui_kit::test]
+fn command_k_toggles_the_palette_and_never_stacks(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let dialogs = |cx: &mut TestAppContext| {
+        cx.update_window(app.window, |_, window, cx| {
+            gpui_kit::component::WindowExt::has_active_dialog(window, cx)
+        })
+        .expect("window")
+    };
+    let key = if cfg!(target_os = "macos") {
+        "cmd-k"
+    } else {
+        "ctrl-k"
+    };
+
+    press(&app, cx, key);
+    assert!(dialogs(cx), "first press opens");
+    press(&app, cx, key);
+    assert!(!dialogs(cx), "second press closes instead of stacking");
+    press(&app, cx, key);
+    press(&app, cx, key);
+    press(&app, cx, key);
+    assert!(dialogs(cx), "odd number of presses leaves exactly one open");
+    press(&app, cx, "escape");
+    assert!(!dialogs(cx), "one Escape closes it: there was only one");
+
+    // The sidebar entry opens the same palette.
+    click(&app, cx, "open-palette");
+    assert!(dialogs(cx));
+}

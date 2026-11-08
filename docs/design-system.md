@@ -79,6 +79,14 @@ One layout grammar for every screen: **Sidebar (app nav) → List panel → Cont
 - Toggle buttons sit in the title bar so they never move when a panel collapses.
   Sidebar ⌘\\, note list ⌘⇧L. A new panel adds a `PanelSpec`, an action, and a title-bar toggle shown on its screen.
 
+## Overlays
+
+- One dialog at a time. ⌘K toggles the command palette (a second press closes
+  it) and never opens over another dialog; `confirm_destructive` won't stack either.
+- Opening a sheet replaces the current one.
+- The palette's visible entry point is "Search ⌘K" at the top of the sidebar
+  (an icon button when the sidebar is collapsed); the title bar holds only panel toggles.
+
 ## Menus
 
 Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`):

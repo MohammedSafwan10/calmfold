@@ -45,6 +45,10 @@ pub fn confirm_destructive(
     cx: &mut App,
     on_confirm: impl Fn(&mut Window, &mut App) + 'static,
 ) {
+    // One question at a time: a double-click must not stack two confirmations.
+    if window.has_active_dialog(cx) {
+        return;
+    }
     let on_confirm = Rc::new(on_confirm);
     window.open_alert_dialog(cx, move |dialog, _, _| {
         let on_confirm = on_confirm.clone();

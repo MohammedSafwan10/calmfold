@@ -56,6 +56,8 @@ impl Render for ResizeSidebar {
 pub struct AppShell {
     route: Route,
     layout: Entity<LayoutStore>,
+    /// Set while the command palette is the open dialog.
+    palette_open: std::rc::Rc<std::cell::Cell<bool>>,
     due_now: usize,
     library: Entity<Library>,
     today: Entity<TodayView>,
@@ -123,6 +125,7 @@ impl AppShell {
         let mut this = Self {
             route: Route::Today,
             layout,
+            palette_open: std::rc::Rc::default(),
             due_now: 0,
             library,
             today,
@@ -280,7 +283,18 @@ impl AppShell {
         });
     }
 
+    /// ⌘K toggles the palette. It never stacks: a second press closes it, and it
+    /// doesn't open over another dialog (a confirmation, say).
     pub fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.has_active_dialog(cx) {
+            if self.palette_open.get() {
+                window.close_dialog(cx);
+            }
+            self.palette_open.set(false);
+            return;
+        }
+        let palette_open = self.palette_open.clone();
+        palette_open.set(true);
         let state = cx.new(|cx| CommandState::new(window, cx));
         let notes = self.library.read(cx).notes(false).unwrap_or_default();
         let note_ids: Vec<NoteId> = notes
@@ -311,15 +325,20 @@ impl AppShell {
             let note_items = note_items.clone();
             let note_ids = note_ids.clone();
             let shell = shell.clone();
+            let closed = palette_open.clone();
+            let content_flag = palette_open.clone();
             dialog
+                .on_close(move |_, _, _| closed.set(false))
                 .close_button(false)
                 .p_0()
                 // Dialog widths are in pixels; 560 px fits the palette at every interface size.
                 .w(px(560.))
                 .content(move |content, _, _| {
+                    let content_flag = content_flag.clone();
                     let note_ids = note_ids.clone();
                     let shell = shell.clone();
                     let command_actions = command_actions.clone();
+                    let palette_flag = content_flag.clone();
                     content.child(
                         Command::new(&state)
                             .bordered(false)
@@ -338,6 +357,7 @@ impl AppShell {
                             .on_confirm(move |index, window, cx| {
                                 // Close first: closing restores the previous focus, and
                                 // commands like "New note" must be able to move it.
+                                palette_flag.set(false);
                                 window.close_dialog(cx);
                                 if index.section == 0
                                     && let Some(action) = command_actions.get(index.row)
@@ -456,7 +476,15 @@ impl AppShell {
         .collapsible(SidebarCollapsible::Icon)
         .collapsed(collapsed)
         .w(width)
-        .header(SidebarHeader::new().child(brand))
+        .header(
+            SidebarHeader::new().child(
+                v_flex()
+                    .w_full()
+                    .gap_3()
+                    .child(brand)
+                    .child(self.search_entry(collapsed, cx)),
+            ),
+        )
         .children(groups)
         .footer(settings_item);
 
@@ -483,7 +511,8 @@ impl AppShell {
             })
     }
 
-    fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// "Search ⌘K" at the top of the sidebar: the visible way into the command palette.
+    fn search_entry(&self, collapsed: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let shortcut = Keystroke::parse(if cfg!(target_os = "macos") {
             "cmd-k"
@@ -491,11 +520,39 @@ impl AppShell {
             "ctrl-k"
         })
         .ok();
+        let open = cx.listener(|this, _, window, cx| this.open_command_palette(window, cx));
+        if collapsed {
+            return Button::new("open-palette")
+                .ghost()
+                .small()
+                .icon(Lucide::Search)
+                .tooltip_with_action("Search", &OpenCommandPalette, None)
+                .on_click(open)
+                .into_any_element();
+        }
+        Button::new("open-palette")
+            .ghost()
+            .small()
+            .w_full()
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .items_center()
+                    .text_color(theme.muted_foreground)
+                    .child(Icon::new(Lucide::Search).small())
+                    .child(div().flex_1().text_left().child("Search"))
+                    .children(shortcut.map(|k| Kbd::new(k).appearance(false))),
+            )
+            .on_click(open)
+            .into_any_element()
+    }
+
+    fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         TitleBar::new().child(
             h_flex()
                 .w_full()
                 .pr_2()
-                .justify_between()
                 .items_center()
                 // Panel toggles live here so they never move when a panel collapses.
                 .child(
@@ -521,33 +578,7 @@ impl AppShell {
                                     ),
                             )
                         }),
-                )
-                .child(
-                    Button::new("open-palette")
-                        .outline()
-                        .xsmall()
-                        .w(rems(20.))
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_between()
-                                .gap_2()
-                                .text_color(theme.muted_foreground)
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Icon::new(Lucide::Search).xsmall())
-                                        .child("Search or run a command"),
-                                )
-                                .children(shortcut.map(|k| Kbd::new(k).appearance(false))),
-                        )
-                        .on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.open_command_palette(window, cx)
-                            }),
-                        ),
-                )
-                .child(div().w(px(24.))),
+                ),
         )
     }
 }
