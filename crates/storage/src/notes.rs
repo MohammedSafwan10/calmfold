@@ -118,21 +118,55 @@ impl Store {
         collect_summaries(rows)
     }
 
-    /// Finds an active note whose title matches a link target (case-insensitive).
+    /// Finds an active note whose title matches a link target. Matching is
+    /// whitespace- and case-insensitive with full Unicode case folding (done
+    /// in Rust, because SQLite's `lower()` only folds ASCII). Most recently
+    /// edited wins when titles collide.
     pub fn find_note_by_title(&self, title: &str) -> StorageResult<Option<NoteId>> {
         let key = normalize_target(title);
-        let id: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT id FROM notes
-                 WHERE deleted_at IS NULL AND lower(title) = ?1
-                 ORDER BY updated_at DESC LIMIT 1",
-                [key],
-                |row| row.get(0),
-            )
-            .optional()?;
-        id.map(|s| uuid_from_sql(&s, "notes.id").map(NoteId::from_uuid))
-            .transpose()
+        Ok(self
+            .active_titles()?
+            .into_iter()
+            .find(|(_, t)| normalize_target(t) == key)
+            .map(|(id, _)| id))
+    }
+
+    /// Note titles for `[[` autocomplete: titles starting with `query` first,
+    /// then titles containing it, each group most recently edited first.
+    pub fn suggest_note_titles(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> StorageResult<Vec<(NoteId, String)>> {
+        let key = normalize_target(query);
+        let mut prefix = Vec::new();
+        let mut contains = Vec::new();
+        for (id, title) in self.active_titles()? {
+            let norm = normalize_target(&title);
+            if norm.starts_with(&key) {
+                prefix.push((id, title));
+            } else if norm.contains(&key) {
+                contains.push((id, title));
+            }
+        }
+        prefix.extend(contains);
+        prefix.truncate(limit);
+        Ok(prefix)
+    }
+
+    /// (id, title) of active notes, most recently edited first.
+    fn active_titles(&self) -> StorageResult<Vec<(NoteId, String)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, title FROM notes WHERE deleted_at IS NULL ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.map(|row| {
+            let (id, title) = row?;
+            Ok((NoteId::from_uuid(uuid_from_sql(&id, "notes.id")?), title))
+        })
+        .collect()
     }
 
     /// Removes a note forever. Links from it are removed by cascade.
@@ -357,6 +391,40 @@ mod tests {
             Some(car.id())
         );
         assert_eq!(store.find_note_by_title("bike").expect("find"), None);
+        let oil = Note::new("Ölwechsel Über", "", at(2)).expect("note");
+        store.save_note(&oil).expect("save");
+        assert_eq!(
+            store.find_note_by_title("ölwechsel über").expect("find"),
+            Some(oil.id()),
+            "non-ASCII case folding"
+        );
+    }
+
+    #[test]
+    fn suggestions_rank_prefix_matches_first() {
+        let mut store = store();
+        for (title, secs) in [
+            ("Car service", 1),
+            ("Old car", 2),
+            ("Café", 3),
+            ("Groceries", 4),
+        ] {
+            store
+                .save_note(&Note::new(title, "", at(secs)).expect("note"))
+                .expect("save");
+        }
+        let titles = |q: &str| {
+            store
+                .suggest_note_titles(q, 10)
+                .expect("suggest")
+                .into_iter()
+                .map(|(_, t)| t)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(titles("car"), ["Car service", "Old car"]);
+        assert_eq!(titles("CA"), ["Café", "Car service", "Old car"]);
+        assert_eq!(titles("").len(), 4);
+        assert_eq!(store.suggest_note_titles("", 2).expect("suggest").len(), 2);
     }
 
     #[test]

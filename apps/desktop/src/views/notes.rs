@@ -11,11 +11,12 @@
 //! Content is always flushed before another note opens, so switching notes
 //! can never lose typing.
 
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -26,6 +27,7 @@ use gpui_kit::{
     rems,
 };
 use keepstone_core::NoteId;
+use keepstone_core::links::{note_link_url, parse_note_link_url, to_markdown_links};
 use keepstone_storage::NoteSummary;
 use keepstone_ui::appearance;
 use keepstone_ui::components::{empty_state, section_label, segmented};
@@ -33,6 +35,7 @@ use keepstone_ui::feedback::{self, Confirm};
 
 use crate::library::{Library, LibraryEvent};
 use crate::views::Navigate;
+use crate::views::link_completion::NoteLinkCompletions;
 use crate::views::task_row::notify_err;
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(500);
@@ -56,7 +59,7 @@ pub struct NotesView {
     library: Entity<Library>,
     search: Entity<InputState>,
     title: Entity<InputState>,
-    body: Entity<TextareaState>,
+    body: Entity<EditorState>,
     list: Vec<NoteSummary>,
     load_error: bool,
     show_trash: bool,
@@ -84,10 +87,18 @@ impl NotesView {
                 // Rejects keystrokes past the domain limit, so a save can never fail on length.
                 .validate(|text, _| text.chars().count() <= keepstone_core::MAX_TITLE_CHARS)
         });
+        // A text editor (not a plain textarea) so `[[` can offer note titles.
         let body = cx.new(|cx| {
-            TextareaState::new(window, cx)
+            let mut state = EditorState::new(window, cx)
+                .line_number(false)
+                .folding(false)
                 .soft_wrap(true)
-                .placeholder("Start writing. Link other notes with [[Note title]].")
+                .placeholder("Start writing. Type [[ to link another note.");
+            state.lsp_mut().completion_provider = Some(Rc::new(NoteLinkCompletions {
+                library: library.downgrade(),
+                current: None,
+            }));
+            state
         });
 
         let subscriptions = vec![
@@ -185,8 +196,14 @@ impl NotesView {
         };
         self.title
             .update(cx, |t, cx| t.set_value(title_text.to_owned(), window, cx));
-        self.body
-            .update(cx, |b, cx| b.set_value(note.body().to_owned(), window, cx));
+        let library = self.library.downgrade();
+        self.body.update(cx, |b, cx| {
+            b.set_value(note.body().to_owned(), window, cx);
+            b.lsp_mut().completion_provider = Some(Rc::new(NoteLinkCompletions {
+                library,
+                current: Some(id),
+            }));
+        });
         self.open = Some(OpenNote {
             id,
             title: note.title().to_owned(),
@@ -210,6 +227,16 @@ impl NotesView {
 
     pub fn focus_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.body.update(cx, |b, cx| b.focus(window, cx));
+    }
+
+    /// The body editor (tests inspect its completion menu).
+    pub fn body_editor(&self) -> &Entity<EditorState> {
+        &self.body
+    }
+
+    /// The open note, if any.
+    pub fn open_note_id(&self) -> Option<NoteId> {
+        self.open.as_ref().map(|o| o.id)
     }
 
     /// Current editor body text (for tests and diagnostics).
@@ -715,7 +742,7 @@ impl NotesView {
                             title_text.clone()
                         },
                     ))
-                    .child(TextView::markdown("note-preview", body_text.clone()).selectable(true))
+                    .child(self.render_preview(&body_text, cx))
                 } else {
                     this.child(
                         Input::new(&self.title)
@@ -725,8 +752,11 @@ impl NotesView {
                             .font_weight(FontWeight::SEMIBOLD),
                     )
                     .child(
-                        Textarea::new(&self.body)
+                        Editor::new(&self.body)
                             .appearance(false)
+                            // Notes are prose: the UI font, not the code font.
+                            .font_family(theme.font_family.clone())
+                            .text_size(theme.font_size)
                             .flex_1()
                             .min_h(rems(20.)),
                     )
@@ -745,6 +775,33 @@ impl NotesView {
                 .overflow_y_scroll()
                 .child(content),
         )
+    }
+
+    /// Markdown preview where `[[links]]` are clickable and open (or create) the target note.
+    fn render_preview(&self, body: &str, cx: &Context<Self>) -> impl IntoElement {
+        let source = to_markdown_links(body, |link| note_link_url(&link.target));
+        let view = cx.entity().downgrade();
+        TextView::markdown("note-preview", source)
+            .selectable(true)
+            .on_link_click(move |url, _, window, cx| match parse_note_link_url(url) {
+                Some(target) => {
+                    _ = view.update(cx, |this, cx| this.follow_link(&target, window, cx));
+                }
+                None => cx.open_url(url),
+            })
+    }
+
+    /// Opens the note a link points to, creating it if needed.
+    pub fn follow_link(&mut self, target: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.flush(window, cx) {
+            return;
+        }
+        let result = self
+            .library
+            .update(cx, |lib, cx| lib.open_or_create_by_title(target, cx));
+        if let Some(id) = feedback::report(result, window, cx) {
+            self.open_note(id, window, cx);
+        }
     }
 
     fn render_backlinks(&self, cx: &Context<Self>) -> impl IntoElement {

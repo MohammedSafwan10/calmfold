@@ -20,8 +20,9 @@ SQLite persistence. One `Store` owns one connection.
 
 - `notes_fts` is an external-content index keyed by SQLite's implicit `rowid`.
   Never run `VACUUM` without `INSERT INTO notes_fts(notes_fts) VALUES('rebuild')` after it.
-- `lower()` is ASCII-only, so `find_note_by_title` misses non-ASCII capitals.
-  Add a normalized `title_key` column (migration) before relying on it.
+- `lower()` is ASCII-only, so title matching (`find_note_by_title`,
+  `suggest_note_titles`) folds case in Rust. Fine for thousands of notes; add a
+  normalized `title_key` column if it ever shows up in profiles.
 
 ## Test
 

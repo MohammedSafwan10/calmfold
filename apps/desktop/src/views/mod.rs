@@ -1,8 +1,10 @@
 //! Feature screens. Each screen is an `Entity` that owns its own state and
 //! reads data through [`crate::library::Library`].
 
+pub mod link_completion;
 pub mod notes;
 pub mod settings;
+pub mod task_detail;
 pub mod task_row;
 pub mod tasks;
 pub mod today;

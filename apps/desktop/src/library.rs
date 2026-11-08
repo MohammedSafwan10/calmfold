@@ -51,6 +51,23 @@ impl Library {
         Ok(self.store.find_note_by_title(title)?)
     }
 
+    pub fn suggest_note_titles(&self, query: &str, limit: usize) -> Result<Vec<(NoteId, String)>> {
+        Ok(self.store.suggest_note_titles(query, limit)?)
+    }
+
+    /// The note a `[[link]]` points to, created (empty) if it doesn't exist yet,
+    /// like Obsidian. Trashed notes are not link targets.
+    pub fn open_or_create_by_title(
+        &mut self,
+        title: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<NoteId> {
+        match self.store.find_note_by_title(title)? {
+            Some(id) => Ok(id),
+            None => self.create_note(title, cx),
+        }
+    }
+
     pub fn note_count(&self) -> Result<usize> {
         Ok(self.store.count_notes()?)
     }
@@ -137,6 +154,20 @@ impl Library {
 
     pub fn tasks(&self, filter: TaskFilter) -> Result<Vec<Task>> {
         Ok(self.store.list_tasks(filter)?)
+    }
+
+    /// One task by ID, or `None` if it was deleted (or can't be read).
+    pub fn tasks_by_id(&self, id: TaskId) -> Option<Task> {
+        self.store.task(id).ok().flatten()
+    }
+
+    pub fn set_task_notes(
+        &mut self,
+        id: TaskId,
+        notes: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_task(id, cx, |t| Ok(t.set_notes(notes, clock::now())?))
     }
 
     pub fn task_counts(&self) -> Result<TaskCounts> {

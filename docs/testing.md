@@ -1,6 +1,6 @@
 # Testing
 
-Run everything: `scripts/check.sh`. Current count: 84 tests.
+Run everything: `scripts/check.sh`. Current count: 93 tests.
 
 | Layer | Where | Tool | What |
 | --- | --- | --- | --- |

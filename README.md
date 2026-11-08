@@ -38,6 +38,7 @@ the Visual Studio 2022 C++ build tools, the MSVC Rust toolchain, and CMake.
 cargo run                               # first build takes about 3 minutes
 KEEPSTONE_DATA_DIR=/tmp/ks cargo run    # use a throwaway data folder
 cargo run -p keepstone-storage --example seed -- /tmp/ks/keepstone.sqlite3   # fill it with sample data
+scripts/dev.sh                          # run, and rebuild + relaunch on every save
 scripts/check.sh                        # formatting, clippy, and all tests
 ```
 

@@ -9,7 +9,7 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Entity, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    Styled as _, Window, div,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
 };
 use keepstone_core::{Date, Priority, Task, TaskId, TaskStatus};
 
@@ -17,6 +17,7 @@ use keepstone_ui::feedback::{self, Confirm};
 
 use crate::library::Library;
 use crate::views::relative_day;
+use crate::views::task_detail::open_task_detail;
 
 /// Renders `task`. All mutations go through `library`; errors become notifications.
 pub fn task_row(task: &Task, today: Date, library: &Entity<Library>, cx: &App) -> impl IntoElement {
@@ -89,6 +90,14 @@ pub fn task_row(task: &Task, today: Date, library: &Entity<Library>, cx: &App) -
         )
         .child(
             v_flex()
+                .id(SharedString::from(format!("{key}-open")))
+                // An accessible button: screen readers (and UI tests) see "Open <title>".
+                .role(gpui_kit::Role::Button)
+                .aria_label(SharedString::from(format!("Open {}", task.title())))
+                .on_click({
+                    let library = library.clone();
+                    move |_, window, cx| open_task_detail(id, library.clone(), window, cx)
+                })
                 .flex_1()
                 .min_w_0()
                 .gap_0p5()
@@ -111,7 +120,8 @@ pub fn task_row(task: &Task, today: Date, library: &Entity<Library>, cx: &App) -
                                 .children(priority_label),
                         )
                     },
-                ),
+                )
+                .test_support(),
         )
         .child(task_menu(
             &key,
@@ -181,92 +191,95 @@ fn task_menu(
                     );
             }
             let check = |p: Priority| priority == p;
-            menu.label("Due")
-                .item(item("Today", |l, id, today, cx| {
-                    l.set_task_due(id, Some(today), cx)
+            let lib = library.clone();
+            menu.item(
+                PopupMenuItem::new("Details…").on_click(move |_, window, cx| {
+                    open_task_detail(id, lib.clone(), window, cx);
+                }),
+            )
+            .separator()
+            .label("Due")
+            .item(item("Today", |l, id, today, cx| {
+                l.set_task_due(id, Some(today), cx)
+            }))
+            .item(item("Tomorrow", |l, id, today, cx| {
+                l.set_task_due(id, Some(today.tomorrow()?), cx)
+            }))
+            .item(item("Next week", |l, id, today, cx| {
+                l.set_task_due(id, Some(today.checked_add(jiff::Span::new().days(7))?), cx)
+            }))
+            .item(item("No date", |l, id, _, cx| l.set_task_due(id, None, cx)))
+            .separator()
+            .label("Priority")
+            .item(
+                item("High", |l, id, _, cx| {
+                    l.set_task_priority(id, Priority::High, cx)
+                })
+                .checked(check(Priority::High)),
+            )
+            .item(
+                item("Medium", |l, id, _, cx| {
+                    l.set_task_priority(id, Priority::Medium, cx)
+                })
+                .checked(check(Priority::Medium)),
+            )
+            .item(
+                item("Low", |l, id, _, cx| {
+                    l.set_task_priority(id, Priority::Low, cx)
+                })
+                .checked(check(Priority::Low)),
+            )
+            .item(
+                item("None", |l, id, _, cx| {
+                    l.set_task_priority(id, Priority::None, cx)
+                })
+                .checked(check(Priority::None)),
+            )
+            .separator()
+            // Only offer transitions the state machine allows from the current status.
+            .when(status == TaskStatus::Todo, |m| {
+                m.item(item("Start", |l, id, _, cx| {
+                    l.set_task_status(id, TaskStatus::InProgress, cx)
                 }))
-                .item(item("Tomorrow", |l, id, today, cx| {
-                    l.set_task_due(id, Some(today.tomorrow()?), cx)
+            })
+            .when(status == TaskStatus::InProgress, |m| {
+                m.item(item("Pause", |l, id, _, cx| {
+                    l.set_task_status(id, TaskStatus::Todo, cx)
                 }))
-                .item(item("Next week", |l, id, today, cx| {
-                    l.set_task_due(id, Some(today.checked_add(jiff::Span::new().days(7))?), cx)
+            })
+            .when(status.is_open(), |m| {
+                m.item(item("Cancel task", |l, id, _, cx| {
+                    l.set_task_status(id, TaskStatus::Cancelled, cx)
                 }))
-                .item(item("No date", |l, id, _, cx| l.set_task_due(id, None, cx)))
-                .separator()
-                .label("Priority")
-                .item(
-                    item("High", |l, id, _, cx| {
-                        l.set_task_priority(id, Priority::High, cx)
-                    })
-                    .checked(check(Priority::High)),
-                )
-                .item(
-                    item("Medium", |l, id, _, cx| {
-                        l.set_task_priority(id, Priority::Medium, cx)
-                    })
-                    .checked(check(Priority::Medium)),
-                )
-                .item(
-                    item("Low", |l, id, _, cx| {
-                        l.set_task_priority(id, Priority::Low, cx)
-                    })
-                    .checked(check(Priority::Low)),
-                )
-                .item(
-                    item("None", |l, id, _, cx| {
-                        l.set_task_priority(id, Priority::None, cx)
-                    })
-                    .checked(check(Priority::None)),
-                )
-                .separator()
-                // Only offer transitions the state machine allows from the current status.
-                .when(status == TaskStatus::Todo, |m| {
-                    m.item(item("Start", |l, id, _, cx| {
-                        l.set_task_status(id, TaskStatus::InProgress, cx)
-                    }))
-                })
-                .when(status == TaskStatus::InProgress, |m| {
-                    m.item(item("Pause", |l, id, _, cx| {
-                        l.set_task_status(id, TaskStatus::Todo, cx)
-                    }))
-                })
-                .when(status.is_open(), |m| {
-                    m.item(item("Cancel task", |l, id, _, cx| {
-                        l.set_task_status(id, TaskStatus::Cancelled, cx)
-                    }))
-                })
-                .when(!status.is_open(), |m| {
-                    m.item(item("Reopen", |l, id, _, cx| {
-                        l.set_task_status(id, TaskStatus::Todo, cx)
-                    }))
-                })
-                .separator()
-                .item({
-                    let lib = library.clone();
-                    PopupMenuItem::new("Move to trash").on_click(move |_, window, cx| {
-                        if feedback::report(
-                            lib.update(cx, |l, cx| l.trash_task(id, cx)),
+            })
+            .when(!status.is_open(), |m| {
+                m.item(item("Reopen", |l, id, _, cx| {
+                    l.set_task_status(id, TaskStatus::Todo, cx)
+                }))
+            })
+            .separator()
+            .item({
+                let lib = library.clone();
+                PopupMenuItem::new("Move to trash").on_click(move |_, window, cx| {
+                    if feedback::report(lib.update(cx, |l, cx| l.trash_task(id, cx)), window, cx)
+                        .is_some()
+                    {
+                        let lib = lib.clone();
+                        feedback::undo_toast(
+                            "Task moved to trash.",
                             window,
                             cx,
-                        )
-                        .is_some()
-                        {
-                            let lib = lib.clone();
-                            feedback::undo_toast(
-                                "Task moved to trash.",
-                                window,
-                                cx,
-                                move |window, cx| {
-                                    notify_err(
-                                        lib.update(cx, |l, cx| l.restore_task(id, cx)),
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            );
-                        }
-                    })
+                            move |window, cx| {
+                                notify_err(
+                                    lib.update(cx, |l, cx| l.restore_task(id, cx)),
+                                    window,
+                                    cx,
+                                );
+                            },
+                        );
+                    }
                 })
+            })
         })
 }
 

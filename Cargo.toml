@@ -38,6 +38,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "6"
 
+# Must match the version gpui-kit uses (Cargo.lock), for the editor's completion API.
+lsp-types = "0.97"
+# Same version as gpui-kit's DatePicker uses.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
 # Storage
 # Pinned to 0.40 because rusqlite_migration 2.6 depends on it (only one libsqlite3-sys may link).
 rusqlite = { version = "0.40", features = ["bundled"] }

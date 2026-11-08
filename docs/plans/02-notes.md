@@ -12,11 +12,12 @@ Goal: Obsidian-level notes: fast Markdown, `[[links]]`, backlinks, search.
 - [x] Editor with debounced autosave (500 ms), flush on switch/blur
 - [x] Edit / Preview (Markdown rendering), backlinks panel ("Linked from")
 - [x] Move to trash with Undo; delete forever with confirmation
+- [x] Plain-text list previews (Markdown markers stripped)
 
 ## Next (in order)
 
-1. [ ] Click `[[link]]` in preview to open (create if missing)
-2. [ ] Link autocomplete when typing `[[`
+1. [x] Click `[[link]]` in preview to open (create if missing)
+2. [x] Link autocomplete when typing `[[` (editor completion menu)
 3. [ ] Unlinked mentions under backlinks
 4. [ ] Tags (`#tag`) with a sidebar child list
 5. [ ] Daily notes (one per date, opened from Today)

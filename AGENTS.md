@@ -13,6 +13,7 @@ Read this file, then [`HANDOFF.md`](HANDOFF.md) for the current state, then the
 source "$HOME/.cargo/env"          # if cargo is not on PATH
 scripts/check.sh                   # fmt --check + clippy -D warnings + all tests (run before every commit)
 cargo run                          # run the desktop app (debug data: "Keepstone Dev" folder)
+scripts/dev.sh [--sample]          # run + auto-rebuild/relaunch on save (needs watchexec)
 KEEPSTONE_DATA_DIR=/tmp/ks cargo run   # run against a throwaway data folder
 cargo test -p keepstone-desktop --test ui   # headless UI integration tests only
 scripts/screenshot.sh /tmp/k.png   # capture ONLY the Keepstone window (never the full screen)

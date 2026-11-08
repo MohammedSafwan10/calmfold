@@ -12,7 +12,7 @@
 
 ## Next
 
-1. [ ] Task detail sheet (notes field, date picker via `DatePicker`)
+1. [x] Task detail sheet: title, status (allowed transitions only), due (DatePicker + quick picks), priority, notes, trash
 2. [ ] Natural-language quick add ("pay rent tomorrow !high")
 3. [ ] Recurring tasks (rule stored as RRULE subset; complete → next instance)
 4. [ ] Subtasks (parent_id, progress)

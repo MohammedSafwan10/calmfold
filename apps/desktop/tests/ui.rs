@@ -463,3 +463,153 @@ fn palette_new_note_leaves_focus_in_the_title(cx: &mut TestAppContext) {
         all_note_titles(&app, cx)
     );
 }
+
+#[gpui_kit::test]
+fn typing_double_bracket_suggests_and_completes_note_titles(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    create_and_open_note(&app, cx, "Service log");
+    dispatch(&app, cx, NewNote);
+    type_text(&app, cx, "Car");
+    press(&app, cx, "enter");
+    type_text(&app, cx, "See [[serv");
+
+    let editor = cx.read(|cx| app.shell.read(cx).notes().read(cx).body_editor().clone());
+    let (open, labels) = cx.read(|cx| {
+        let menu = editor.read(cx).completion_menu_state();
+        (
+            menu.open,
+            menu.items
+                .iter()
+                .map(|i| i.label.clone())
+                .collect::<Vec<_>>(),
+        )
+    });
+    assert!(open, "completion menu opens inside [[");
+    assert_eq!(labels, ["Service log"]);
+
+    press(&app, cx, "enter");
+    let body = cx.read(|cx| app.shell.read(cx).notes().read(cx).body_text(cx));
+    assert_eq!(body, "See [[Service log]]");
+
+    // Outside a link, nothing is suggested.
+    type_text(&app, cx, " and more");
+    assert!(!cx.read(|cx| editor.read(cx).completion_menu_state().open));
+}
+
+#[gpui_kit::test]
+fn following_a_link_opens_existing_or_creates_missing_notes(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    let car = create_and_open_note(&app, cx, "My Car");
+    let follow = |target: &'static str, cx: &mut TestAppContext| {
+        cx.update_window(app.window, |_, window, cx| {
+            app.shell
+                .read(cx)
+                .notes()
+                .clone()
+                .update(cx, |notes, cx| notes.follow_link(target, window, cx));
+        })
+        .expect("window");
+        cx.run_until_parked();
+        cx.read(|cx| app.shell.read(cx).notes().read(cx).open_note_id())
+    };
+    assert_eq!(
+        follow("my  car", cx),
+        Some(car),
+        "matches case- and space-insensitively"
+    );
+
+    let created = follow("Trip ideas", cx).expect("opened");
+    assert_ne!(created, car);
+    assert!(
+        all_note_titles(&app, cx).contains(&"Trip ideas".to_owned()),
+        "missing target is created"
+    );
+    assert_eq!(
+        follow("trip IDEAS", cx),
+        Some(created),
+        "no duplicate on second click"
+    );
+}
+
+#[gpui_kit::test]
+fn task_detail_edits_status_due_notes_and_title(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let id = cx.update(|cx| {
+        app.shell
+            .read(cx)
+            .library()
+            .clone()
+            .update(cx, |lib, cx| lib.create_task("Pay rent", None, cx))
+            .expect("create")
+    });
+    dispatch(&app, cx, GoTasks);
+    cx.update_window(app.window, |_, window, cx| {
+        app.shell
+            .read(cx)
+            .tasks()
+            .clone()
+            .update(cx, |t, cx| t.set_tab(TaskTab::All, cx));
+        window.render_frame(cx);
+    })
+    .expect("window");
+    cx.run_until_parked();
+
+    let task_id = format!("task-{id}-open");
+    let open_id: &'static str = Box::leak(task_id.into_boxed_str());
+    click(&app, cx, open_id);
+    let sheet_open = |cx: &mut TestAppContext| {
+        cx.update_window(app.window, |_, window, cx| {
+            gpui_kit::component::WindowExt::has_active_sheet(window, cx)
+        })
+        .expect("window")
+    };
+    assert!(sheet_open(cx), "clicking a task opens its detail panel");
+
+    let task = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            app.shell
+                .read(cx)
+                .library()
+                .read(cx)
+                .tasks_by_id(id)
+                .expect("task")
+        })
+    };
+
+    click(&app, cx, "detail-start");
+    assert_eq!(task(cx).status(), TaskStatus::InProgress);
+    click(&app, cx, "detail-complete");
+    assert_eq!(task(cx).status(), TaskStatus::Done);
+    click(&app, cx, "detail-reopen");
+    assert_eq!(task(cx).status(), TaskStatus::Todo);
+
+    click(&app, cx, "due-tomorrow");
+    assert_eq!(
+        task(cx).due(),
+        keepstone_core::clock::today().tomorrow().ok()
+    );
+    click(&app, cx, "due-none");
+    assert_eq!(task(cx).due(), None);
+
+    // Enter in the title moves to the notes field.
+    click(&app, cx, "detail-title");
+    press(&app, cx, "enter");
+    type_text(&app, cx, "Transfer by the 1st");
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert_eq!(task(cx).notes(), "Transfer by the 1st");
+
+    // A title edit is saved even if the panel closes before the autosave timer.
+    click(&app, cx, "detail-title");
+    type_text(&app, cx, " and water bill");
+    cx.update_window(app.window, |_, window, cx| {
+        gpui_kit::component::WindowExt::close_sheet(window, cx)
+    })
+    .expect("window");
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert!(!sheet_open(cx));
+    assert_eq!(task(cx).title(), "Pay rent and water bill");
+}

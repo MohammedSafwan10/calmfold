@@ -4029,12 +4029,14 @@ name = "keepstone-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "directories",
  "gpui-kit",
  "jiff",
  "keepstone-core",
  "keepstone-storage",
  "keepstone-ui",
+ "lsp-types",
  "serde",
  "serde_json",
  "tempfile",

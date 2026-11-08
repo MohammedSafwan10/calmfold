@@ -163,10 +163,41 @@ pub fn preview_text(body: &str, max_chars: usize) -> String {
     let mut lines = body.lines().map(str::trim).filter(|l| !l.is_empty());
     let first = lines.clone().next().unwrap_or("");
     let line = lines.find(|l| !l.starts_with('#')).unwrap_or(first);
-    let line = line.trim_start_matches('#').trim();
+    let line = plain_text(line.trim_start_matches('#').trim());
+    let line = line.as_str();
     let mut out: String = line.chars().take(max_chars).collect();
     if line.chars().count() > max_chars {
         out.push('…');
+    }
+    out
+}
+
+/// Strips the Markdown a reader would not see: emphasis and code markers,
+/// list bullets, and `[[link|alias]]` brackets (keeping the visible text).
+fn plain_text(line: &str) -> String {
+    let line = line
+        .strip_prefix("- [ ] ")
+        .or_else(|| line.strip_prefix("- [x] "))
+        .or_else(|| line.strip_prefix("- "))
+        .or_else(|| line.strip_prefix("* "))
+        .or_else(|| line.strip_prefix("> "))
+        .unwrap_or(line);
+    let linked = crate::links::to_markdown_links(line, |_| String::new());
+    // `[text]()` → `text`
+    let unlinked = linked.replace("]()", "").replace("\\", "");
+    let mut out = String::with_capacity(unlinked.len());
+    let mut chars = unlinked.chars().peekable();
+    let mut prev_bracket_open = true;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '*' | '`' | '~' => {}
+            '_' if chars.peek() == Some(&'_') => {
+                chars.next();
+            }
+            '[' if prev_bracket_open => {}
+            _ => out.push(ch),
+        }
+        prev_bracket_open = ch.is_whitespace() || ch == '(';
     }
     out
 }
@@ -239,6 +270,16 @@ mod tests {
         let note = Note::new("A", "\n# Heading here\nbody text", t(1)).expect("note");
         assert_eq!(note.preview(100), "body text");
         assert_eq!(note.preview(4), "body…");
+        let md = Note::new(
+            "A",
+            "- Renews in **May**. See [[Service log]] and [[Car|my car]] `now`",
+            t(1),
+        )
+        .expect("note");
+        assert_eq!(
+            md.preview(100),
+            "Renews in May. See Service log and my car now"
+        );
         let only_heading = Note::new("A", "## Just a heading", t(1)).expect("note");
         assert_eq!(only_heading.preview(100), "Just a heading");
     }

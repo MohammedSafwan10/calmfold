@@ -4,7 +4,8 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Current state (2026-11-08)
 
-- Branch `main`. `scripts/check.sh` passes: fmt, clippy `-D warnings`, 84 tests.
+- Branch `main`. `scripts/check.sh` passes: fmt, clippy `-D warnings`, 93 tests.
+- Dev loop: `scripts/dev.sh [--sample]` rebuilds and relaunches on save (watchexec).
 - Full-tree review: `docs/reviews/2026-11-08-201127-pr-full-tree.md`. High/medium findings fixed (see log).
 - Phase 1 foundation is done and runs on macOS (Apple Silicon, macOS 27).
   Windows is untested on a real machine (CI matrix includes it).
@@ -13,9 +14,9 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Next steps (in order)
 
-1. Notes: clickable `[[links]]` in preview, then `[[` autocomplete (plan 02 #1–2).
-2. Tasks: detail sheet with DatePicker and notes field (plan 03 #1).
-3. Window size/position restore; app icon (plan 01 open items).
+1. Window size/position restore; app icon (plan 01 open items).
+2. Notes: unlinked mentions, tags, daily notes (plan 02 #3–5).
+3. Tasks: natural-language quick add, recurring tasks (plan 03 #2–3).
 4. Vault (plan 05): migration 0002, lock state machine with table test, setup/unlock UI.
 5. Verify a Windows build (VS Build Tools + MSVC + CMake) and fix anything platform-specific.
 
@@ -44,6 +45,18 @@ scripts/screenshot.sh target/shot.png
 ```
 
 ## Log
+
+### 2026-11-08: Links, autocomplete, task detail
+
+- Note body is now gpui-kit `Editor` (UI font, soft wrap, no gutter) with a
+  `CompletionProvider` (`views/link_completion.rs`): typing `[[` suggests note
+  titles (prefix matches first) and inserts `Title]]`.
+- Preview rewrites `[[links]]` to `keepstone://note/…` Markdown links
+  (`core::links::to_markdown_links`); clicking opens the note or creates it.
+- Title matching folds Unicode case in Rust (fixes the `lower()` review item).
+- Task detail sheet (`views/task_detail.rs`): click a task or "Details…".
+  Title/notes autosave, also on blur and when the sheet closes.
+- 9 new tests (core links, storage suggestions, 3 UI flows).
 
 ### 2026-11-08: Foundation
 
