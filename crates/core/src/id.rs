@@ -69,6 +69,10 @@ define_id!(
     /// Identifies a [`crate::Task`].
     TaskId
 );
+define_id!(
+    /// Identifies a [`crate::Project`].
+    ProjectId
+);
 
 #[cfg(test)]
 mod tests {

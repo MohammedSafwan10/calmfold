@@ -13,10 +13,10 @@
 ## Next
 
 1. [x] Task detail sheet: title, status (allowed transitions only), due (DatePicker + quick picks), priority, notes, trash
-2. [ ] Natural-language quick add ("pay rent tomorrow !high")
-3. [ ] Recurring tasks (rule stored as RRULE subset; complete → next instance)
-4. [ ] Subtasks (parent_id, progress)
-5. [ ] Projects / lists (sidebar children generated from data)
+2. [x] Natural-language quick add ("pay rent tomorrow !high #Home"); dates only at the end
+3. [x] Recurring tasks (`every day/weekday/monday/2 weeks`, monthly, yearly; complete → next instance)
+4. [x] Subtasks as steps in the detail panel; progress on the row
+5. [x] Projects (sidebar children from data; rename, delete keeps tasks)
 6. [ ] Reorder by drag
 7. [ ] Link tasks to notes (`[[note]]` in task notes; task mentions in backlinks)
 8. [ ] Reminders (system notifications)

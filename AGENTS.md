@@ -38,6 +38,28 @@ Dependency direction is one-way: `desktop → ui/storage/crypto → core`. Never
 import the UI from core/storage/crypto. Mobile and web shells will reuse
 core/storage/crypto later, so keep them UI-free.
 
+## Quality bar (read first)
+
+Do the best version, not the quick one. The owner reviews the running app.
+
+- **Finish the whole thing.** A feature is UI + keyboard path + empty/error
+  states + persistence + tests + docs. No placeholders, no "TODO later", no
+  half-wired buttons.
+- **Look it up, don't guess.** Read the real gpui-kit source/docs before using
+  an API; read how polished apps (Linear, Obsidian, Things, Bear, Raycast)
+  solve the same UX problem before designing.
+- **Fix root causes.** If a test or the app shows a bug, find why. Don't hide
+  it, special-case it, or loosen the test.
+- **One source of truth.** Shortcuts, nav, panels, themes, icons and menus are
+  data tables; extend the table instead of hard-coding a second copy.
+- **Verify like a user.** Run `scripts/check.sh`, run the app (`scripts/dev.sh`),
+  look at the screen in light and dark. If real clicking is unreliable, prove
+  the flow with a UI integration test instead of skipping it.
+- **Keep it calm.** Fewer, better-organized controls: overflow menus over
+  icon rows, shortcuts for power use, consistent menu order (open → change →
+  status → destructive).
+- **Report honestly.** Say what was verified, what wasn't, and what's next.
+
 ## Hard rules
 
 1. **Never invent a GPUI / gpui-kit API.** Look up the real signature in

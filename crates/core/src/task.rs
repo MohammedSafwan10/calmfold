@@ -19,8 +19,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::recurrence::Recurrence;
 use crate::text::check_body;
-use crate::{Date, DomainError, DomainResult, TaskId, Timestamp, normalize_title};
+use crate::{Date, DomainError, DomainResult, ProjectId, TaskId, Timestamp, normalize_title};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -141,6 +142,29 @@ pub struct Task {
     updated_at: Timestamp,
     completed_at: Option<Timestamp>,
     deleted_at: Option<Timestamp>,
+    recurrence: Option<Recurrence>,
+    /// Set for subtasks (a checklist item inside another task).
+    parent: Option<TaskId>,
+    project: Option<ProjectId>,
+}
+
+/// Every stored field of a task, for storage to read and write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(missing_docs)]
+pub struct TaskRecord {
+    pub id: TaskId,
+    pub title: String,
+    pub notes: String,
+    pub status: TaskStatus,
+    pub priority: Priority,
+    pub due: Option<Date>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
+    pub deleted_at: Option<Timestamp>,
+    pub recurrence: Option<Recurrence>,
+    pub parent: Option<TaskId>,
+    pub project: Option<ProjectId>,
 }
 
 impl Task {
@@ -156,41 +180,135 @@ impl Task {
             updated_at: now,
             completed_at: None,
             deleted_at: None,
+            recurrence: None,
+            parent: None,
+            project: None,
         })
+    }
+
+    /// A checklist item inside `parent`.
+    pub fn new_subtask(parent: TaskId, title: &str, now: Timestamp) -> DomainResult<Self> {
+        let mut task = Self::new(title, now)?;
+        task.parent = Some(parent);
+        Ok(task)
+    }
+
+    /// The next instance of a repeating task, or `None` if it doesn't repeat.
+    /// Carries title, notes, priority, project and the rule; due date moves on.
+    #[must_use]
+    pub fn next_occurrence(&self, today: Date, now: Timestamp) -> Option<Self> {
+        let rule = self.recurrence?;
+        let base = self.due.unwrap_or(today);
+        Some(Self {
+            id: TaskId::new(),
+            title: self.title.clone(),
+            notes: self.notes.clone(),
+            status: TaskStatus::Todo,
+            priority: self.priority,
+            due: Some(rule.next_due(base, today)),
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+            deleted_at: None,
+            recurrence: Some(rule),
+            parent: None,
+            project: self.project,
+        })
+    }
+
+    /// Stops this instance from repeating (the next one carries the rule).
+    pub fn clear_recurrence_quietly(&mut self) {
+        self.recurrence = None;
+    }
+
+    pub fn set_recurrence(
+        &mut self,
+        rule: Option<Recurrence>,
+        today: Date,
+        now: Timestamp,
+    ) -> DomainResult<bool> {
+        self.ensure_active()?;
+        if rule == self.recurrence {
+            return Ok(false);
+        }
+        self.recurrence = rule;
+        // A repeating task needs a date to repeat from.
+        if let (Some(rule), None) = (rule, self.due) {
+            self.due = Some(rule.first_on_or_after(today));
+        }
+        self.touch(now);
+        Ok(true)
+    }
+
+    pub fn set_project(
+        &mut self,
+        project: Option<ProjectId>,
+        now: Timestamp,
+    ) -> DomainResult<bool> {
+        self.ensure_active()?;
+        if project == self.project {
+            return Ok(false);
+        }
+        self.project = project;
+        self.touch(now);
+        Ok(true)
+    }
+
+    #[must_use]
+    pub fn recurrence(&self) -> Option<Recurrence> {
+        self.recurrence
+    }
+    #[must_use]
+    pub fn parent(&self) -> Option<TaskId> {
+        self.parent
+    }
+    #[must_use]
+    pub fn project(&self) -> Option<ProjectId> {
+        self.project
+    }
+
+    /// All stored fields.
+    #[must_use]
+    pub fn to_record(&self) -> TaskRecord {
+        TaskRecord {
+            id: self.id,
+            title: self.title.clone(),
+            notes: self.notes.clone(),
+            status: self.status,
+            priority: self.priority,
+            due: self.due,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            completed_at: self.completed_at,
+            deleted_at: self.deleted_at,
+            recurrence: self.recurrence,
+            parent: self.parent,
+            project: self.project,
+        }
     }
 
     /// Rebuilds a task from storage. Repairs the `completed_at` invariant if
     /// the stored row violates it, so a corrupted row cannot poison the UI.
-    #[doc(hidden)]
-    #[allow(clippy::too_many_arguments)]
     #[must_use]
-    pub fn from_parts(
-        id: TaskId,
-        title: String,
-        notes: String,
-        status: TaskStatus,
-        priority: Priority,
-        due: Option<Date>,
-        created_at: Timestamp,
-        updated_at: Timestamp,
-        completed_at: Option<Timestamp>,
-        deleted_at: Option<Timestamp>,
-    ) -> Self {
-        let completed_at = match status {
-            TaskStatus::Done => Some(completed_at.unwrap_or(updated_at)),
+    pub fn from_record(r: TaskRecord) -> Self {
+        let completed_at = match r.status {
+            TaskStatus::Done => Some(r.completed_at.unwrap_or(r.updated_at)),
             _ => None,
         };
         Self {
-            id,
-            title,
-            notes,
-            status,
-            priority,
-            due,
-            created_at,
-            updated_at,
+            id: r.id,
+            title: r.title,
+            notes: r.notes,
+            status: r.status,
+            priority: r.priority,
+            due: r.due,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
             completed_at,
-            deleted_at,
+            deleted_at: r.deleted_at,
+            recurrence: r.recurrence,
+            parent: r.parent,
+            project: r.project,
         }
     }
 
@@ -454,35 +572,46 @@ mod tests {
     }
 
     #[test]
-    fn from_parts_repairs_completed_at_invariant() {
-        let id = TaskId::new();
-        let open_with_stamp = Task::from_parts(
-            id,
-            "A".into(),
-            String::new(),
-            Todo,
-            Priority::None,
+    fn from_record_repairs_completed_at_invariant() {
+        let mut record = Task::new("A", t(1)).expect("task").to_record();
+        record.updated_at = t(2);
+        record.completed_at = Some(t(2));
+        assert_eq!(
+            Task::from_record(record.clone()).completed_at(),
             None,
-            t(1),
-            t(2),
-            Some(t(2)),
-            None,
+            "open task can't be completed"
         );
-        assert_eq!(open_with_stamp.completed_at(), None);
+        record.status = Done;
+        record.completed_at = None;
+        assert_eq!(Task::from_record(record).completed_at(), Some(t(2)));
+    }
 
-        let done_without_stamp = Task::from_parts(
-            id,
-            "A".into(),
-            String::new(),
-            Done,
-            Priority::None,
-            None,
-            t(1),
-            t(2),
-            None,
-            None,
+    #[test]
+    fn repeating_tasks_produce_the_next_instance() {
+        let today = date("2026-11-08");
+        let mut task = Task::new("Water plants", t(1)).expect("task");
+        assert!(task.next_occurrence(today, t(2)).is_none());
+        task.set_recurrence(Some(Recurrence::DAILY), today, t(2))
+            .expect("repeat");
+        assert_eq!(task.due(), Some(today), "repeating needs a date");
+        task.set_priority(Priority::High, t(2)).expect("prio");
+
+        let next = task.next_occurrence(today, t(3)).expect("next");
+        assert_ne!(next.id(), task.id());
+        assert_eq!(next.due(), Some(date("2026-11-09")));
+        assert_eq!(next.status(), Todo);
+        assert_eq!(
+            (next.title(), next.priority(), next.recurrence()),
+            ("Water plants", Priority::High, Some(Recurrence::DAILY))
         );
-        assert_eq!(done_without_stamp.completed_at(), Some(t(2)));
+    }
+
+    #[test]
+    fn subtasks_know_their_parent() {
+        let parent = Task::new("Move house", t(1)).expect("task");
+        let sub = Task::new_subtask(parent.id(), "Book van", t(1)).expect("sub");
+        assert_eq!(sub.parent(), Some(parent.id()));
+        assert_eq!(Task::from_record(sub.to_record()), sub, "record round trip");
     }
 
     #[test]

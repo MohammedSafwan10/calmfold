@@ -1,5 +1,6 @@
 use keepstone_core::links::{normalize_target, unique_targets};
 use keepstone_core::note::preview_text;
+use keepstone_core::tags::{extract_tags, normalize_tag};
 use keepstone_core::{Note, NoteId, Timestamp};
 use rusqlite::{OptionalExtension, Row, params};
 
@@ -53,6 +54,14 @@ impl Store {
             )?;
             for target in unique_targets(note.body()) {
                 insert.execute(params![id, target])?;
+            }
+        }
+        tx.execute("DELETE FROM note_tags WHERE note_id = ?1", [&id])?;
+        {
+            let mut insert =
+                tx.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?1, ?2)")?;
+            for tag in extract_tags(note.body()) {
+                insert.execute(params![id, tag])?;
             }
         }
         tx.commit()?;
@@ -116,6 +125,88 @@ impl Store {
             raw_summary,
         )?;
         collect_summaries(rows)
+    }
+
+    /// Tags used by active notes, with how many notes use each, A→Z.
+    pub fn note_tags(&self) -> StorageResult<Vec<(String, usize)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT t.tag, count(*) FROM note_tags t JOIN notes n ON n.id = t.note_id
+             WHERE n.deleted_at IS NULL GROUP BY t.tag ORDER BY t.tag",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        rows.map(|row| {
+            let (tag, n) = row?;
+            Ok((tag, usize::try_from(n).unwrap_or(0)))
+        })
+        .collect()
+    }
+
+    /// Active notes tagged `tag` (case-insensitive, `#` optional), pinned first, newest first.
+    pub fn notes_with_tag(&self, tag: &str) -> StorageResult<Vec<NoteSummary>> {
+        let sql = format!(
+            "SELECT {SUMMARY_COLUMNS} FROM note_tags t JOIN notes n ON n.id = t.note_id
+             WHERE t.tag = ?2 AND n.deleted_at IS NULL
+             ORDER BY n.pinned DESC, n.updated_at DESC"
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(
+            params![PREVIEW_SOURCE_CHARS, normalize_tag(tag)],
+            raw_summary,
+        )?;
+        collect_summaries(rows)
+    }
+
+    /// IDs of active notes tagged `tag`.
+    pub fn note_ids_with_tag(&self, tag: &str) -> StorageResult<Vec<NoteId>> {
+        Ok(self
+            .notes_with_tag(tag)?
+            .into_iter()
+            .map(|n| n.id)
+            .collect())
+    }
+
+    /// Active notes that mention `title` as plain text but don't link to it
+    /// (Obsidian's "unlinked mentions"). Excludes the note itself.
+    pub fn unlinked_mentions(
+        &self,
+        note: NoteId,
+        title: &str,
+        limit: usize,
+    ) -> StorageResult<Vec<NoteSummary>> {
+        let phrase = title.split_whitespace().collect::<Vec<_>>().join(" ");
+        if phrase.chars().count() < 3 {
+            return Ok(Vec::new()); // too short to be meaningful
+        }
+        let fts = format!("body : \"{}\"", phrase.replace('"', "\"\""));
+        let sql = format!(
+            "SELECT {SUMMARY_COLUMNS} FROM notes_fts f JOIN notes n ON n.rowid = f.rowid
+             WHERE notes_fts MATCH ?2 AND n.deleted_at IS NULL AND n.id != ?3
+               AND NOT EXISTS (SELECT 1 FROM note_links l WHERE l.source_id = n.id AND l.target_key = ?4)
+             ORDER BY n.updated_at DESC LIMIT ?5"
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(
+            params![
+                PREVIEW_SOURCE_CHARS,
+                fts,
+                note.to_string(),
+                normalize_target(title),
+                limit
+            ],
+            raw_summary,
+        )?;
+        collect_summaries(rows)
+    }
+
+    /// Full bodies of all active notes (for export).
+    pub fn all_notes(&self) -> StorageResult<Vec<Note>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, title, body, pinned, created_at, updated_at, deleted_at
+             FROM notes WHERE deleted_at IS NULL ORDER BY title COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], raw_note)?.collect::<Vec<_>>();
+        rows.into_iter().map(|r| r?.into_note()).collect()
     }
 
     /// Finds an active note whose title matches a link target. Matching is
@@ -379,6 +470,61 @@ mod tests {
         log.trash(at(2));
         store.save_note(&log).expect("save");
         assert!(store.backlinks("car").expect("backlinks").is_empty());
+    }
+
+    #[test]
+    fn tags_are_indexed_counted_and_follow_edits() {
+        let mut store = store();
+        let mut car = Note::new("Car", "Service #car #money", at(1)).expect("note");
+        let bills = Note::new("Bills", "Due #Money", at(2)).expect("note");
+        let mut gone = Note::new("Old", "#car", at(3)).expect("note");
+        gone.trash(at(4));
+        for n in [&car, &bills, &gone] {
+            store.save_note(n).expect("save");
+        }
+        assert_eq!(
+            store.note_tags().expect("tags"),
+            [("car".to_owned(), 1), ("money".to_owned(), 2)]
+        );
+        let money: Vec<_> = store
+            .notes_with_tag("#Money")
+            .expect("tagged")
+            .into_iter()
+            .map(|n| n.title)
+            .collect();
+        assert_eq!(money, ["Bills", "Car"]);
+
+        car.edit("Car", "no tags now", at(5)).expect("edit");
+        store.save_note(&car).expect("save");
+        assert!(store.notes_with_tag("car").expect("tagged").is_empty());
+    }
+
+    #[test]
+    fn unlinked_mentions_find_plain_text_only() {
+        let mut store = store();
+        let target = Note::new("Service log", "", at(1)).expect("note");
+        let plain = Note::new("Trip", "check the service log before leaving", at(2)).expect("note");
+        let linked = Note::new("Car", "see [[Service log]]", at(3)).expect("note");
+        let other = Note::new("Food", "nothing here", at(4)).expect("note");
+        for n in [&target, &plain, &linked, &other] {
+            store.save_note(n).expect("save");
+        }
+        let hits: Vec<_> = store
+            .unlinked_mentions(target.id(), target.title(), 10)
+            .expect("mentions")
+            .into_iter()
+            .map(|n| n.title)
+            .collect();
+        assert_eq!(hits, ["Trip"]);
+        assert!(
+            store
+                .unlinked_mentions(target.id(), "ab", 10)
+                .expect("short")
+                .is_empty()
+        );
+        store
+            .unlinked_mentions(target.id(), "quote\" OR x", 10)
+            .expect("odd titles are safe");
     }
 
     #[test]

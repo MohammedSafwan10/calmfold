@@ -7,6 +7,7 @@
 
 pub mod actions;
 pub mod library;
+pub mod markdown_io;
 pub mod nav;
 pub mod paths;
 pub mod shell;

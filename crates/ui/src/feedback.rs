@@ -9,7 +9,7 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariant};
+use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::notification::{Notification, NotificationType};
 use gpui_kit::component::{Sizable as _, WindowExt as _};
 use gpui_kit::{App, SharedString, Window};
@@ -115,4 +115,93 @@ pub fn report<T, E: std::fmt::Display>(
             None
         }
     }
+}
+
+/// Asks for one line of text ("New project", "Rename"). Enter or the confirm
+/// button submits; empty input is ignored; Escape cancels.
+pub fn prompt_text(
+    title: impl Into<SharedString>,
+    placeholder: impl Into<SharedString>,
+    initial: impl Into<SharedString>,
+    confirm_label: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+    on_submit: impl Fn(String, &mut Window, &mut App) + 'static,
+) {
+    use gpui_kit::component::dialog::DialogFooter;
+    use gpui_kit::component::input::{Input, InputEvent, InputState};
+    use gpui_kit::{AppContext as _, ParentElement as _};
+
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    let initial: SharedString = initial.into();
+    let placeholder: SharedString = placeholder.into();
+    let input = cx.new(|cx| {
+        let mut state = InputState::new(window, cx).placeholder(placeholder);
+        state.set_value(initial.clone(), window, cx);
+        state
+    });
+    /// Receives the trimmed, non-empty value.
+    type OnSubmit = Rc<dyn Fn(String, &mut Window, &mut App)>;
+    /// Returns `true` when the value was accepted and the dialog may close.
+    type Submit = Rc<dyn Fn(&mut Window, &mut App) -> bool>;
+
+    let on_submit: OnSubmit = Rc::new(on_submit);
+    let submit: Submit = {
+        let input = input.clone();
+        Rc::new(move |window, cx| {
+            let value = input.read(cx).value().trim().to_owned();
+            if value.is_empty() {
+                return false;
+            }
+            on_submit(value, window, cx);
+            true
+        })
+    };
+    // Enter in the field submits too. The subscription lives as long as the input.
+    let enter = submit.clone();
+    let window_handle = window.window_handle();
+    cx.subscribe(&input, move |_, event: &InputEvent, cx| {
+        if matches!(event, InputEvent::PressEnter { .. }) {
+            let enter = enter.clone();
+            _ = window_handle.update(cx, move |_, window, cx| {
+                if enter(window, cx) {
+                    window.close_dialog(cx);
+                }
+            });
+        }
+    })
+    .detach();
+
+    let title: SharedString = title.into();
+    let confirm_label: SharedString = confirm_label.into();
+    let field = input.clone();
+    window.open_dialog(cx, move |dialog, _, _| {
+        let submit = submit.clone();
+        dialog
+            .title(title.clone())
+            .w(gpui_kit::px(420.))
+            .child(Input::new(&field))
+            .footer(
+                DialogFooter::new()
+                    .child(
+                        Button::new("prompt-cancel")
+                            .outline()
+                            .label("Cancel")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("prompt-ok")
+                            .primary()
+                            .label(confirm_label.clone())
+                            .on_click(move |_, window, cx| {
+                                if submit(window, cx) {
+                                    window.close_dialog(cx);
+                                }
+                            }),
+                    ),
+            )
+    });
+    input.update(cx, |state, cx| state.focus(window, cx));
 }

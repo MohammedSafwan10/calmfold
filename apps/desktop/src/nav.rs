@@ -16,6 +16,8 @@ pub enum NavTarget {
     Tasks(TaskTab),
     NotesAll,
     NotesTrash,
+    DailyNote,
+    Project(keepstone_core::ProjectId),
 }
 
 /// Which count badge an entry shows, if any.
@@ -38,6 +40,15 @@ pub struct NavEntry {
     pub route: Route,
     pub badge: Badge,
     pub children: &'static [NavChild],
+    /// Children generated from data, shown after the static ones.
+    pub dynamic: Option<DynamicChildren>,
+}
+
+/// Data-driven sidebar children.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DynamicChildren {
+    /// One child per project, with its open-task count.
+    Projects,
 }
 
 pub struct NavSection {
@@ -54,6 +65,7 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
             route: Route::Today,
             badge: Badge::TasksDueNow,
             children: &[],
+            dynamic: None,
         },
         NavEntry {
             label: "Notes",
@@ -67,11 +79,17 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
                     badge: Badge::None,
                 },
                 NavChild {
+                    label: "Today's note",
+                    target: NavTarget::DailyNote,
+                    badge: Badge::None,
+                },
+                NavChild {
                     label: "Trash",
                     target: NavTarget::NotesTrash,
                     badge: Badge::None,
                 },
             ],
+            dynamic: None,
         },
         NavEntry {
             label: "Tasks",
@@ -105,6 +123,7 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
                     badge: Badge::None,
                 },
             ],
+            dynamic: Some(DynamicChildren::Projects),
         },
     ],
 }];

@@ -9,8 +9,8 @@
 
 ## Next
 
-1. [ ] Daily note card (open/create today's note)
-2. [ ] Weekly completion chart (`gpui_kit::component::chart::BarChart`)
+1. [x] Daily note button (open/create today's note)
+2. [x] Weekly completion chart + next 7 days list (rows open the task)
 3. [ ] Habits strip (after plan 07)
 4. [ ] Upcoming renewals (after plan 08)
 5. [ ] Customizable sections (show/hide, order) in Settings

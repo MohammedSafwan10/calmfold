@@ -15,26 +15,33 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::assets::IconName as Lucide;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::input::{BufferPoint, Editor, EditorState, Input, InputEvent, InputState};
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, ClickEvent, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
-    rems,
+    Focusable, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
+    Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    Task, TestSupportExt as _, Window, div, px, rems,
 };
 use keepstone_core::NoteId;
-use keepstone_core::links::{note_link_url, parse_note_link_url, to_markdown_links};
+use keepstone_core::format::{self, Block, Inline};
+use keepstone_core::links::{note_link_url, parse_note_link_url};
 use keepstone_storage::NoteSummary;
 use keepstone_ui::appearance;
-use keepstone_ui::components::{empty_state, section_label, segmented};
+use keepstone_ui::components::{empty_state, section_label};
 use keepstone_ui::feedback::{self, Confirm};
 use keepstone_ui::panel::{PanelSide, SidePanel};
 
+use crate::actions::{
+    FormatBold, FormatBullets, FormatChecklist, FormatCode, FormatHeading1, FormatHeading2,
+    FormatHeading3, FormatHighlight, FormatItalic, FormatLink, FormatNumbers, FormatParagraph,
+    FormatQuote, FormatStrikethrough, ToggleCheckbox,
+};
 use crate::library::{Library, LibraryEvent};
 use crate::ui_state::{LayoutStore, NOTES_LIST};
 use crate::views::Navigate;
@@ -67,6 +74,15 @@ pub struct NotesView {
     list: Vec<NoteSummary>,
     load_error: bool,
     show_trash: bool,
+    /// Shows only notes with this tag (lower-case, no `#`).
+    tag_filter: Option<String>,
+    mentions: Vec<NoteSummary>,
+    /// The note page's single scroll area (the editor never scrolls itself).
+    page_scroll: ScrollHandle,
+    /// Body rows and caret row from the last frame, to size the editor to its
+    /// content and keep the caret in view.
+    body_rows: usize,
+    caret_row: usize,
     open: Option<OpenNote>,
     backlinks: Vec<NoteSummary>,
     mode: Mode,
@@ -101,6 +117,8 @@ impl NotesView {
             let mut state = EditorState::new(window, cx)
                 .line_number(false)
                 .folding(false)
+                // Prose, not code: no vertical indent guide lines.
+                .indent_guides(false)
                 .soft_wrap(true)
                 .placeholder("Start writing. Type [[ to link another note.");
             state.lsp_mut().completion_provider = Some(Rc::new(NoteLinkCompletions {
@@ -112,6 +130,13 @@ impl NotesView {
 
         let subscriptions = vec![
             cx.observe(&layout, |_, _, cx| cx.notify()),
+            // Typing changes rows or the caret line: resize the editor and follow
+            // the caret. Other editor notifications (blink) don't re-render this view.
+            cx.observe(&body, |this, _, cx| {
+                if this.body_metrics(cx) != (this.body_rows, this.caret_row) {
+                    cx.notify();
+                }
+            }),
             cx.subscribe(&library, |this, _, event, cx| {
                 if *event == LibraryEvent::NotesChanged {
                     this.reload_list(cx);
@@ -150,6 +175,11 @@ impl NotesView {
             list: Vec::new(),
             load_error: false,
             show_trash: false,
+            tag_filter: None,
+            mentions: Vec::new(),
+            page_scroll: ScrollHandle::new(),
+            body_rows: 0,
+            caret_row: 0,
             open: None,
             backlinks: Vec::new(),
             mode: Mode::Edit,
@@ -222,6 +252,8 @@ impl NotesView {
             trashed: note.is_trashed(),
         });
         self.dirty = false;
+        self.page_scroll.set_offset(gpui_kit::point(px(0.), px(0.)));
+        self.caret_row = 0;
         self.reload_backlinks(cx);
         cx.notify();
     }
@@ -245,6 +277,11 @@ impl NotesView {
         &self.body
     }
 
+    /// Title of the open note, if any.
+    pub fn open_note_title(&self, _: &App) -> Option<String> {
+        self.open.as_ref().map(|o| o.title.clone())
+    }
+
     /// The open note, if any.
     pub fn open_note_id(&self) -> Option<NoteId> {
         self.open.as_ref().map(|o| o.id)
@@ -264,10 +301,23 @@ impl NotesView {
         let library = self.library.read(cx);
         let result = if self.show_trash {
             library.notes(true)
-        } else if query.trim().is_empty() {
-            library.notes(false)
         } else {
-            library.search_notes(&query, SEARCH_LIMIT)
+            let base = if query.trim().is_empty() {
+                library.notes(false)
+            } else {
+                library.search_notes(&query, SEARCH_LIMIT)
+            };
+            match &self.tag_filter {
+                None => base,
+                Some(tag) => {
+                    let tagged = library.note_ids_with_tag(tag);
+                    base.map(|list| {
+                        list.into_iter()
+                            .filter(|n| tagged.contains(&n.id))
+                            .collect()
+                    })
+                }
+            }
         };
         match result {
             Ok(list) => {
@@ -283,7 +333,242 @@ impl NotesView {
         cx.notify();
     }
 
+    /// Shows only notes tagged `tag` (or all notes for `None`).
+    pub fn set_tag_filter(
+        &mut self,
+        tag: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tag = tag
+            .map(|t| keepstone_core::tags::normalize_tag(&t))
+            .filter(|t| !t.is_empty());
+        if tag == self.tag_filter && !self.show_trash {
+            return;
+        }
+        if self.show_trash {
+            self.set_show_trash(false, window, cx);
+        }
+        self.tag_filter = tag;
+        self.reload_list(cx);
+    }
+
+    pub fn tag_filter(&self) -> Option<&str> {
+        self.tag_filter.as_deref()
+    }
+
+    /// Applies a Markdown edit to the body at the current selection.
+    pub fn format_with(
+        &mut self,
+        f: impl FnOnce(&str, std::ops::Range<usize>) -> format::Edit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode != Mode::Edit || self.open.as_ref().is_none_or(|o| o.trashed) {
+            return;
+        }
+        let (doc, sel) = {
+            let body = self.body.read(cx);
+            (body.value().to_string(), body.selected_range())
+        };
+        let edit = f(&doc, sel);
+        if edit.range.start == edit.range.end && edit.text.is_empty() {
+            return;
+        }
+        self.body.update(cx, |b, cx| {
+            b.set_selected_range(edit.range.clone(), cx);
+            b.replace(edit.text.clone(), window, cx);
+            b.set_selected_range(edit.selection.clone(), cx);
+            b.focus(window, cx);
+        });
+        self.schedule_save(window, cx);
+    }
+
+    pub fn format_inline(&mut self, style: Inline, window: &mut Window, cx: &mut Context<Self>) {
+        self.format_with(
+            |doc, sel| format::toggle_inline(doc, sel, style),
+            window,
+            cx,
+        );
+    }
+
+    pub fn format_block(&mut self, block: Block, window: &mut Window, cx: &mut Context<Self>) {
+        self.format_with(|doc, sel| format::set_block(doc, sel, block), window, cx);
+    }
+
+    /// "Aa": the six everyday styles first, then Headings ▸ and Lists ▸.
+    /// Items dispatch the same actions as the shortcuts, into the editor, so the
+    /// menu also teaches the keys.
+    fn format_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+        let editor = self.body.focus_handle(cx);
+        Button::new("note-format")
+            .ghost()
+            .small()
+            .icon(Lucide::Type)
+            .tooltip("Format")
+            .dropdown_menu(move |menu, window, cx| {
+                menu.action_context(editor.clone())
+                    .menu_with_icon("Bold", Lucide::Bold, Box::new(FormatBold))
+                    .menu_with_icon("Italic", Lucide::Italic, Box::new(FormatItalic))
+                    .menu_with_icon(
+                        "Strikethrough",
+                        Lucide::Strikethrough,
+                        Box::new(FormatStrikethrough),
+                    )
+                    .menu_with_icon("Highlight", Lucide::Highlighter, Box::new(FormatHighlight))
+                    .menu_with_icon("Code", Lucide::Code, Box::new(FormatCode))
+                    .menu_with_icon("Link", Lucide::Link2, Box::new(FormatLink))
+                    .separator()
+                    .submenu_with_icon(
+                        Some(Lucide::Heading.into()),
+                        "Headings",
+                        window,
+                        cx,
+                        |sub, _, _| {
+                            sub.menu_with_icon(
+                                "Heading 1",
+                                Lucide::Heading1,
+                                Box::new(FormatHeading1),
+                            )
+                            .menu_with_icon("Heading 2", Lucide::Heading2, Box::new(FormatHeading2))
+                            .menu_with_icon("Heading 3", Lucide::Heading3, Box::new(FormatHeading3))
+                            .separator()
+                            .menu_with_icon(
+                                "Body text",
+                                Lucide::Pilcrow,
+                                Box::new(FormatParagraph),
+                            )
+                        },
+                    )
+                    .submenu_with_icon(
+                        Some(Lucide::List.into()),
+                        "Lists",
+                        window,
+                        cx,
+                        |sub, _, _| {
+                            sub.menu_with_icon(
+                                "Bulleted list",
+                                Lucide::List,
+                                Box::new(FormatBullets),
+                            )
+                            .menu_with_icon(
+                                "Numbered list",
+                                Lucide::ListOrdered,
+                                Box::new(FormatNumbers),
+                            )
+                            .menu_with_icon(
+                                "Checklist",
+                                Lucide::ListChecks,
+                                Box::new(FormatChecklist),
+                            )
+                            .separator()
+                            .menu_with_icon(
+                                "Quote",
+                                Lucide::Quote,
+                                Box::new(FormatQuote),
+                            )
+                        },
+                    )
+            })
+    }
+
+    /// "…" for the open note: pin, export, trash (same order as every row menu).
+    fn note_menu(&self, pinned: bool, cx: &Context<Self>) -> impl IntoElement {
+        let view = cx.entity().downgrade();
+        Button::new("note-more")
+            .ghost()
+            .small()
+            .icon(Lucide::Ellipsis)
+            .tooltip("More")
+            .dropdown_menu(move |menu, _, _| {
+                let run = |label: &'static str, icon: Lucide, f: fn(&mut NotesView, &mut Window, &mut Context<NotesView>)| {
+                    let view = view.clone();
+                    PopupMenuItem::new(label).icon(icon).on_click(move |_, window, cx| {
+                        _ = view.update(cx, |this, cx| f(this, window, cx));
+                    })
+                };
+                menu.item(if pinned {
+                    run("Unpin", Lucide::PinOff, |this, w, cx| this.toggle_pin_open(w, cx))
+                } else {
+                    run("Pin to top", Lucide::Pin, |this, w, cx| this.toggle_pin_open(w, cx))
+                })
+                .item(run("Export all as Markdown…", Lucide::FolderOutput, |this, w, cx| this.export_notes(w, cx)))
+                .separator()
+                .item(run("Move to trash", Lucide::Trash, |this, w, cx| {
+                    if let Some(id) = this.open.as_ref().map(|o| o.id) {
+                        this.trash_note(id, w, cx);
+                    }
+                }))
+            })
+    }
+
+    fn toggle_pin_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((id, pinned)) = self.open.as_ref().map(|o| (o.id, o.pinned)) {
+            self.set_pinned(id, !pinned, window, cx);
+        }
+    }
+
+    /// Switches between editing and the rendered preview (⌘E).
+    pub fn toggle_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open.as_ref().is_none_or(|o| o.trashed) {
+            return;
+        }
+        _ = self.flush(window, cx);
+        self.mode = match self.mode {
+            Mode::Edit => Mode::Preview,
+            Mode::Preview => Mode::Edit,
+        };
+        if self.mode == Mode::Edit {
+            self.body.update(cx, |b, cx| b.focus(window, cx));
+        } else {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn is_previewing(&self) -> bool {
+        self.mode == Mode::Preview
+    }
+
+    /// Opens (creating if needed) today's daily note.
+    pub fn open_daily_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.flush(window, cx) {
+            return;
+        }
+        let today = keepstone_core::clock::today();
+        let result = self
+            .library
+            .update(cx, |lib, cx| lib.open_daily_note(today, cx));
+        if let Some(id) = feedback::report(result, window, cx) {
+            self.show_trash = false;
+            self.tag_filter = None;
+            self.reload_list(cx);
+            self.open_note(id, window, cx);
+            self.body.update(cx, |b, cx| b.focus(window, cx));
+        }
+    }
+
+    fn link_mention(&mut self, source: NoteId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(title) = self.open.as_ref().map(|o| o.title.clone()) else {
+            return;
+        };
+        let result = self
+            .library
+            .update(cx, |lib, cx| lib.link_mention(source, &title, cx));
+        if feedback::report(result, window, cx).is_some() {
+            self.reload_backlinks(cx);
+            cx.notify();
+        }
+    }
+
     fn reload_backlinks(&mut self, cx: &mut Context<Self>) {
+        self.mentions = match &self.open {
+            Some(open) if !open.trashed => self
+                .library
+                .read(cx)
+                .unlinked_mentions(open.id, &open.title),
+            _ => Vec::new(),
+        };
         self.backlinks = match &self.open {
             Some(open) if !open.trashed => self
                 .library
@@ -403,18 +688,6 @@ impl NotesView {
         cx.notify();
     }
 
-    fn toggle_pin(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((id, pinned)) = self.open.as_ref().map(|o| (o.id, o.pinned)) {
-            self.set_pinned(id, !pinned, window, cx);
-        }
-    }
-
-    fn trash_open(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.open.as_ref().map(|o| o.id) {
-            self.trash_note(id, window, cx);
-        }
-    }
-
     fn restore_open(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.open.as_ref().map(|o| o.id) {
             self.restore_note(id, window, cx);
@@ -506,56 +779,62 @@ impl NotesView {
         let searching = !self.search.read(cx).value().trim().is_empty();
         let view = cx.entity().downgrade();
 
-        let header = h_flex()
-            .justify_between()
-            .items_center()
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(if self.show_trash { "Trash" } else { "Notes" }),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .when(self.show_trash && !self.list.is_empty(), |this| {
-                        this.child(
-                            Button::new("notes-empty-trash")
-                                .ghost()
-                                .small()
-                                .label("Empty")
-                                .tooltip("Delete everything in the trash forever")
-                                .on_click(cx.listener(Self::empty_trash)),
-                        )
-                    })
-                    .child(
-                        Button::new("notes-trash-toggle")
+        // One calm row: search, new note, and "…" for everything else
+        // (tags, trash, import/export). The sidebar already says "Notes".
+        let header = if self.show_trash {
+            h_flex()
+                .gap_1()
+                .items_center()
+                .child(
+                    Button::new("notes-trash-back")
+                        .ghost()
+                        .small()
+                        .icon(Lucide::ArrowLeft)
+                        .tooltip("Back to notes")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.set_show_trash(false, window, cx)
+                        })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Trash"),
+                )
+                .when(!self.list.is_empty(), |this| {
+                    this.child(
+                        Button::new("notes-empty-trash")
                             .ghost()
                             .small()
-                            .icon(if self.show_trash {
-                                Lucide::NotebookText
-                            } else {
-                                Lucide::Trash
-                            })
-                            .tooltip(if self.show_trash {
-                                "Back to notes"
-                            } else {
-                                "Show trash"
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let show = !this.show_trash;
-                                this.set_show_trash(show, window, cx);
-                            })),
+                            .label("Empty")
+                            .tooltip("Delete everything in the trash forever")
+                            .on_click(cx.listener(Self::empty_trash)),
                     )
-                    .child(
-                        Button::new("notes-new")
-                            .ghost()
-                            .small()
-                            .icon(Lucide::SquarePen)
-                            .tooltip("New note")
-                            .on_click(cx.listener(|this, _, window, cx| this.new_note(window, cx))),
+                })
+        } else {
+            h_flex()
+                .gap_1()
+                .items_center()
+                .child(
+                    div().flex_1().min_w_0().child(
+                        Input::new(&self.search).small().cleanable(true).prefix(
+                            Icon::new(Lucide::Search)
+                                .small()
+                                .text_color(theme.muted_foreground),
+                        ),
                     ),
-            );
+                )
+                .child(
+                    Button::new("notes-new")
+                        .ghost()
+                        .small()
+                        .icon(Lucide::SquarePen)
+                        .tooltip_with_action("New note", &crate::actions::NewNote, None)
+                        .on_click(cx.listener(|this, _, window, cx| this.new_note(window, cx))),
+                )
+                .child(self.list_menu_button(cx))
+        };
 
         let in_trash = self.show_trash;
         let rows = self.list.iter().map(|note| {
@@ -576,6 +855,7 @@ impl NotesView {
                 .on_click(move |_, window, cx| {
                     _ = view.update(cx, |this, cx| this.open_note(id, window, cx));
                 })
+                .test_support()
                 .child(
                     h_flex()
                         .gap_1()
@@ -643,18 +923,32 @@ impl NotesView {
             .size_full()
             .border_r_1()
             .border_color(theme.border)
-            .child(v_flex().px_3().pt_4().pb_2().gap_2().child(header).when(
-                !self.show_trash,
-                |this| {
-                    this.child(
-                        Input::new(&self.search).small().cleanable(true).prefix(
-                            Icon::new(Lucide::Search)
-                                .small()
-                                .text_color(theme.muted_foreground),
-                        ),
-                    )
-                },
-            ))
+            .child(
+                v_flex()
+                    .px_3()
+                    .pt_4()
+                    .pb_2()
+                    .gap_2()
+                    .child(header)
+                    .when_some(
+                        self.tag_filter.clone().filter(|_| !self.show_trash),
+                        |this, tag| {
+                            this.child(
+                                h_flex().child(
+                                    Button::new("clear-tag-filter")
+                                        .outline()
+                                        .xsmall()
+                                        .label(format!("#{tag}"))
+                                        .icon(Lucide::X)
+                                        .tooltip("Show all notes")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.set_tag_filter(None, window, cx)
+                                        })),
+                                ),
+                            )
+                        },
+                    ),
+            )
             .child(
                 div()
                     .id("notes-list")
@@ -673,6 +967,125 @@ impl NotesView {
             )
     }
 
+    /// "…" next to New note: filter by tag, today's note, trash, import/export.
+    fn list_menu_button(&self, cx: &Context<Self>) -> impl IntoElement {
+        let tags = self.library.read(cx).note_tags();
+        let current = self.tag_filter.clone();
+        let view = cx.entity().downgrade();
+        Button::new("notes-more")
+            .ghost()
+            .small()
+            .icon(Lucide::Ellipsis)
+            .selected(current.is_some())
+            .tooltip("More")
+            .dropdown_menu(move |menu, window, cx| {
+                let v = view.clone();
+                let run = move |label: &'static str, icon: Lucide, f: fn(&mut NotesView, &mut Window, &mut Context<NotesView>)| {
+                    let v = v.clone();
+                    PopupMenuItem::new(label).icon(icon).on_click(move |_, window, cx| {
+                        _ = v.update(cx, |this, cx| f(this, window, cx));
+                    })
+                };
+                let tags = tags.clone();
+                let current = current.clone();
+                let tag_view = view.clone();
+                menu.item(run("Today's note", Lucide::CalendarDays, |this, w, cx| this.open_daily_note(w, cx)))
+                    .separator()
+                    .submenu_with_icon(
+                        Some(Lucide::Hash.into()),
+                        match &current {
+                            Some(tag) => format!("Tag: #{tag}"),
+                            None => "Filter by tag".to_owned(),
+                        },
+                        window,
+                        cx,
+                        move |sub, _, _| {
+                            if tags.is_empty() {
+                                return sub.label("No tags yet. Type #tag in a note.");
+                            }
+                            let all = tag_view.clone();
+                            let sub = sub
+                                .item(PopupMenuItem::new("All notes").checked(current.is_none()).on_click(move |_, window, cx| {
+                                    _ = all.update(cx, |this, cx| this.set_tag_filter(None, window, cx));
+                                }))
+                                .separator();
+                            tags.iter().fold(sub, |sub, (tag, count)| {
+                                let view = tag_view.clone();
+                                let value = tag.clone();
+                                sub.item(
+                                    PopupMenuItem::new(format!("#{tag}  ·  {count}"))
+                                        .checked(current.as_deref() == Some(tag.as_str()))
+                                        .on_click(move |_, window, cx| {
+                                            _ = view.update(cx, |this, cx| this.set_tag_filter(Some(value.clone()), window, cx));
+                                        }),
+                                )
+                            })
+                        },
+                    )
+                    .separator()
+                    .item(run("Import Markdown folder…", Lucide::FolderInput, |this, w, cx| this.import_notes(w, cx)))
+                    .item(run("Export as Markdown…", Lucide::FolderOutput, |this, w, cx| this.export_notes(w, cx)))
+                    .separator()
+                    .item(run("Trash", Lucide::Trash, |this, w, cx| this.set_show_trash(true, w, cx)))
+            })
+    }
+
+    /// Asks for a folder and imports its `.md` files (Obsidian vaults work).
+    pub fn import_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let library = self.library.clone();
+        let paths = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Import".into()),
+        });
+        cx.spawn_in(window, async move |_, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else { return };
+            let Some(dir) = paths.into_iter().next() else { return };
+            _ = cx.update(|window, cx| {
+                match library.update(cx, |lib, cx| lib.import_notes(&dir, cx)) {
+                    Ok((imported, skipped)) => {
+                        let msg = match skipped {
+                            0 => format!("Imported {imported} note(s)."),
+                            n => format!("Imported {imported} note(s). Skipped {n} with titles that already exist."),
+                        };
+                        window.push_notification(msg, cx);
+                    }
+                    Err(err) => feedback::error_toast(format!("{err:#}"), window, cx),
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Asks for a folder and writes every note there as `Title.md`.
+    pub fn export_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.flush(window, cx) {
+            return;
+        }
+        let library = self.library.clone();
+        let paths = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Export here".into()),
+        });
+        cx.spawn_in(window, async move |_, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(dir) = paths.into_iter().next() else {
+                return;
+            };
+            _ = cx.update(|window, cx| match library.read(cx).export_notes(&dir) {
+                Ok(n) => window
+                    .push_notification(format!("Exported {n} note(s) to {}.", dir.display()), cx),
+                Err(err) => feedback::error_toast(format!("{err:#}"), window, cx),
+            });
+        })
+        .detach();
+    }
+
     fn render_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let width = rems(appearance::settings(cx).content_width.max_width_rems());
@@ -686,20 +1099,24 @@ impl NotesView {
         };
         let trashed = open.trashed;
         let pinned = open.pinned;
-        let view = cx.entity().downgrade();
 
-        let mode_switch = segmented(
-            "note-mode",
-            &[(Mode::Edit, "Edit"), (Mode::Preview, "Preview")],
-            self.mode,
-            move |mode, window, cx| {
-                _ = view.update(cx, |this, cx| {
-                    _ = this.flush(window, cx);
-                    this.mode = mode;
-                    cx.notify();
-                });
-            },
-        );
+        // One icon toggle instead of an Edit/Preview label pair: it shows what you
+        // switch *to* (eye = preview, pencil = edit). ⌘E does the same.
+        let previewing = self.mode == Mode::Preview;
+        let mode_toggle = Button::new("note-mode")
+            .ghost()
+            .small()
+            .icon(if previewing {
+                Lucide::Pencil
+            } else {
+                Lucide::Eye
+            })
+            .tooltip_with_action(
+                if previewing { "Edit" } else { "Preview" },
+                &crate::actions::TogglePreview,
+                None,
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_mode(window, cx)));
 
         let toolbar = h_flex()
             .justify_between()
@@ -715,7 +1132,7 @@ impl NotesView {
                     .child("In trash · read-only")
                     .into_any_element()
             } else {
-                mode_switch.into_any_element()
+                div().into_any_element()
             })
             .child(h_flex().gap_1().map(|this| {
                 if trashed {
@@ -735,23 +1152,12 @@ impl NotesView {
                             .on_click(cx.listener(Self::delete_open)),
                     )
                 } else {
-                    this.child(
-                        Button::new("note-pin")
-                            .ghost()
-                            .small()
-                            .icon(if pinned { Lucide::PinOff } else { Lucide::Pin })
-                            .selected(pinned)
-                            .tooltip(if pinned { "Unpin" } else { "Pin to top" })
-                            .on_click(cx.listener(Self::toggle_pin)),
-                    )
-                    .child(
-                        Button::new("note-trash")
-                            .ghost()
-                            .small()
-                            .icon(Lucide::Trash)
-                            .tooltip("Move to trash")
-                            .on_click(cx.listener(Self::trash_open)),
-                    )
+                    // Three controls: format, edit/preview, and "…" for the rest.
+                    this.when(self.mode == Mode::Edit, |this| {
+                        this.child(self.format_menu(cx))
+                    })
+                    .child(mode_toggle)
+                    .child(self.note_menu(pinned, cx))
                 }
             }));
 
@@ -759,69 +1165,210 @@ impl NotesView {
         let body_text = self.body.read(cx).value();
         let title_text = self.title.read(cx).value();
 
-        let content = v_flex()
-            .w_full()
-            .max_w(width)
-            .mx_auto()
-            .px_8()
-            .py_6()
-            .gap_4()
+        // One centered column per child, so the scroll handle knows where the
+        // editor (child 1) is and can keep the caret in view.
+        let column = || div().w_full().max_w(width).mx_auto().px_8();
+        let line_height = theme.font_size * 1.5; // gpui-kit editor rows are 1.5× the font size
+        let editor_height = self.editor_height(line_height);
+
+        let page = v_flex()
+            .id("note-scroll")
+            .track_scroll(&self.page_scroll)
             .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .pt_6()
+            .pb_8()
             .map(|this| {
                 if preview {
-                    this.child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(
-                        if title_text.is_empty() {
-                            SharedString::from(keepstone_core::note::UNTITLED)
-                        } else {
-                            title_text.clone()
-                        },
+                    this.child(column().pb_4().child(
+                        div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(
+                            if title_text.is_empty() {
+                                SharedString::from(keepstone_core::note::UNTITLED)
+                            } else {
+                                title_text.clone()
+                            },
+                        ),
                     ))
-                    .child(self.render_preview(&body_text, cx))
+                    .child(column().child(self.render_preview(&body_text, cx)))
                 } else {
                     this.child(
-                        Input::new(&self.title)
-                            .appearance(false)
-                            .large()
-                            .text_2xl()
-                            .font_weight(FontWeight::SEMIBOLD),
+                        column().pb_2().child(
+                            Input::new(&self.title)
+                                .appearance(false)
+                                .large()
+                                .text_2xl()
+                                .font_weight(FontWeight::SEMIBOLD),
+                        ),
                     )
                     .child(
-                        Editor::new(&self.body)
-                            .appearance(false)
-                            // Notes are prose: the UI font, not the code font.
-                            .font_family(theme.font_family.clone())
-                            .text_size(theme.font_size)
-                            .flex_1()
-                            .min_h(rems(20.)),
+                        column().child(
+                            // Format shortcuts (⌘B, ⌘⌥1, …) are bound to this context.
+                            div()
+                                .id("note-body")
+                                .test_support()
+                                .key_context(crate::actions::NOTE_EDITOR_CONTEXT)
+                                .on_action(cx.listener(|this, _: &FormatBold, w, cx| {
+                                    this.format_inline(Inline::Bold, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatItalic, w, cx| {
+                                    this.format_inline(Inline::Italic, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatStrikethrough, w, cx| {
+                                    this.format_inline(Inline::Strikethrough, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatCode, w, cx| {
+                                    this.format_inline(Inline::Code, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatHighlight, w, cx| {
+                                    this.format_inline(Inline::Highlight, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatLink, w, cx| {
+                                    this.format_with(format::insert_link, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatHeading1, w, cx| {
+                                    this.format_block(Block::Heading(1), w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatHeading2, w, cx| {
+                                    this.format_block(Block::Heading(2), w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatHeading3, w, cx| {
+                                    this.format_block(Block::Heading(3), w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatParagraph, w, cx| {
+                                    this.format_block(Block::Paragraph, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatBullets, w, cx| {
+                                    this.format_block(Block::Bullet, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatNumbers, w, cx| {
+                                    this.format_block(Block::Numbered, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatChecklist, w, cx| {
+                                    this.format_block(Block::Checklist, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &FormatQuote, w, cx| {
+                                    this.format_block(Block::Quote, w, cx)
+                                }))
+                                .on_action(cx.listener(|this, _: &ToggleCheckbox, w, cx| {
+                                    this.format_with(
+                                        |doc, sel| {
+                                            format::toggle_checkbox(doc, sel.start).unwrap_or(
+                                                format::Edit {
+                                                    range: sel.clone(),
+                                                    text: doc[sel.clone()].to_owned(),
+                                                    selection: sel,
+                                                },
+                                            )
+                                        },
+                                        w,
+                                        cx,
+                                    )
+                                }))
+                                .child(
+                                    Editor::new(&self.body)
+                                        .appearance(false)
+                                        // Notes are prose: the UI font, not the code font.
+                                        .font_family(theme.font_family.clone())
+                                        .text_size(theme.font_size)
+                                        // Exactly as tall as the text: the page scrolls, not the editor.
+                                        .h(editor_height),
+                                ),
+                        ),
                     )
                 }
             })
             .when(!self.backlinks.is_empty(), |this| {
-                this.child(self.render_backlinks(cx))
-            });
+                this.child(column().pt_4().child(self.render_backlinks(cx)))
+            })
+            .when(!self.mentions.is_empty() && !trashed, |this| {
+                this.child(column().child(self.render_mentions(cx)))
+            })
+            .test_support();
 
+        if !preview {
+            self.follow_caret(line_height, cx);
+        }
         let _ = window;
-        v_flex().flex_1().min_w_0().h_full().child(toolbar).child(
-            div()
-                .id("note-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .child(content),
-        )
+        v_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(toolbar)
+            .child(page)
+    }
+
+    /// Height that fits every wrapped row, so the editor never scrolls on its
+    /// own. Re-renders once more when the row count changed (wrapping happens
+    /// during layout), which settles on the next frame.
+    fn editor_height(&mut self, line_height: Pixels) -> Pixels {
+        const MIN_ROWS: usize = 12; // a comfortable empty page to click into
+        const PADDING: f32 = 16.; // gpui-kit input padding, top + bottom
+        let rows = self.body_rows.max(1);
+        line_height * (rows.max(MIN_ROWS) as f32 + 1.) + px(PADDING)
+    }
+
+    /// (wrapped row count, caret row) of the body editor.
+    fn body_metrics(&self, cx: &App) -> (usize, usize) {
+        let body = self.body.read(cx);
+        let text = body.value();
+        let offset = body.cursor().min(text.len());
+        let line = text[..offset].matches('\n').count();
+        let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
+        let display = body.display_map();
+        let caret = display
+            .buffer_pos_to_display_pos(BufferPoint::new(line, offset - line_start))
+            .row;
+        (display.wrap_row_count(), caret)
+    }
+
+    /// Scrolls the page so the caret stays visible while typing or moving.
+    fn follow_caret(&mut self, line_height: Pixels, cx: &mut Context<Self>) {
+        let (rows, caret) = self.body_metrics(cx);
+        if rows != self.body_rows {
+            self.body_rows = rows;
+            cx.notify();
+        }
+        if caret == self.caret_row {
+            return;
+        }
+        self.caret_row = caret;
+        let (Some(editor), viewport) = (
+            self.page_scroll.bounds_for_item(1),
+            self.page_scroll.bounds(),
+        ) else {
+            return;
+        };
+        let margin = line_height * 2.;
+        let top = editor.top() + px(8.) + line_height * caret as f32;
+        let bottom = top + line_height;
+        let mut offset = self.page_scroll.offset();
+        if bottom + margin > viewport.bottom() {
+            offset.y -= bottom + margin - viewport.bottom();
+        } else if top - margin < viewport.top() {
+            offset.y += viewport.top() - (top - margin);
+        }
+        offset.y = offset.y.min(px(0.));
+        self.page_scroll.set_offset(offset);
     }
 
     /// Markdown preview where `[[links]]` are clickable and open (or create) the target note.
     fn render_preview(&self, body: &str, cx: &Context<Self>) -> impl IntoElement {
-        let source = to_markdown_links(body, |link| note_link_url(&link.target));
+        let source = preview_markdown(body);
         let view = cx.entity().downgrade();
         TextView::markdown("note-preview", source)
             .selectable(true)
-            .on_link_click(move |url, _, window, cx| match parse_note_link_url(url) {
-                Some(target) => {
+            .on_link_click(move |url, _, window, cx| {
+                if let Some(tag) = parse_tag_url(url) {
+                    _ = view.update(cx, |this, cx| this.set_tag_filter(Some(tag), window, cx));
+                } else if let Some(target) = parse_note_link_url(url) {
                     _ = view.update(cx, |this, cx| this.follow_link(&target, window, cx));
+                } else if url.starts_with("https://")
+                    || url.starts_with("http://")
+                    || url.starts_with("mailto:")
+                {
+                    cx.open_url(url);
                 }
-                None => cx.open_url(url),
             })
     }
 
@@ -877,6 +1424,132 @@ impl NotesView {
                     .child(div().text_sm().child(b.title.clone()))
             }))
     }
+
+    fn render_mentions(&self, cx: &Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let view = cx.entity().downgrade();
+        v_flex()
+            .gap_1()
+            .pt_4()
+            .child(section_label(
+                format!(
+                    "Mentioned in {} note{} without a link",
+                    self.mentions.len(),
+                    if self.mentions.len() == 1 { "" } else { "s" }
+                ),
+                cx,
+            ))
+            .children(self.mentions.iter().map(|m| {
+                let id = m.id;
+                let open_view = view.clone();
+                let link_view = view.clone();
+                h_flex()
+                    .id(ElementId::Name(SharedString::from(format!("mention-{id}"))))
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded(theme.radius)
+                    .hover(|this| this.bg(theme.list_hover))
+                    .on_click(move |_, window, cx| {
+                        _ = open_view.update(cx, |this, cx| this.open_note(id, window, cx));
+                    })
+                    .child(
+                        Icon::new(Lucide::FileText)
+                            .xsmall()
+                            .text_color(theme.muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .child(m.title.clone()),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("link-mention-{id}")))
+                            .ghost()
+                            .xsmall()
+                            .label("Link")
+                            .tooltip("Turn the first mention into a [[link]]")
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                _ = link_view
+                                    .update(cx, |this, cx| this.link_mention(id, window, cx));
+                            }),
+                    )
+            }))
+    }
+}
+
+const TAG_URL_PREFIX: &str = "keepstone://tag/";
+
+/// Markdown for the preview: `[[links]]` and `#tags` become clickable links.
+fn preview_markdown(body: &str) -> String {
+    let links = keepstone_core::links::wiki_link_spans(body);
+    let tags: Vec<_> = keepstone_core::tags::tag_spans(body)
+        .into_iter()
+        .filter(|(r, _)| {
+            !links
+                .iter()
+                .any(|(l, _)| l.start < r.end && r.start < l.end)
+        })
+        .collect();
+    let mut spans: Vec<(std::ops::Range<usize>, String)> = links
+        .into_iter()
+        .map(|(range, link)| {
+            let text = link.alias.clone().unwrap_or_else(|| match &link.heading {
+                Some(h) => format!("{} › {h}", link.target),
+                None => link.target.clone(),
+            });
+            (
+                range,
+                format!(
+                    "[{}]({})",
+                    escape_link_text(&text),
+                    note_link_url(&link.target)
+                ),
+            )
+        })
+        .chain(tags.into_iter().map(|(range, tag)| {
+            let url = note_link_url(&tag).replacen(
+                keepstone_core::links::NOTE_LINK_PREFIX,
+                TAG_URL_PREFIX,
+                1,
+            );
+            let text = format!("#{}", &body[range.start + 1..range.end]);
+            (range, format!("[{}]({url})", escape_link_text(&text)))
+        }))
+        .collect();
+    spans.sort_by_key(|(r, _)| r.start);
+    let mut out = String::with_capacity(body.len() + 64);
+    let mut last = 0;
+    for (range, replacement) in spans {
+        out.push_str(&body[last..range.start]);
+        out.push_str(&replacement);
+        last = range.end;
+    }
+    out.push_str(&body[last..]);
+    out
+}
+
+fn escape_link_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if matches!(ch, '[' | ']' | '\\' | '*' | '_' | '`') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn parse_tag_url(url: &str) -> Option<String> {
+    let rest = url.strip_prefix(TAG_URL_PREFIX)?;
+    parse_note_link_url(&format!(
+        "{}{rest}",
+        keepstone_core::links::NOTE_LINK_PREFIX
+    ))
 }
 
 /// Right-click menu for a note in the list. Same order as task menus:

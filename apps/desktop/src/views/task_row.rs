@@ -14,6 +14,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
 };
 use keepstone_core::{Date, Priority, Task, TaskId, TaskStatus};
+use keepstone_storage::Progress;
 use keepstone_ui::feedback::{self, Confirm};
 
 use crate::library::Library;
@@ -21,7 +22,13 @@ use crate::views::relative_day;
 use crate::views::task_detail::open_task_detail;
 
 /// Renders `task`. All mutations go through `library`; errors become notifications.
-pub fn task_row(task: &Task, today: Date, library: &Entity<Library>, cx: &App) -> impl IntoElement {
+pub fn task_row(
+    task: &Task,
+    today: Date,
+    progress: Option<Progress>,
+    library: &Entity<Library>,
+    cx: &App,
+) -> impl IntoElement {
     let id = task.id();
     let done = !task.status().is_open();
     let trashed = task.is_trashed();
@@ -55,6 +62,34 @@ pub fn task_row(task: &Task, today: Date, library: &Entity<Library>, cx: &App) -
             .child(Icon::new(Lucide::Flag).xsmall())
             .child(task.priority().label())
     });
+
+    let repeat_label = task.recurrence().map(|rule| {
+        h_flex()
+            .gap_1()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(Icon::new(Lucide::Repeat).xsmall())
+            .child(rule.to_string())
+    });
+    let progress_label = progress.filter(|p| p.total > 0).map(|p| {
+        h_flex()
+            .gap_1()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(Icon::new(Lucide::ListChecks).xsmall())
+            .child(format!("{}/{}", p.done, p.total))
+    });
+    let project_label = task
+        .project()
+        .and_then(|id| library.read(cx).project(id))
+        .map(|p| {
+            h_flex()
+                .gap_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(Icon::new(Lucide::FolderKanban).xsmall())
+                .child(p.name().to_owned())
+        });
 
     let status_label = (task.status() == TaskStatus::InProgress).then(|| {
         div()
@@ -121,14 +156,22 @@ pub fn task_row(task: &Task, today: Date, library: &Entity<Library>, cx: &App) -
                         .child(task.title().to_owned()),
                 )
                 .when(
-                    due_label.is_some() || priority_label.is_some() || status_label.is_some(),
+                    due_label.is_some()
+                        || priority_label.is_some()
+                        || status_label.is_some()
+                        || repeat_label.is_some()
+                        || progress_label.is_some()
+                        || project_label.is_some(),
                     |this| {
                         this.child(
                             h_flex()
                                 .gap_3()
                                 .children(status_label)
                                 .children(due_label)
-                                .children(priority_label),
+                                .children(repeat_label)
+                                .children(priority_label)
+                                .children(progress_label)
+                                .children(project_label),
                         )
                     },
                 )

@@ -119,6 +119,21 @@ Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`)
 - The "…" button and right-click on the row open the same menu (one builder).
 - "…" in a label means another step follows (a dialog or confirmation).
 
+## Note editor
+
+- Toolbar has exactly three controls, right-aligned: **Aa** (format menu),
+  **eye/pencil** (Preview/Edit, ⌘E), **…** (pin, export, move to trash).
+- Format menu: the six everyday inline styles at the top level (bold, italic,
+  strikethrough, code, highlight, link), then **Headings ▸** and **Lists ▸**
+  submenus. No section labels. Each item shows its shortcut.
+- Formatting is Markdown text (`keepstone_core::format`): no font colors or
+  sizes; headings carry size. Notes stay portable to Obsidian.
+- The writing column is centered with a max width (Settings → Content width).
+- The editor is exactly as tall as its text; the page is the only scroll area.
+  Never put a scrolling editor inside a scrolling page.
+- Indent guides are off: notes are prose, not code.
+- Toasts sit bottom-right so they never cover the toolbar.
+
 ## Shared components (`crates/ui/src/components.rs`)
 
 `segmented` (controlled segmented control), `page_header`, `empty_state`,

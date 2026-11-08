@@ -18,11 +18,11 @@ Goal: Obsidian-level notes: fast Markdown, `[[links]]`, backlinks, search.
 
 1. [x] Click `[[link]]` in preview to open (create if missing)
 2. [x] Link autocomplete when typing `[[` (editor completion menu)
-3. [ ] Unlinked mentions under backlinks
-4. [ ] Tags (`#tag`) with a sidebar child list
-5. [ ] Daily notes (one per date, opened from Today)
+3. [x] Unlinked mentions under backlinks, with a one-click Link
+4. [x] Tags (`#tag`): clickable in preview, filter from the list's … menu
+5. [x] Daily notes (`YYYY-MM-DD`, ⌘⇧D, opened from Today)
 6. [ ] Virtualized note list (`v_virtual_list`) once > 1,000 notes
-7. [ ] Import a Markdown/Obsidian folder; export to `.md` files
+7. [x] Import a Markdown/Obsidian folder; export to `.md` files
 8. [ ] Graph view
 9. [ ] Attachments (images) stored in the data folder
 

@@ -17,12 +17,42 @@ actions!(
         GoSettings,
         ToggleSidebar,
         ToggleListPanel,
+        TogglePreview,
+        OpenDailyNote,
+        NewProject,
+        ImportNotes,
+        ExportNotes,
         UseLightTheme,
         UseDarkTheme,
         UseSystemTheme,
         Quit,
     ]
 );
+
+// Formatting in the note editor (bound only inside it, context "NoteEditor").
+actions!(
+    keepstone_format,
+    [
+        FormatBold,
+        FormatItalic,
+        FormatStrikethrough,
+        FormatCode,
+        FormatHighlight,
+        FormatLink,
+        FormatHeading1,
+        FormatHeading2,
+        FormatHeading3,
+        FormatParagraph,
+        FormatBullets,
+        FormatNumbers,
+        FormatChecklist,
+        FormatQuote,
+        ToggleCheckbox,
+    ]
+);
+
+/// Key context set on the note editor; format shortcuts only work there.
+pub const NOTE_EDITOR_CONTEXT: &str = "NoteEditor";
 
 /// `cmd-<keys>` on macOS, `ctrl-<keys>` elsewhere, as a `&'static str`.
 macro_rules! shortcut {
@@ -91,11 +121,31 @@ pub const SHORTCUTS: &[Shortcut] = shortcuts![
     General, ",", "Settings", GoSettings;
     Create, "n", "New note", NewNote;
     Create, "shift-n", "New task", NewTask;
+    Create, "shift-d", "Today's note", OpenDailyNote;
     Navigate, "1", "Today", GoToday;
     Navigate, "2", "Notes", GoNotes;
     Navigate, "3", "Tasks", GoTasks;
     View, "\\", "Toggle sidebar", ToggleSidebar;
     View, "shift-l", "Toggle note list", ToggleListPanel;
+    View, "e", "Edit / preview note", TogglePreview;
+];
+
+/// Formatting shortcuts, active only while typing in a note (Bear/Notion keys).
+pub const FORMAT_SHORTCUTS: &[Shortcut] = shortcuts![
+    General, "b", "Bold", FormatBold;
+    General, "i", "Italic", FormatItalic;
+    General, "shift-x", "Strikethrough", FormatStrikethrough;
+    General, "shift-c", "Inline code", FormatCode;
+    General, "shift-h", "Highlight", FormatHighlight;
+    General, "shift-k", "Link", FormatLink;
+    General, "alt-1", "Heading 1", FormatHeading1;
+    General, "alt-2", "Heading 2", FormatHeading2;
+    General, "alt-3", "Heading 3", FormatHeading3;
+    General, "alt-0", "Body text", FormatParagraph;
+    General, "shift-8", "Bulleted list", FormatBullets;
+    General, "shift-7", "Numbered list", FormatNumbers;
+    General, "shift-9", "Checklist", FormatChecklist;
+    General, "enter", "Check / uncheck item", ToggleCheckbox;
 ];
 
 /// Built-in editing keys of the text editor (gpui-kit), shown for reference only.
@@ -128,6 +178,12 @@ pub fn bind(cx: &mut App) {
         .map(|s| KeyBinding::load(s.keys, s.action(), None, false, None, cx))
         .filter_map(Result::ok)
         .collect();
+    let editor = gpui_kit::KeyBindingContextPredicate::parse(NOTE_EDITOR_CONTEXT)
+        .ok()
+        .map(std::rc::Rc::new);
+    bindings.extend(FORMAT_SHORTCUTS.iter().filter_map(|s| {
+        KeyBinding::load(s.keys, s.action(), editor.clone(), false, None, cx).ok()
+    }));
     // Quitting by shortcut is a macOS convention; Windows and Linux close the window.
     if cfg!(target_os = "macos") {
         bindings.push(KeyBinding::new("cmd-q", Quit, None));
@@ -146,6 +202,11 @@ pub fn set_menus(cx: &mut App) {
         Menu::new("File").items([
             MenuItem::action("New Note", NewNote),
             MenuItem::action("New Task", NewTask),
+            MenuItem::action("New Project…", NewProject),
+            MenuItem::action("Today's Note", OpenDailyNote),
+            MenuItem::separator(),
+            MenuItem::action("Import Markdown Folder…", ImportNotes),
+            MenuItem::action("Export Notes as Markdown…", ExportNotes),
         ]),
         Menu::new("View").items([
             MenuItem::action("Command Palette", OpenCommandPalette),
@@ -175,6 +236,20 @@ mod tests {
             );
             assert!(seen.insert(s.keys), "{} is bound twice", s.keys);
             assert_eq!(shortcut_for(&*s.action()), Some(s.keys));
+        }
+        let mut format_keys = std::collections::HashSet::new();
+        for s in FORMAT_SHORTCUTS {
+            assert!(
+                gpui_kit::Keystroke::parse(s.keys).is_ok(),
+                "{} does not parse",
+                s.keys
+            );
+            assert!(format_keys.insert(s.keys), "{} is bound twice", s.keys);
+            assert!(
+                !seen.contains(s.keys),
+                "{} clashes with an app shortcut",
+                s.keys
+            );
         }
         for (keys, _) in EDITING_SHORTCUTS {
             assert!(gpui_kit::Keystroke::parse(keys).is_ok());

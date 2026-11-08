@@ -27,8 +27,9 @@ use keepstone_core::NoteId;
 use keepstone_ui::appearance::{self, ThemePreference};
 
 use crate::actions::{
-    GoNotes, GoSettings, GoTasks, GoToday, NewNote, NewTask, OpenCommandPalette, ToggleListPanel,
-    ToggleSidebar, UseDarkTheme, UseLightTheme, UseSystemTheme,
+    ExportNotes, GoNotes, GoSettings, GoTasks, GoToday, ImportNotes, NewNote, NewProject, NewTask,
+    OpenCommandPalette, OpenDailyNote, ToggleListPanel, TogglePreview, ToggleSidebar, UseDarkTheme,
+    UseLightTheme, UseSystemTheme,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
@@ -93,6 +94,13 @@ impl AppShell {
             cx.subscribe_in(&today, window, |this, _, nav, window, cx| {
                 this.handle_nav(*nav, window, cx)
             }),
+            cx.subscribe_in(
+                &today,
+                window,
+                |this, _, _: &crate::views::today::OpenDailyNoteRequest, window, cx| {
+                    this.open_daily_note(window, cx)
+                },
+            ),
             cx.subscribe_in(&notes, window, |this, _, nav, window, cx| {
                 this.handle_nav(*nav, window, cx)
             }),
@@ -171,13 +179,34 @@ impl AppShell {
                 self.notes
                     .update(cx, |notes, cx| notes.set_show_trash(trash, window, cx));
             }
+            NavTarget::DailyNote => self.open_daily_note(window, cx),
+            NavTarget::Project(id) => {
+                self.navigate(Route::Tasks, window, cx);
+                self.tasks
+                    .update(cx, |tasks, cx| tasks.show_project(id, cx));
+            }
         }
     }
 
     fn is_target_active(&self, target: NavTarget, cx: &App) -> bool {
         match target {
             NavTarget::Route(route) => self.route == route,
-            NavTarget::Tasks(tab) => self.route == Route::Tasks && self.tasks.read(cx).tab() == tab,
+            NavTarget::Tasks(tab) => {
+                self.route == Route::Tasks
+                    && self.tasks.read(cx).project().is_none()
+                    && self.tasks.read(cx).tab() == tab
+            }
+            NavTarget::Project(id) => {
+                self.route == Route::Tasks && self.tasks.read(cx).project() == Some(id)
+            }
+            NavTarget::DailyNote => {
+                self.route == Route::Notes
+                    && self.notes.read(cx).open_note_title(cx).as_deref()
+                        == Some(
+                            crate::library::daily_note_title(keepstone_core::clock::today())
+                                .as_str(),
+                        )
+            }
             NavTarget::NotesAll => {
                 self.route == Route::Notes && !self.notes.read(cx).is_showing_trash()
             }
@@ -248,6 +277,34 @@ impl AppShell {
         self.navigate(Route::Tasks, window, cx);
         self.tasks
             .update(cx, |tasks, cx| tasks.focus_new_task(window, cx));
+    }
+
+    pub fn open_daily_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(Route::Notes, window, cx);
+        self.notes
+            .update(cx, |notes, cx| notes.open_daily_note(window, cx));
+    }
+
+    /// Asks for a name, creates the project and shows it.
+    pub fn new_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let library = self.library.clone();
+        let shell = cx.entity().downgrade();
+        keepstone_ui::feedback::prompt_text(
+            "New project",
+            "Project name",
+            "",
+            "Create",
+            window,
+            cx,
+            move |name, window, cx| {
+                let result = library.update(cx, |lib, cx| lib.create_project(&name, cx));
+                if let Some(id) = keepstone_ui::feedback::report(result, window, cx) {
+                    _ = shell.update(cx, |s, cx| {
+                        s.open_target(NavTarget::Project(id), window, cx)
+                    });
+                }
+            },
+        );
     }
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -396,33 +453,58 @@ impl AppShell {
         let groups: Vec<SidebarGroup<SidebarMenu>> = nav::SECTIONS
             .iter()
             .map(|section| {
-                let items =
-                    section.entries.iter().map(|entry| {
-                        let route = entry.route;
-                        let children: Vec<SidebarMenuItem> = entry
-                            .children
-                            .iter()
-                            .map(|child| {
-                                let target = child.target;
-                                SidebarMenuItem::new(child.label)
-                                    .active(self.is_target_active(target, cx))
-                                    .suffix(count_suffix(self.badge_count(child.badge)))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.open_target(target, window, cx)
-                                    }))
-                            })
-                            .collect();
-                        let has_children = !children.is_empty();
-                        SidebarMenuItem::new(entry.label)
-                            .icon(entry.icon)
-                            .active(self.route == route && !has_children)
-                            .default_open(self.route == route)
-                            .suffix(count_suffix(self.badge_count(entry.badge)))
-                            .children(children)
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                let items = section.entries.iter().map(|entry| {
+                    let route = entry.route;
+                    let children: Vec<SidebarMenuItem> = entry
+                        .children
+                        .iter()
+                        .map(|child| {
+                            let target = child.target;
+                            SidebarMenuItem::new(child.label)
+                                .active(self.is_target_active(target, cx))
+                                .suffix(count_suffix(self.badge_count(child.badge)))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_target(target, window, cx)
+                                }))
+                        })
+                        .collect();
+                    let mut children = children;
+                    if entry.dynamic == Some(nav::DynamicChildren::Projects) {
+                        for (project, open) in self.library.read(cx).projects() {
+                            let target = NavTarget::Project(project.id());
+                            children.push(
+                                SidebarMenuItem::new(gpui_kit::SharedString::from(
+                                    project.name().to_owned(),
+                                ))
+                                .icon(Lucide::FolderKanban)
+                                .active(self.is_target_active(target, cx))
+                                .suffix(count_suffix(open))
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| this.open_target(target, window, cx),
+                                )),
+                            );
+                        }
+                        children.push(
+                            SidebarMenuItem::new("New project")
+                                .icon(Lucide::Plus)
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.new_project(window, cx)),
+                                ),
+                        );
+                    }
+                    let has_children = !children.is_empty();
+                    SidebarMenuItem::new(entry.label)
+                        .icon(entry.icon)
+                        .active(self.route == route && !has_children)
+                        .default_open(self.route == route)
+                        .suffix(count_suffix(self.badge_count(entry.badge)))
+                        .children(children)
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| {
                                 this.navigate(route, window, cx)
-                            }))
-                    });
+                            }),
+                        )
+                });
                 SidebarGroup::new(section.label).child(SidebarMenu::new().children(items))
             })
             .collect();
@@ -682,6 +764,26 @@ pub fn register_commands(cx: &mut App) {
             }
             s.toggle_list_panel(cx);
         });
+    });
+    cx.on_action(|_: &OpenDailyNote, cx| with_shell(cx, |s, w, cx| s.open_daily_note(w, cx)));
+    cx.on_action(|_: &TogglePreview, cx| {
+        with_shell(cx, |s, w, cx| {
+            if s.route() == Route::Notes {
+                s.notes.update(cx, |n, cx| n.toggle_mode(w, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &NewProject, cx| with_shell(cx, |s, w, cx| s.new_project(w, cx)));
+    cx.on_action(|_: &ImportNotes, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.navigate(Route::Notes, w, cx);
+            s.notes.update(cx, |n, cx| n.import_notes(w, cx));
+        })
+    });
+    cx.on_action(|_: &ExportNotes, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.notes.update(cx, |n, cx| n.export_notes(w, cx))
+        })
     });
     cx.on_action(|_: &UseLightTheme, cx| {
         appearance::update(cx, |s| s.theme = ThemePreference::Light)

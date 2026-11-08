@@ -1,4 +1,8 @@
-use keepstone_core::{Date, Priority, Task, TaskId, TaskStatus};
+use std::collections::HashMap;
+
+use keepstone_core::{
+    Date, Priority, Project, ProjectId, Recurrence, Task, TaskId, TaskRecord, TaskStatus, Timestamp,
+};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::codec::{
@@ -6,7 +10,8 @@ use crate::codec::{
 };
 use crate::{StorageError, StorageResult, Store};
 
-/// Which tasks a list shows. Dates are passed in so results are deterministic.
+/// Which top-level tasks a list shows (subtasks never appear in lists).
+/// Dates are passed in so results are deterministic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskFilter {
     /// Open tasks due today or earlier (includes overdue).
@@ -15,6 +20,8 @@ pub enum TaskFilter {
     Upcoming(Date),
     /// Every open task.
     Open,
+    /// Open tasks in a project.
+    Project(ProjectId),
     /// Done or cancelled, most recently finished first.
     Closed,
     /// Trashed tasks.
@@ -29,17 +36,25 @@ pub struct TaskCounts {
     pub completed_today: usize,
 }
 
-const COLUMNS: &str =
-    "id, title, notes, status, priority, due, created_at, updated_at, completed_at, deleted_at";
+/// (done, total) subtasks of one task.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Progress {
+    pub done: usize,
+    pub total: usize,
+}
+
+const COLUMNS: &str = "id, title, notes, status, priority, due, created_at, updated_at, completed_at, deleted_at, recurrence, parent_id, project_id";
 
 /// Open tasks: dated first (soonest first), then by priority, then oldest first.
 const OPEN_ORDER: &str = "ORDER BY due IS NULL, due, priority DESC, created_at";
+const OPEN: &str = "deleted_at IS NULL AND parent_id IS NULL AND status IN ('todo', 'in_progress')";
 
 impl Store {
     pub fn save_task(&mut self, task: &Task) -> StorageResult<()> {
+        let r = task.to_record();
         self.conn.execute(
-            "INSERT INTO tasks (id, title, notes, status, priority, due, created_at, updated_at, completed_at, deleted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO tasks (id, title, notes, status, priority, due, created_at, updated_at, completed_at, deleted_at, recurrence, parent_id, project_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT (id) DO UPDATE SET
                 title = excluded.title,
                 notes = excluded.notes,
@@ -48,21 +63,38 @@ impl Store {
                 due = excluded.due,
                 updated_at = excluded.updated_at,
                 completed_at = excluded.completed_at,
-                deleted_at = excluded.deleted_at",
+                deleted_at = excluded.deleted_at,
+                recurrence = excluded.recurrence,
+                parent_id = excluded.parent_id,
+                project_id = excluded.project_id",
             params![
-                task.id().to_string(),
-                task.title(),
-                task.notes(),
-                task.status().as_str(),
-                task.priority().as_i64(),
-                task.due().map(date_to_sql),
-                ts_to_sql(task.created_at()),
-                ts_to_sql(task.updated_at()),
-                task.completed_at().map(ts_to_sql),
-                task.deleted_at().map(ts_to_sql),
+                r.id.to_string(),
+                r.title,
+                r.notes,
+                r.status.as_str(),
+                r.priority.as_i64(),
+                r.due.map(date_to_sql),
+                ts_to_sql(r.created_at),
+                ts_to_sql(r.updated_at),
+                r.completed_at.map(ts_to_sql),
+                r.deleted_at.map(ts_to_sql),
+                r.recurrence.map(Recurrence::to_code),
+                r.parent.map(|p| p.to_string()),
+                r.project.map(|p| p.to_string()),
             ],
         )?;
         Ok(())
+    }
+
+    /// Saves several tasks in one transaction (e.g. complete + next occurrence).
+    pub fn save_tasks(&mut self, tasks: &[&Task]) -> StorageResult<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = tasks.iter().try_for_each(|task| self.save_task(task));
+        match result {
+            Ok(()) => self.conn.execute_batch("COMMIT")?,
+            Err(_) => self.conn.execute_batch("ROLLBACK")?,
+        }
+        result
     }
 
     pub fn task(&self, id: TaskId) -> StorageResult<Option<Task>> {
@@ -78,40 +110,38 @@ impl Store {
     }
 
     pub fn list_tasks(&self, filter: TaskFilter) -> StorageResult<Vec<Task>> {
-        const OPEN: &str = "deleted_at IS NULL AND status IN ('todo', 'in_progress')";
-        let (sql, day) = match filter {
+        let (sql, arg) = match filter {
             TaskFilter::Today(day) => (
                 format!("SELECT {COLUMNS} FROM tasks WHERE {OPEN} AND due <= ?1 {OPEN_ORDER}"),
-                Some(day),
+                Some(date_to_sql(day)),
             ),
             TaskFilter::Upcoming(day) => (
                 format!("SELECT {COLUMNS} FROM tasks WHERE {OPEN} AND due > ?1 {OPEN_ORDER}"),
-                Some(day),
+                Some(date_to_sql(day)),
             ),
-            TaskFilter::Open => (
-                format!("SELECT {COLUMNS} FROM tasks WHERE {OPEN} {OPEN_ORDER}"),
-                None,
+            TaskFilter::Open => (format!("SELECT {COLUMNS} FROM tasks WHERE {OPEN} {OPEN_ORDER}"), None),
+            TaskFilter::Project(id) => (
+                format!("SELECT {COLUMNS} FROM tasks WHERE {OPEN} AND project_id = ?1 {OPEN_ORDER}"),
+                Some(id.to_string()),
             ),
             TaskFilter::Closed => (
                 format!(
                     "SELECT {COLUMNS} FROM tasks
-                     WHERE deleted_at IS NULL AND status IN ('done', 'cancelled')
+                     WHERE deleted_at IS NULL AND parent_id IS NULL AND status IN ('done', 'cancelled')
                      ORDER BY coalesce(completed_at, updated_at) DESC"
                 ),
                 None,
             ),
             TaskFilter::Trash => (
                 format!(
-                    "SELECT {COLUMNS} FROM tasks WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+                    "SELECT {COLUMNS} FROM tasks WHERE deleted_at IS NOT NULL AND parent_id IS NULL ORDER BY deleted_at DESC"
                 ),
                 None,
             ),
         };
         let mut stmt = self.conn.prepare_cached(&sql)?;
-        let rows = match day {
-            Some(day) => stmt
-                .query_map([date_to_sql(day)], raw_task)?
-                .collect::<Vec<_>>(),
+        let rows = match arg {
+            Some(arg) => stmt.query_map([arg], raw_task)?.collect::<Vec<_>>(),
             None => stmt.query_map([], raw_task)?.collect::<Vec<_>>(),
         };
         rows.into_iter()
@@ -119,22 +149,63 @@ impl Store {
             .collect()
     }
 
-    /// Dashboard counters. `day_start`/`day_end` bound "today" in local time, as UTC timestamps.
+    /// Subtasks of `parent`, in the order they were added.
+    pub fn subtasks(&self, parent: TaskId) -> StorageResult<Vec<Task>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {COLUMNS} FROM tasks WHERE parent_id = ?1 AND deleted_at IS NULL ORDER BY created_at, id"
+        ))?;
+        let rows = stmt
+            .query_map([parent.to_string()], raw_task)?
+            .collect::<Vec<_>>();
+        rows.into_iter()
+            .map(|row| row.map_err(StorageError::from)?.into_task())
+            .collect()
+    }
+
+    /// Subtask progress for every task that has subtasks.
+    pub fn subtask_progress(&self) -> StorageResult<HashMap<TaskId, Progress>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT parent_id, count(*) FILTER (WHERE status = 'done'), count(*)
+             FROM tasks WHERE parent_id IS NOT NULL AND deleted_at IS NULL GROUP BY parent_id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?;
+        let n = |v: i64| usize::try_from(v).unwrap_or(0);
+        rows.map(|row| {
+            let (id, done, total) = row?;
+            Ok((
+                TaskId::from_uuid(uuid_from_sql(&id, "tasks.parent_id")?),
+                Progress {
+                    done: n(done),
+                    total: n(total),
+                },
+            ))
+        })
+        .collect()
+    }
+
+    /// Dashboard counters for top-level tasks. `day_start`/`day_end` bound
+    /// "today" in local time, as UTC timestamps.
     pub fn task_counts(
         &self,
         today: Date,
-        day_start: keepstone_core::Timestamp,
-        day_end: keepstone_core::Timestamp,
+        day_start: Timestamp,
+        day_end: Timestamp,
     ) -> StorageResult<TaskCounts> {
         let today = date_to_sql(today);
         let (open, due_today, overdue, completed_today): (i64, i64, i64, i64) =
             self.conn.query_row(
                 "SELECT
-                    count(*) FILTER (WHERE status IN ('todo', 'in_progress')),
-                    count(*) FILTER (WHERE status IN ('todo', 'in_progress') AND due = ?1),
-                    count(*) FILTER (WHERE status IN ('todo', 'in_progress') AND due < ?1),
-                    count(*) FILTER (WHERE status = 'done' AND completed_at >= ?2 AND completed_at < ?3)
-                 FROM tasks WHERE deleted_at IS NULL",
+                count(*) FILTER (WHERE status IN ('todo', 'in_progress')),
+                count(*) FILTER (WHERE status IN ('todo', 'in_progress') AND due = ?1),
+                count(*) FILTER (WHERE status IN ('todo', 'in_progress') AND due < ?1),
+                count(*) FILTER (WHERE status = 'done' AND completed_at >= ?2 AND completed_at < ?3)
+             FROM tasks WHERE deleted_at IS NULL AND parent_id IS NULL",
                 params![today, ts_to_sql(day_start), ts_to_sql(day_end)],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )?;
@@ -147,6 +218,24 @@ impl Store {
         })
     }
 
+    /// Completion times of top-level tasks finished in `[from, to)`, for charts.
+    pub fn completed_between(
+        &self,
+        from: Timestamp,
+        to: Timestamp,
+    ) -> StorageResult<Vec<Timestamp>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT completed_at FROM tasks
+             WHERE deleted_at IS NULL AND parent_id IS NULL AND status = 'done'
+               AND completed_at >= ?1 AND completed_at < ?2",
+        )?;
+        let rows = stmt.query_map(params![ts_to_sql(from), ts_to_sql(to)], |r| {
+            r.get::<_, i64>(0)
+        })?;
+        rows.map(|ms| ts_from_sql(ms?, "tasks.completed_at"))
+            .collect()
+    }
+
     pub fn delete_task_permanently(&mut self, id: TaskId) -> StorageResult<bool> {
         Ok(self
             .conn
@@ -155,9 +244,82 @@ impl Store {
     }
 
     pub fn empty_task_trash(&mut self) -> StorageResult<usize> {
+        Ok(self.conn.execute(
+            "DELETE FROM tasks WHERE deleted_at IS NOT NULL AND parent_id IS NULL",
+            [],
+        )?)
+    }
+
+    // ---- Projects --------------------------------------------------------
+
+    pub fn save_project(&mut self, project: &Project) -> StorageResult<()> {
+        self.conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+            params![
+                project.id().to_string(),
+                project.name(),
+                ts_to_sql(project.created_at()),
+                ts_to_sql(project.updated_at())
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Projects by name, with their open top-level task counts.
+    pub fn projects(&self) -> StorageResult<Vec<(Project, usize)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT p.id, p.name, p.created_at, p.updated_at,
+                    (SELECT count(*) FROM tasks t WHERE t.project_id = p.id
+                       AND t.deleted_at IS NULL AND t.parent_id IS NULL AND t.status IN ('todo', 'in_progress'))
+             FROM projects p ORDER BY p.name COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (id, name, created, updated, open) = row?;
+            let project = Project::from_parts(
+                ProjectId::from_uuid(uuid_from_sql(&id, "projects.id")?),
+                name,
+                ts_from_sql(created, "projects.created_at")?,
+                ts_from_sql(updated, "projects.updated_at")?,
+            );
+            Ok((project, usize::try_from(open).unwrap_or(0)))
+        })
+        .collect()
+    }
+
+    pub fn project(&self, id: ProjectId) -> StorageResult<Option<Project>> {
+        Ok(self
+            .projects()?
+            .into_iter()
+            .map(|(p, _)| p)
+            .find(|p| p.id() == id))
+    }
+
+    /// Finds a project by name, case-insensitively (for `#Project` in quick add).
+    pub fn find_project_by_name(&self, name: &str) -> StorageResult<Option<Project>> {
+        let key = name.trim().to_lowercase();
+        Ok(self
+            .projects()?
+            .into_iter()
+            .map(|(p, _)| p)
+            .find(|p| p.name().to_lowercase() == key))
+    }
+
+    /// Deletes a project. Its tasks stay, without a project.
+    pub fn delete_project(&mut self, id: ProjectId) -> StorageResult<bool> {
         Ok(self
             .conn
-            .execute("DELETE FROM tasks WHERE deleted_at IS NOT NULL", [])?)
+            .execute("DELETE FROM projects WHERE id = ?1", [id.to_string()])?
+            > 0)
     }
 }
 
@@ -172,22 +334,31 @@ struct RawTask {
     updated_at: i64,
     completed_at: Option<i64>,
     deleted_at: Option<i64>,
+    recurrence: Option<String>,
+    parent_id: Option<String>,
+    project_id: Option<String>,
 }
 
 impl RawTask {
     fn into_task(self) -> StorageResult<Task> {
-        Ok(Task::from_parts(
-            TaskId::from_uuid(uuid_from_sql(&self.id, "tasks.id")?),
-            self.title,
-            self.notes,
-            TaskStatus::parse(&self.status).ok_or(StorageError::Corrupt("tasks.status"))?,
-            Priority::from_i64(self.priority).ok_or(StorageError::Corrupt("tasks.priority"))?,
-            date_from_sql(self.due)?,
-            ts_from_sql(self.created_at, "tasks.created_at")?,
-            ts_from_sql(self.updated_at, "tasks.updated_at")?,
-            opt_ts_from_sql(self.completed_at, "tasks.completed_at")?,
-            opt_ts_from_sql(self.deleted_at, "tasks.deleted_at")?,
-        ))
+        let id_of = |s: Option<String>, col| s.map(|s| uuid_from_sql(&s, col)).transpose();
+        Ok(Task::from_record(TaskRecord {
+            id: TaskId::from_uuid(uuid_from_sql(&self.id, "tasks.id")?),
+            title: self.title,
+            notes: self.notes,
+            status: TaskStatus::parse(&self.status).ok_or(StorageError::Corrupt("tasks.status"))?,
+            priority: Priority::from_i64(self.priority)
+                .ok_or(StorageError::Corrupt("tasks.priority"))?,
+            due: date_from_sql(self.due)?,
+            created_at: ts_from_sql(self.created_at, "tasks.created_at")?,
+            updated_at: ts_from_sql(self.updated_at, "tasks.updated_at")?,
+            completed_at: opt_ts_from_sql(self.completed_at, "tasks.completed_at")?,
+            deleted_at: opt_ts_from_sql(self.deleted_at, "tasks.deleted_at")?,
+            // An unknown rule (e.g. from a newer version) is dropped, not fatal.
+            recurrence: self.recurrence.as_deref().and_then(Recurrence::from_code),
+            parent: id_of(self.parent_id, "tasks.parent_id")?.map(TaskId::from_uuid),
+            project: id_of(self.project_id, "tasks.project_id")?.map(ProjectId::from_uuid),
+        }))
     }
 }
 
@@ -203,6 +374,9 @@ fn raw_task(row: &Row<'_>) -> rusqlite::Result<RawTask> {
         updated_at: row.get(7)?,
         completed_at: row.get(8)?,
         deleted_at: row.get(9)?,
+        recurrence: row.get(10)?,
+        parent_id: row.get(11)?,
+        project_id: row.get(12)?,
     })
 }
 
@@ -307,6 +481,84 @@ mod tests {
     }
 
     #[test]
+    fn repeat_project_and_subtasks_round_trip_and_stay_out_of_lists() {
+        let mut store = Store::open_in_memory().expect("store");
+        let today = date("2026-11-08");
+        let home = Project::new("Home", at(1)).expect("project");
+        store.save_project(&home).expect("save project");
+
+        let mut parent = Task::new("Move house", at(1)).expect("task");
+        parent.set_project(Some(home.id()), at(1)).expect("project");
+        parent
+            .set_recurrence(Some(Recurrence::WEEKLY), today, at(1))
+            .expect("repeat");
+        let mut sub_a = Task::new_subtask(parent.id(), "Book van", at(2)).expect("sub");
+        let sub_b = Task::new_subtask(parent.id(), "Pack", at(3)).expect("sub");
+        sub_a.complete(at(4)).expect("done");
+        store.save_tasks(&[&parent, &sub_a, &sub_b]).expect("save");
+
+        assert_eq!(store.task(parent.id()).expect("load"), Some(parent.clone()));
+        assert_eq!(
+            titles(&store.list_tasks(TaskFilter::Open).expect("open")),
+            ["Move house"],
+            "subtasks hidden"
+        );
+        assert_eq!(
+            titles(
+                &store
+                    .list_tasks(TaskFilter::Project(home.id()))
+                    .expect("project")
+            ),
+            ["Move house"]
+        );
+        assert_eq!(
+            titles(&store.subtasks(parent.id()).expect("subs")),
+            ["Book van", "Pack"]
+        );
+        assert_eq!(
+            store.subtask_progress().expect("progress")[&parent.id()],
+            Progress { done: 1, total: 2 }
+        );
+
+        let projects = store.projects().expect("projects");
+        assert_eq!((projects[0].0.name(), projects[0].1), ("Home", 1));
+        assert_eq!(
+            store
+                .find_project_by_name("home")
+                .expect("find")
+                .map(|p| p.id()),
+            Some(home.id())
+        );
+
+        // Deleting the project keeps its task; deleting the parent removes subtasks.
+        store.delete_project(home.id()).expect("delete");
+        assert_eq!(
+            store
+                .task(parent.id())
+                .expect("load")
+                .expect("task")
+                .project(),
+            None
+        );
+        store.delete_task_permanently(parent.id()).expect("delete");
+        assert!(store.subtasks(parent.id()).expect("subs").is_empty());
+    }
+
+    #[test]
+    fn completed_between_feeds_charts() {
+        let mut store = Store::open_in_memory().expect("store");
+        for (title, secs) in [("a", 10), ("b", 20), ("c", 99)] {
+            let mut t = Task::new(title, at(1)).expect("task");
+            t.complete(at(secs)).expect("done");
+            store.save_task(&t).expect("save");
+        }
+        assert_eq!(
+            store.completed_between(at(0), at(50)).expect("range").len(),
+            2
+        );
+    }
+
+    #[test]
     fn database_rejects_invalid_status_values() {
         let store = Store::open_in_memory().expect("store");
         let result = store.conn.execute(
@@ -364,6 +616,6 @@ mod tests {
         }
         let store = Store::open(&path).expect("reopen");
         assert_eq!(store.task(task.id()).expect("load"), Some(task));
-        assert_eq!(store.schema_version().expect("version"), 1);
+        assert_eq!(store.schema_version().expect("version"), 2);
     }
 }

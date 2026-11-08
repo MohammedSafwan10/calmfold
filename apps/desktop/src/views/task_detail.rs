@@ -10,10 +10,11 @@ use chrono::Datelike as _;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::calendar::Date as PickerDate;
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::date_picker::{DatePicker, DatePickerEvent, DatePickerState};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::{
-    ActiveTheme as _, Placement, Sizable as _, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Icon, Placement, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -44,6 +45,9 @@ pub struct TaskDetail {
     title: Entity<InputState>,
     notes: Entity<TextareaState>,
     due: Entity<DatePickerState>,
+    /// Quick-add field for checklist steps.
+    new_subtask: Entity<InputState>,
+    subtasks: Vec<Task>,
     dirty: bool,
     pending_save: Option<GpuiTask<()>>,
     _subscriptions: Vec<Subscription>,
@@ -68,6 +72,7 @@ impl TaskDetail {
                 .placeholder("Notes")
         });
         let due = cx.new(|cx| DatePickerState::new(window, cx));
+        let new_subtask = cx.new(|cx| InputState::new(window, cx).placeholder("Add a step"));
         if let Some(task) = &task {
             title.update(cx, |t, cx| t.set_value(task.title().to_owned(), window, cx));
             notes.update(cx, |n, cx| n.set_value(task.notes().to_owned(), window, cx));
@@ -106,11 +111,28 @@ impl TaskDetail {
                     );
                 },
             ),
+            cx.subscribe_in(&new_subtask, window, |this, input, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    let title = input.read(cx).value().to_string();
+                    if title.trim().is_empty() {
+                        return;
+                    }
+                    let id = this.id;
+                    let result = this
+                        .library
+                        .update(cx, |lib, cx| lib.add_subtask(id, &title, cx));
+                    if result.is_ok() {
+                        input.update(cx, |i, cx| i.set_value("", window, cx));
+                    }
+                    notify_err(result, window, cx);
+                }
+            }),
             // Keep status/priority/due in sync with changes made elsewhere
             // (e.g. the checkbox in the list). Text fields are left alone.
             cx.subscribe(&library, |this, library, event, cx| {
                 if *event == LibraryEvent::TasksChanged {
                     this.task = library.read(cx).tasks_by_id(this.id);
+                    this.subtasks = library.read(cx).subtasks(this.id);
                     cx.notify();
                 }
             }),
@@ -122,6 +144,7 @@ impl TaskDetail {
             }),
         ];
 
+        let subtasks = library.read(cx).subtasks(id);
         Self {
             id,
             library,
@@ -131,6 +154,8 @@ impl TaskDetail {
             due,
             dirty: false,
             pending_save: None,
+            subtasks,
+            new_subtask,
             _subscriptions: subscriptions,
         }
     }
@@ -257,6 +282,77 @@ impl TaskDetail {
     }
 }
 
+impl TaskDetail {
+    /// Steps: a checklist inside the task. Done steps stay, struck through.
+    fn render_subtasks(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let done = self
+            .subtasks
+            .iter()
+            .filter(|t| !t.status().is_open())
+            .count();
+        let label = if self.subtasks.is_empty() {
+            "Steps".to_owned()
+        } else {
+            format!("Steps · {done}/{}", self.subtasks.len())
+        };
+        v_flex()
+            .gap_1()
+            .child(section_label(label, cx))
+            .children(self.subtasks.iter().map(|sub| {
+                let id = sub.id();
+                let checked = !sub.status().is_open();
+                let library = self.library.clone();
+                let remove = self.library.clone();
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Checkbox::new(SharedString::from(format!("step-{id}")))
+                            .checked(checked)
+                            .on_change(move |_, window, cx| {
+                                notify_err(
+                                    library.update(cx, |l, cx| l.toggle_task(id, cx)),
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .when(checked, |this| {
+                                this.line_through().text_color(theme.muted_foreground)
+                            })
+                            .child(sub.title().to_owned()),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("step-{id}-remove")))
+                            .ghost()
+                            .xsmall()
+                            .icon(Lucide::X)
+                            .tooltip("Remove step")
+                            .on_click(move |_, window, cx| {
+                                notify_err(
+                                    remove.update(cx, |l, cx| l.delete_subtask(id, cx)),
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    )
+            }))
+            .child(
+                Input::new(&self.new_subtask).id("new-step").small().prefix(
+                    Icon::new(Lucide::Plus)
+                        .xsmall()
+                        .text_color(theme.muted_foreground),
+                ),
+            )
+    }
+}
+
 impl Render for TaskDetail {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(task) = self.task.clone() else {
@@ -348,6 +444,7 @@ impl Render for TaskDetail {
                     .child(section_label("Priority", cx))
                     .child(priority),
             )
+            .child(self.render_subtasks(cx))
             .child(
                 v_flex()
                     .gap_2()

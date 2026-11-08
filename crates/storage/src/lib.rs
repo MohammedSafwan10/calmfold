@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 pub use error::{StorageError, StorageResult};
 pub use notes::NoteSummary;
-pub use tasks::{TaskCounts, TaskFilter};
+pub use tasks::{Progress, TaskCounts, TaskFilter};
 
 pub struct Store {
     conn: Connection,

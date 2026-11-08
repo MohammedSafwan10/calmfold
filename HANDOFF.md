@@ -4,21 +4,24 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Current state (2026-11-08)
 
-- Branch `main`. `scripts/check.sh` passes: fmt, clippy `-D warnings`, 93 tests.
+- Branch `main`. `scripts/check.sh` passes: fmt, clippy `-D warnings`, 139 tests (29 UI).
 - Dev loop: `scripts/dev.sh [--sample]` rebuilds and relaunches on save (watchexec).
-- Full-tree review: `docs/reviews/2026-11-08-201127-pr-full-tree.md`. High/medium findings fixed (see log).
-- Phase 1 foundation is done and runs on macOS (Apple Silicon, macOS 27).
-  Windows is untested on a real machine (CI matrix includes it).
-- Screens: Today, Notes, Tasks, Settings. Command palette, shortcuts, menus.
+- Notes, Tasks and Today are feature-complete for plans 02-04 (see checklists):
+  tags, mentions, daily notes, import/export, Markdown formatting (Aa menu +
+  shortcuts), quick add with dates/priority/projects, repeats, steps, projects,
+  week chart, next 7 days.
+- Note editing is Markdown source with a separate Preview (⌘E).
 - Crypto crate for the vault is built and tested; the vault feature is not.
 
 ## Next steps (in order)
 
-1. Window size/position restore; app icon (plan 01 open items).
-2. Notes: unlinked mentions, tags, daily notes (plan 02 #3–5).
-3. Tasks: natural-language quick add, recurring tasks (plan 03 #2–3).
-4. Vault (plan 05): migration 0002, lock state machine with table test, setup/unlock UI.
-5. Verify a Windows build (VS Build Tools + MSVC + CMake) and fix anything platform-specific.
+1. Decide on live (visual) editing. Candidate: `gpui-kit-markdown-editor`
+   (git dep, block WYSIWYG on `gpui_kit::base::text::editor_host`). Prototype on a
+   branch first; must keep `[[links]]` + autocomplete, `#tags`, exact Markdown
+   round-trip of existing notes, undo, paste. Known gap: empty paragraphs are dropped.
+2. Window size/position restore; app icon (plan 01 open items).
+3. Vault (plan 05): migration, lock state machine with table test, setup/unlock UI.
+4. Verify a Windows build and fix anything platform-specific.
 
 ## Known issues / risks
 
@@ -45,6 +48,18 @@ scripts/screenshot.sh target/shot.png
 ```
 
 ## Log
+
+### 2026-11-08: Finish Notes, Tasks, Today
+
+- Core: `recurrence`, `quick_add`, `tags`, `project`, `format`; migration 0002
+  (note_tags, projects, task recurrence/parent/project).
+- Notes: three-control toolbar, grouped format menu, ⌘E toggle, indent guides
+  off, content-height editor (fixes the scroll-inside-editor bug), tag filter,
+  unlinked mentions with Link, daily note, import/export.
+- Tasks: quick-add parsing, repeats, steps in the detail panel, project views.
+- Today: rewrite with week chart and next 7 days (rows open the task).
+- Toasts moved bottom-right (they covered the toolbar).
+- 10 new UI tests; queried elements use `.test_support()`.
 
 ### 2026-11-08: Panels and menus
 
