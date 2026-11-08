@@ -165,6 +165,18 @@ impl SettingsView {
         })
         .keywords(["preview", "typography"]);
 
+        let spelling = SettingItem::new(
+            "Check spelling",
+            SettingField::switch(
+                |cx| appearance::settings(cx).spell_check,
+                |on, cx| appearance::update(cx, |s| s.spell_check = on),
+            ),
+        )
+        .description(
+            "Underlines misspelled words in notes. Right-click one for suggestions. Code, links and tags are skipped.",
+        )
+        .keywords(["spelling", "spellcheck", "typo", "dictionary"]);
+
         let reset = SettingItem::render(|_, _, _| {
             h_flex()
                 .w_full()
@@ -193,6 +205,7 @@ impl SettingsView {
                     .title("Typography")
                     .items(vec![ui_font, mono_font, preview]),
             )
+            .group(SettingGroup::new().title("Writing").items(vec![spelling]))
             .group(
                 SettingGroup::new()
                     .variant(GroupBoxVariant::Normal)

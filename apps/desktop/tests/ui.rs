@@ -1578,3 +1578,28 @@ fn find_in_note_counts_steps_wraps_and_closes(cx: &mut TestAppContext) {
     type_text(&app, cx, "zzz");
     assert_eq!(status(cx), Some((0, 0)), "no match shows zero");
 }
+
+/// The OS checker exists on macOS and Windows; elsewhere spelling is a no-op.
+#[cfg(target_os = "macos")]
+#[gpui_kit::test]
+fn spelling_flags_prose_skips_code_and_can_be_turned_off(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    dispatch(&app, cx, GoNotes);
+    let body = "I recieved the packige.\n`teh code` and [[Grocerys]] #teh";
+    open_note_with(&app, cx, "Spelling", body);
+    let editor = note_editor(&app, cx);
+    let flagged = |cx: &mut TestAppContext| cx.read(|cx| editor.read(cx).flagged_words(cx));
+    let words = flagged(cx);
+    assert!(words.contains(&"recieved".to_owned()), "{words:?}");
+    assert!(words.contains(&"packige".to_owned()), "{words:?}");
+    assert!(
+        !words
+            .iter()
+            .any(|w| ["teh", "Grocerys"].contains(&w.as_str())),
+        "code, links and tags are not prose: {words:?}"
+    );
+
+    cx.update(|cx| keepstone_ui::appearance::update(cx, |s| s.spell_check = false));
+    cx.run_until_parked();
+    assert!(flagged(cx).is_empty(), "the setting turns underlines off");
+}

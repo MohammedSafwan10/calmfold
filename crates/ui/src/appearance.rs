@@ -82,6 +82,8 @@ pub struct AppearanceSettings {
     pub content_width: ContentWidth,
     /// `On` means "reduce motion is on".
     pub reduce_motion: MotionPreference,
+    /// Underline misspelled words in notes (the OS spell checker).
+    pub spell_check: bool,
 }
 
 impl AppearanceSettings {
@@ -158,6 +160,7 @@ impl Default for AppearanceSettings {
             mono_font_size: Self::DEFAULT_MONO_FONT_SIZE,
             content_width: ContentWidth::default(),
             reduce_motion: MotionPreference::default(),
+            spell_check: true,
         }
     }
 }

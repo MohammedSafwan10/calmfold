@@ -255,6 +255,77 @@ pub fn highlight_spans(doc: &str) -> Vec<(Range<usize>, Range<usize>)> {
     out
 }
 
+/// Byte ranges that aren't prose, so spell-check skips them: fenced code
+/// blocks, inline `code`, `[[links]]`, `#tags`, URLs and `$math$`. Sorted,
+/// may overlap.
+#[must_use]
+pub fn non_prose_ranges(doc: &str) -> Vec<Range<usize>> {
+    let mut out: Vec<Range<usize>> = Vec::new();
+    let mut fence: Option<usize> = None;
+    let mut offset = 0;
+    for line in doc.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        let trimmed = line.trim_start();
+        let is_fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
+        match (fence, is_fence) {
+            (Some(open), true) => {
+                out.push(open..offset);
+                fence = None;
+                continue;
+            }
+            (None, true) => {
+                fence = Some(start);
+                continue;
+            }
+            (Some(_), false) => continue,
+            (None, false) => {}
+        }
+        // Inline code and $math$, by delimiter pairs on the line.
+        for delim in ['`', '$'] {
+            let mut open: Option<usize> = None;
+            for (i, c) in line.char_indices() {
+                if c == delim {
+                    match open.take() {
+                        Some(o) => out.push(start + o..start + i + 1),
+                        None => open = Some(i),
+                    }
+                }
+            }
+        }
+        // URLs: from the scheme to the next whitespace.
+        for scheme in ["https://", "http://", "mailto:", "file://"] {
+            let mut from = 0;
+            while let Some(i) = line[from..].find(scheme) {
+                let at = from + i;
+                let end = line[at..]
+                    .find(char::is_whitespace)
+                    .map_or(line.len(), |e| at + e);
+                out.push(start + at..start + end);
+                from = end;
+            }
+        }
+    }
+    if let Some(open) = fence {
+        out.push(open..doc.len());
+    }
+    out.extend(
+        crate::links::wiki_link_spans(doc)
+            .into_iter()
+            .map(|(r, _)| r),
+    );
+    out.extend(crate::tags::tag_spans(doc).into_iter().map(|(r, _)| r));
+    out.sort_by_key(|r| r.start);
+    out
+}
+
+/// Whether `range` overlaps any of `skip` (sorted by start).
+#[must_use]
+pub fn overlaps_any(range: &Range<usize>, skip: &[Range<usize>]) -> bool {
+    let i = skip.partition_point(|r| r.start < range.end);
+    skip[..i].iter().any(|r| r.end > range.start)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +339,24 @@ mod tests {
             .into_iter()
             .map(|(open, close)| &doc[open.end..close.start])
             .collect()
+    }
+
+    #[test]
+    fn non_prose_covers_code_links_tags_urls_and_math() {
+        let doc = "Teh `codez` and [[Linkk]] #tagg see https://exmaple.com $x^2$\n```\nfnn main\n```\nwrod";
+        let skip = non_prose_ranges(doc);
+        let covered = |word: &str| {
+            let at = doc.find(word).expect("word");
+            overlaps_any(&(at..at + word.len()), &skip)
+        };
+        for w in ["codez", "Linkk", "tagg", "exmaple", "x^2", "fnn"] {
+            assert!(covered(w), "{w} is skipped");
+        }
+        for w in ["Teh", "wrod", "see"] {
+            assert!(!covered(w), "{w} is prose");
+        }
+        // An unclosed fence runs to the end.
+        assert!(non_prose_ranges("a\n```\nb").iter().any(|r| r.end == 7));
     }
 
     #[test]

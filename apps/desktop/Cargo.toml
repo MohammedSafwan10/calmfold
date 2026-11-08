@@ -25,6 +25,7 @@ ratex-gpui.workspace = true
 syntect.workspace = true
 two-face.workspace = true
 mermaid-rs-renderer.workspace = true
+os-spellcheck.workspace = true
 anyhow.workspace = true
 directories.workspace = true
 jiff.workspace = true

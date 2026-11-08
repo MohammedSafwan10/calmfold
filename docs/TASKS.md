@@ -30,7 +30,8 @@ Calm, organized, not noisy; keyboard path; empty/error states; one source of tru
       cached per block, colors from the theme JSON `highlight.syntax` (GitHub-like palettes).
 - [x] Mermaid diagrams: `mermaid-rs-renderer` (pinned git rev, pure Rust) → themed SVG →
       GPUI SVG raster, natural size, cached; source on caret; bad source stays text.
-- [ ] Spell-check (macOS native via `os-spellcheck`, squiggles + suggestions), with a Settings toggle.
+- [x] Spell-check: OS checker (`os-spellcheck`), prose only (`core::format::non_prose_ranges`),
+      400 ms debounce, skipped over 256 KB, right-click suggestions, Settings → Writing toggle.
 
 ## 3. Settings → Appearance, themes, typography
 

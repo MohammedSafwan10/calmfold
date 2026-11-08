@@ -13,6 +13,8 @@
 //! - a selection toolbar (bold, italic, strikethrough, highlight, code, link);
 //! - Markdown block formats (headings, lists, quote) via `keepstone_core::format`;
 //! - `$$…$$` math rendered by `ratex-gpui`;
+//! - spell-check through the OS checker (prose only: code, links, tags, URLs
+//!   and math are skipped), right-click a flagged word for suggestions;
 //! - find in note (⌘F): matches highlighted in place, ⌘G / ⇧⌘G or Enter / ⇧Enter step;
 //! - routing of link, tag and math events.
 //!
@@ -111,6 +113,10 @@ pub struct NoteEditor {
     math_cache: Rc<RefCell<HashMap<String, MathRender>>>,
     code: Rc<crate::views::code_highlight::CodeHighlighter>,
     diagrams: Rc<crate::views::diagram::Diagrams>,
+    spell: Rc<os_spellcheck::SpellChecker>,
+    /// Debounced re-check after edits.
+    spell_task: Option<gpui_kit::Task<()>>,
+    spell_on: bool,
     scale: Rc<Cell<f32>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -144,6 +150,9 @@ impl NoteEditor {
             code: crate::views::code_highlight::CodeHighlighter::new(
                 cx.theme().highlight_theme.clone(),
             ),
+            spell: Rc::new(os_spellcheck::SpellChecker::new()),
+            spell_task: None,
+            spell_on: keepstone_ui::appearance::settings(cx).spell_check,
             diagrams: crate::views::diagram::Diagrams::new(
                 cx.svg_renderer(),
                 crate::views::diagram::DiagramColors::from_theme(cx.theme()),
@@ -166,6 +175,8 @@ impl NoteEditor {
         self.editor.update(cx, |e, cx| e.set_text(text, cx));
         // Same query, new note: matches follow (from the top).
         self.refresh_find(true, cx);
+        self.spell_task = None;
+        self.check_spelling(cx);
     }
 
     pub fn text(&self, cx: &App) -> String {
@@ -213,6 +224,7 @@ impl NoteEditor {
         self.source_mode = on;
         self.close_overlays(cx);
         self.apply_style(window, cx);
+        self.check_spelling(cx);
         cx.notify();
     }
 
@@ -362,7 +374,59 @@ impl NoteEditor {
 
     // ---- Style and providers ----
 
+    // ---- Spell-check ----
+
+    /// The words currently underlined as misspelled.
+    pub fn flagged_words(&self, cx: &App) -> Vec<String> {
+        let e = self.editor.read(cx);
+        e.diagnostics()
+            .iter()
+            .filter_map(|d| e.text().get(d.range.clone()).map(str::to_owned))
+            .collect()
+    }
+
+    /// Underlines misspelled prose words. Runs on the main thread (AppKit), so
+    /// it is debounced and skipped for very large notes.
+    fn check_spelling(&mut self, cx: &mut Context<Self>) {
+        const MAX_BYTES: usize = 256 * 1024;
+        let diagnostics = if self.spell_on && !self.source_mode {
+            let text = self.editor.read(cx).text();
+            if text.len() > MAX_BYTES {
+                Vec::new()
+            } else {
+                let skip = keepstone_core::format::non_prose_ranges(text);
+                self.spell
+                    .check(text)
+                    .into_iter()
+                    .filter(|r| !keepstone_core::format::overlaps_any(r, &skip))
+                    .map(|range| zorite_editor::Diagnostic { range })
+                    .collect()
+            }
+        } else {
+            Vec::new()
+        };
+        self.editor
+            .update(cx, |e, cx| e.set_diagnostics(diagnostics, cx));
+    }
+
+    fn schedule_spell_check(&mut self, cx: &mut Context<Self>) {
+        if !self.spell_on {
+            return;
+        }
+        self.spell_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
+            _ = this.update(cx, |this, cx| this.check_spelling(cx));
+        }));
+    }
+
     fn apply_style(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let spell_on = keepstone_ui::appearance::settings(cx).spell_check;
+        if spell_on != self.spell_on {
+            self.spell_on = spell_on;
+            self.check_spelling(cx);
+        }
         self.math_cache.borrow_mut().clear();
         self.code.set_theme(cx.theme().highlight_theme.clone());
         self.diagrams.update(
@@ -396,7 +460,10 @@ impl NoteEditor {
             }));
         let code = self.code.clone();
         let diagrams = self.diagrams.clone();
+        let spell = self.spell.clone();
         self.editor.update(cx, |e, _| {
+            // Suggestions are slow (an XPC call): only when a word is right-clicked.
+            e.on_suggest(move |word| spell.suggestions(word));
             e.set_block_mermaid_provider(move |src| diagrams.render(src));
             e.set_code_highlighter(move |lang, src| code.highlight(lang, src));
             e.set_code_languages(
@@ -429,6 +496,7 @@ impl NoteEditor {
     ) {
         match event {
             EditorEvent::Changed => {
+                self.schedule_spell_check(cx);
                 self.selection_bar = None;
                 self.refresh_link_menu(cx);
                 self.refresh_find(false, cx);

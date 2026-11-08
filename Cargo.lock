@@ -4134,6 +4134,7 @@ dependencies = [
  "keepstone-storage",
  "keepstone-ui",
  "mermaid-rs-renderer",
+ "os-spellcheck",
  "ratex-gpui",
  "serde",
  "serde_json",
@@ -5335,6 +5336,18 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "os-spellcheck"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0062960325585b13f5162fb61d236054ab5c300071d5e49dfcc37c98338b120c"
+dependencies = [
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "windows 0.62.2",
 ]
 
 [[package]]

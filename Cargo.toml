@@ -37,6 +37,9 @@ ratex-gpui = { version = "=0.4.1", default-features = false }
 # `syntect` feature uses (one copy in the tree), ~200 languages, no tree-sitter.
 syntect = { version = "5.3", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
 two-face = { version = "0.4.5", default-features = false, features = ["syntect-fancy"] }
+# Spell-check in notes through the OS checker (NSSpellChecker / ISpellChecker),
+# a no-op on Linux. MIT, same author as zorite-editor.
+os-spellcheck = "=0.2.1"
 # ```mermaid diagrams in notes: pure Rust → SVG (MIT), the renderer Zed's
 # Markdown preview uses. Not on crates.io; pinned to Zed's known-good revision.
 # Rasterized with GPUI's own SVG renderer (no resvg copy: default features off).

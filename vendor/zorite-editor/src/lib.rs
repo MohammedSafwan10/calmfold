@@ -1251,6 +1251,12 @@ impl EditorState {
         cx.notify();
     }
 
+    /// The current diagnostics (underlined spans), for hosts and tests
+    /// (Keepstone addition).
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
     /// Replace the set of diagnostics (underlined spans). The host computes these
     /// (e.g. spell-check) and refreshes them as the text changes.
     pub fn set_diagnostics(&mut self, diagnostics: Vec<Diagnostic>, cx: &mut Context<Self>) {

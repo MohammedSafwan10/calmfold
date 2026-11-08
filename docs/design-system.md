@@ -144,6 +144,8 @@ Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`)
 - The writing column is centered with a max width (Settings → Content width).
 - The editor is as tall as its text; the page is the only scroll area.
   Clicking below the text continues writing at the end.
+- Spelling: red squiggles under misspelled prose (code, links, tags, URLs and
+  math are never flagged); right-click for suggestions. Off in Settings → Writing.
 - Find (⌘F) takes the toolbar's left slot: field, "2 of 7" (red "No matches"),
   ↑ ↓, close. ⌘G / ⇧⌘G and Enter / ⇧Enter step and wrap; Esc closes and returns
   to the text at the match. Only on the Notes screen.
