@@ -29,6 +29,10 @@ chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[features]
+# Frame/input-latency recording for scripts/perf.sh. Never in shipped builds.
+perf = ["gpui-kit/profiler"]
+
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

@@ -36,4 +36,8 @@ loads and saves byte-identical.
 stop at it); theme colors mapped from `cx.theme()` into `SyntaxStyle`.
 
 **Consequences.** Single-maintainer crate: if it stalls or a bug can't be fixed
-upstream, vendor it into `crates/` (MIT allows it) rather than fork silently.
+upstream, vendor it (MIT allows it) rather than fork silently.
+
+**Update 2026-11-09.** Vendored at `vendor/zorite-editor` via `[patch.crates-io]`
+after profiling found O(lines²) and O(lines × regions) work per frame. Patches
+are listed in `vendor/zorite-editor/PATCHES.md` and measured in `docs/perf.md`.

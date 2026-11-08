@@ -10,6 +10,8 @@ pub mod library;
 pub mod markdown_io;
 pub mod nav;
 pub mod paths;
+#[cfg(feature = "perf")]
+pub mod perf;
 pub mod shell;
 pub mod ui_state;
 pub mod views;
@@ -83,8 +85,11 @@ pub fn start(
         })?;
     }
 
-    // Debug builds only: start on a given screen, for screenshot scripts.
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "perf")]
+    perf::install(window, cx);
+
+    // Debug and perf builds only: start on a given screen, for screenshot and perf scripts.
+    #[cfg(any(debug_assertions, feature = "perf"))]
     if let Some(route) = std::env::var("KEEPSTONE_DEV_ROUTE")
         .ok()
         .and_then(|r| views::Route::parse(&r))
@@ -100,6 +105,13 @@ pub fn start(
                     n.ensure_selection(window, cx);
                     n.toggle_source_mode(window, cx);
                 });
+            })?;
+        }
+        // KEEPSTONE_DEV_NOTE=<title>: open that note with the caret at the end of its body.
+        if let Ok(title) = std::env::var("KEEPSTONE_DEV_NOTE") {
+            window.update(cx, |_, window, cx| {
+                let notes = shell.read(cx).notes().clone();
+                notes.update(cx, |n, cx| n.open_note_titled_at_end(&title, window, cx));
             })?;
         }
     }

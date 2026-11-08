@@ -8,6 +8,8 @@ members = [
     "crates/ui",
 ]
 default-members = ["apps/desktop"]
+# Vendored third-party code: built as a dependency, not linted as ours.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -61,6 +63,10 @@ getrandom = "0.4"
 # Dev
 tempfile = "3"
 
+# Keepstone's patched copy of zorite-editor (ADR 0004, vendor/zorite-editor/PATCHES.md).
+[patch.crates-io]
+zorite-editor = { path = "vendor/zorite-editor" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unused_must_use = "deny"
@@ -77,6 +83,13 @@ opt-level = 2
 
 [profile.dev.package.keepstone-desktop]
 opt-level = 0
+
+# Release speed with symbols, for profiling (scripts/perf.sh, `sample`).
+[profile.perf]
+inherits = "release"
+strip = false
+debug = "line-tables-only"
+panic = "unwind"
 
 [profile.release]
 lto = "thin"

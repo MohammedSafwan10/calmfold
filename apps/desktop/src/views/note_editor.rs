@@ -150,6 +150,15 @@ impl NoteEditor {
         focus.focus(window, cx);
     }
 
+    /// Focuses the editor with the caret after the last character.
+    pub fn move_to_end(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |e, cx| {
+            let end = e.text().len();
+            e.set_cursor(end, cx);
+            e.focus(window, cx);
+        });
+    }
+
     pub fn is_focused(&self, window: &Window, cx: &App) -> bool {
         self.editor.read(cx).focus_handle(cx).is_focused(window)
     }

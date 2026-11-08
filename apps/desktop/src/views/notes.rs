@@ -231,6 +231,19 @@ impl NotesView {
         }
     }
 
+    /// Opens the note titled `title` and puts the caret at the end (dev and perf scripts).
+    pub fn open_note_titled_at_end(
+        &mut self,
+        title: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Ok(Some(id)) = self.library.read(cx).find_note_by_title(title) {
+            self.open_note(id, window, cx);
+            self.body.update(cx, |b, cx| b.move_to_end(window, cx));
+        }
+    }
+
     pub fn focus_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.body.update(cx, |b, cx| b.focus(window, cx));
     }

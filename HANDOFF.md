@@ -14,13 +14,9 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Next steps (in order)
 
-1. Find in note (⌘F): a find bar on `EditorState::set_search` + `find_in_source`.
-   The old gpui-kit editor had it; zorite only paints matches.
-2. Code-block syntax colors (`set_code_highlighter` with gpui-kit's highlighter),
-   Mermaid (`set_block_mermaid_provider`), spell-check (`os-spellcheck` → `set_diagnostics`).
-3. Window size/position restore; app icon (plan 01 open items).
-4. Vault (plan 05): migration, lock state machine with table test, setup/unlock UI.
-5. Verify a Windows build and fix anything platform-specific.
+Work from `docs/TASKS.md` top to bottom (the owner's ordered backlog):
+editor features (find, code colors, Mermaid, spell-check) → Settings appearance
++ themes + typography → Calendar → Habits → Today rebuild → Password vault.
 
 ## Known issues / risks
 
@@ -48,6 +44,17 @@ KEEPSTONE_DEV_ROUTE=notes KEEPSTONE_DEV_SOURCE=1 cargo run    # debug: first not
 ```
 
 ## Log
+
+### 2026-11-09: Measured editor performance
+
+- `scripts/perf.sh` + `--features perf` (`apps/desktop/src/perf.rs`): real HID
+  keystrokes/scroll, GPUI foreground journal → latency, draw, late frames.
+  `[profile.perf]` = release + symbols. `perf_seed` example makes 1.5 KB…2 MB notes.
+- Vendored `zorite-editor` (`vendor/`, `[patch.crates-io]`) with 7 patches; 50 KB
+  typing p95 341 → 23 ms with 0 missed refreshes. Details: `docs/perf.md`.
+- Gotchas found: GPUI's `caused_invalidation` is false for keys (views notify
+  after the handler); `set frontmost` via System Events leaves no key window;
+  a full-screen app on another Space hides our window (no frames, no keys).
 
 ### 2026-11-08: Live-preview note editor
 
