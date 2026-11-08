@@ -280,6 +280,7 @@ mod tests {
             mono_font_size: 14,
             content_width: ContentWidth::Wide,
             reduce_motion: MotionPreference::On,
+            spell_check: false,
         };
         settings.save(&path).expect("save");
         assert_eq!(AppearanceSettings::load(&path), settings);
