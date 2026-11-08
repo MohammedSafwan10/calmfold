@@ -8,10 +8,17 @@ let owner = CommandLine.arguments.dropFirst().first ?? "keepstone"
 // Prefer on-screen windows; fall back to any window (e.g. on another Space).
 let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 let all = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
-for window in onScreen + all.reversed() {
-    let name = window[kCGWindowOwnerName as String] as? String ?? ""
-    let layer = window[kCGWindowLayer as String] as? Int ?? -1
-    if name.lowercased() == owner.lowercased(), layer == 0,
+// The main window is the largest layer-0 window (menu-bar helpers are 33 px tall).
+func area(_ w: [String: Any]) -> Double {
+    let b = w[kCGWindowBounds as String] as? [String: Double] ?? [:]
+    return (b["Width"] ?? 0) * (b["Height"] ?? 0)
+}
+func mine(_ w: [String: Any]) -> Bool {
+    (w[kCGWindowOwnerName as String] as? String ?? "").lowercased() == owner.lowercased()
+        && (w[kCGWindowLayer as String] as? Int) == 0
+}
+for list in [onScreen, all] {
+    if let window = list.filter(mine).max(by: { area($0) < area($1) }),
        let id = window[kCGWindowNumber as String] as? Int {
         print(id)
         exit(0)

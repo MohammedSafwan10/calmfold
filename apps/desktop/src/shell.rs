@@ -12,8 +12,7 @@ use gpui_kit::component::command::{Command, CommandGroup, CommandItem, CommandSt
 use gpui_kit::component::kbd::Kbd;
 use gpui_kit::component::resizable::{HandleEdge, resize_handle};
 use gpui_kit::component::sidebar::{
-    Sidebar, SidebarCollapsible, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu,
-    SidebarMenuItem,
+    Sidebar, SidebarCollapsible, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Selectable as _, Sizable as _, TitleBar, WindowExt as _, h_flex, v_flex,
@@ -21,8 +20,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Action, AnyView, AnyWindowHandle, App, AppContext as _, Context, Entity, FocusHandle,
-    Focusable as _, FontWeight, Global, InteractiveElement as _, IntoElement, Keystroke,
-    ParentElement as _, Render, Styled as _, Subscription, WeakEntity, Window, div, px, rems,
+    Focusable as _, Global, InteractiveElement as _, IntoElement, Keystroke, ParentElement as _,
+    Render, Styled as _, Subscription, TestSupportExt as _, WeakEntity, Window, div, px, rems,
 };
 use keepstone_core::NoteId;
 use keepstone_ui::appearance::{self, ThemePreference};
@@ -381,31 +380,6 @@ impl AppShell {
         let layout = self.layout.read(cx).state().clone();
         let collapsed = layout.sidebar_collapsed;
         let width = px(layout.sidebar_width);
-        let theme = cx.theme();
-
-        let brand = h_flex()
-            .gap_2()
-            .items_center()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size_6()
-                    .flex_shrink_0()
-                    .rounded(theme.radius)
-                    .bg(theme.sidebar_primary)
-                    .text_color(theme.sidebar_primary_foreground)
-                    .child(Icon::new(Lucide::Gem).xsmall()),
-            )
-            .when(!collapsed, |this| {
-                this.child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("Keepstone"),
-                )
-            });
 
         let count_suffix = |count: usize| {
             move |_: &mut Window, cx: &mut App| {
@@ -453,18 +427,19 @@ impl AppShell {
             })
             .collect();
 
-        // Settings sits in the footer, aligned with the menu items above.
-        // Keyboard paths: the Settings shortcut and the command palette.
-        let settings_item = SidebarFooter::new()
-            .selected(self.route == Route::Settings)
-            .on_mouse_down(
-                gpui_kit::MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.navigate(Route::Settings, window, cx)),
-            )
-            .child(Icon::new(Lucide::Settings).small())
-            .when(!collapsed, |this| {
-                this.child(div().text_sm().child("Settings"))
-            });
+        // Settings: a single icon button in the footer (name in its tooltip,
+        // with the shortcut). Also reachable via ⌘, and the command palette.
+        let settings_item = h_flex().w_full().child(
+            Button::new("sidebar-settings")
+                .ghost()
+                .small()
+                .icon(Lucide::Settings)
+                .selected(self.route == Route::Settings)
+                .tooltip_with_action("Settings", &GoSettings, None)
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.navigate(Route::Settings, window, cx)),
+                ),
+        );
 
         // The sidebar animates collapse/expand between widths it has seen
         // before. Keying it by width means a drag starts a fresh state at the
@@ -476,15 +451,7 @@ impl AppShell {
         .collapsible(SidebarCollapsible::Icon)
         .collapsed(collapsed)
         .w(width)
-        .header(
-            SidebarHeader::new().child(
-                v_flex()
-                    .w_full()
-                    .gap_3()
-                    .child(brand)
-                    .child(self.search_entry(collapsed, cx)),
-            ),
-        )
+        .header(self.search_entry(collapsed, cx))
         .children(groups)
         .footer(settings_item);
 
@@ -511,41 +478,34 @@ impl AppShell {
             })
     }
 
-    /// "Search ⌘K" at the top of the sidebar: the visible way into the command palette.
-    fn search_entry(&self, collapsed: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    /// "Search ⌘K" at the top of the sidebar: the visible way into the command
+    /// palette. It is the sidebar header itself, so its hover covers just this
+    /// row. (The app name lives in the menu bar and Dock; the sidebar keeps its
+    /// space for navigation.)
+    fn search_entry(&self, collapsed: bool, cx: &mut Context<Self>) -> SidebarHeader {
         let theme = cx.theme();
-        let shortcut = Keystroke::parse(if cfg!(target_os = "macos") {
-            "cmd-k"
-        } else {
-            "ctrl-k"
-        })
-        .ok();
-        let open = cx.listener(|this, _, window, cx| this.open_command_palette(window, cx));
-        if collapsed {
-            return Button::new("open-palette")
-                .ghost()
-                .small()
-                .icon(Lucide::Search)
-                .tooltip_with_action("Search", &OpenCommandPalette, None)
-                .on_click(open)
-                .into_any_element();
-        }
-        Button::new("open-palette")
-            .ghost()
-            .small()
-            .w_full()
+        let shortcut = crate::actions::shortcut_for(&OpenCommandPalette)
+            .and_then(|k| Keystroke::parse(k).ok());
+        SidebarHeader::new()
+            .on_mouse_down(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.open_command_palette(window, cx)),
+            )
             .child(
                 h_flex()
+                    .id("open-palette")
                     .w_full()
                     .gap_2()
                     .items_center()
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(Icon::new(Lucide::Search).small())
-                    .child(div().flex_1().text_left().child("Search"))
-                    .children(shortcut.map(|k| Kbd::new(k).appearance(false))),
+                    .when(!collapsed, |this| {
+                        this.child(div().flex_1().child("Search"))
+                            .children(shortcut.map(|k| Kbd::new(k).appearance(false)))
+                    })
+                    .test_support(),
             )
-            .on_click(open)
-            .into_any_element()
     }
 
     fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -586,11 +546,8 @@ impl AppShell {
 /// Commands shown in the palette. Each carries its Action, so the palette also
 /// shows the shortcut.
 fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
-    let cmd = |label: &'static str,
-               icon: Lucide,
-               action: Box<dyn Action>,
-               shortcut: Option<&'static str>,
-               keywords: &[&str]| {
+    let cmd = |label: &'static str, icon: Lucide, action: Box<dyn Action>, keywords: &[&str]| {
+        let shortcut = crate::actions::shortcut_for(&*action);
         // A custom row so the shortcut hint shows without attaching the Action:
         // the palette runs the command itself, after it has closed (see on_confirm).
         let item = CommandItem::new()
@@ -616,83 +573,66 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             });
         (item, action)
     };
-    let sc = |i: usize| Some(crate::actions::SHORTCUTS[i].0);
     vec![
         cmd(
             "New note",
             Lucide::SquarePen,
             Box::new(NewNote),
-            sc(1),
             &["create", "write"],
         ),
         cmd(
             "New task",
             Lucide::Plus,
             Box::new(NewTask),
-            sc(2),
             &["create", "todo"],
         ),
         cmd(
             "Go to Today",
             Lucide::House,
             Box::new(GoToday),
-            sc(3),
             &["dashboard", "home"],
         ),
-        cmd(
-            "Go to Notes",
-            Lucide::NotebookPen,
-            Box::new(GoNotes),
-            sc(4),
-            &[],
-        ),
+        cmd("Go to Notes", Lucide::NotebookPen, Box::new(GoNotes), &[]),
         cmd(
             "Go to Tasks",
             Lucide::ListTodo,
             Box::new(GoTasks),
-            sc(5),
             &["todo"],
         ),
         cmd(
             "Open settings",
             Lucide::Settings,
             Box::new(GoSettings),
-            sc(6),
             &["preferences"],
         ),
         cmd(
             "Toggle sidebar",
             Lucide::PanelLeft,
             Box::new(ToggleSidebar),
-            sc(7),
             &[],
         ),
         cmd(
             "Toggle note list",
             Lucide::PanelLeftDashed,
             Box::new(ToggleListPanel),
-            sc(8),
             &["notes", "panel", "focus"],
         ),
         cmd(
             "Use light theme",
             Lucide::Sun,
             Box::new(UseLightTheme),
-            None,
             &["appearance"],
         ),
         cmd(
             "Use dark theme",
             Lucide::Moon,
             Box::new(UseDarkTheme),
-            None,
             &["appearance"],
         ),
         cmd(
             "Use system theme",
             Lucide::SunMoon,
             Box::new(UseSystemTheme),
-            None,
             &["appearance"],
         ),
     ]

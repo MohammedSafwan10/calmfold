@@ -17,6 +17,7 @@ scripts/dev.sh [--sample]          # run + auto-rebuild/relaunch on save (needs 
 KEEPSTONE_DATA_DIR=/tmp/ks cargo run   # run against a throwaway data folder
 cargo test -p keepstone-desktop --test ui   # headless UI integration tests only
 scripts/screenshot.sh /tmp/k.png   # capture ONLY the Keepstone window (never the full screen)
+swift scripts/click.swift X Y      # real click in the window (points = screenshot px / 2 on Retina)
 ```
 
 Toolchain is pinned in `rust-toolchain.toml` (Rust 1.99.1). The first build

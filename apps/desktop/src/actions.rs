@@ -3,7 +3,7 @@
 //! Every user-facing command is an action so it is reachable by keyboard,
 //! menu, and command palette alike.
 
-use gpui_kit::{App, KeyBinding, Menu, MenuItem, actions};
+use gpui_kit::{Action, App, KeyBinding, Menu, MenuItem, actions};
 
 actions!(
     keepstone,
@@ -35,19 +35,84 @@ macro_rules! shortcut {
     };
 }
 
-/// (keystroke, description) pairs shown on the Keyboard settings page.
-/// Keep in sync with [`bind`].
-pub const SHORTCUTS: &[(&str, &str)] = &[
-    (shortcut!("k"), "Open command palette"),
-    (shortcut!("n"), "New note"),
-    (shortcut!("shift-n"), "New task"),
-    (shortcut!("1"), "Go to Today"),
-    (shortcut!("2"), "Go to Notes"),
-    (shortcut!("3"), "Go to Tasks"),
-    (shortcut!(","), "Open settings"),
-    (shortcut!("\\"), "Toggle sidebar"),
-    (shortcut!("shift-l"), "Toggle note list"),
+/// Groups on the Keyboard settings page, in display order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutGroup {
+    General,
+    Create,
+    Navigate,
+    View,
+}
+
+impl ShortcutGroup {
+    pub const ALL: [Self; 4] = [Self::General, Self::Create, Self::Navigate, Self::View];
+
+    #[must_use]
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Create => "Create",
+            Self::Navigate => "Go to",
+            Self::View => "View",
+        }
+    }
+}
+
+/// One app-wide shortcut. This table is the single source of truth: key
+/// bindings, the Keyboard settings page and command-palette hints all read it.
+pub struct Shortcut {
+    /// Platform keystroke (`cmd-…` on macOS, `ctrl-…` elsewhere).
+    pub keys: &'static str,
+    pub label: &'static str,
+    pub group: ShortcutGroup,
+    action: fn() -> Box<dyn Action>,
+}
+
+impl Shortcut {
+    #[must_use]
+    pub fn action(&self) -> Box<dyn Action> {
+        (self.action)()
+    }
+}
+
+macro_rules! shortcuts {
+    ($( $group:ident, $keys:literal, $label:literal, $action:expr; )*) => {
+        &[ $( Shortcut {
+            keys: shortcut!($keys),
+            label: $label,
+            group: ShortcutGroup::$group,
+            action: || Box::new($action),
+        }, )* ]
+    };
+}
+
+pub const SHORTCUTS: &[Shortcut] = shortcuts![
+    General, "k", "Search and commands", OpenCommandPalette;
+    General, ",", "Settings", GoSettings;
+    Create, "n", "New note", NewNote;
+    Create, "shift-n", "New task", NewTask;
+    Navigate, "1", "Today", GoToday;
+    Navigate, "2", "Notes", GoNotes;
+    Navigate, "3", "Tasks", GoTasks;
+    View, "\\", "Toggle sidebar", ToggleSidebar;
+    View, "shift-l", "Toggle note list", ToggleListPanel;
 ];
+
+/// Built-in editing keys of the text editor (gpui-kit), shown for reference only.
+pub const EDITING_SHORTCUTS: &[(&str, &str)] = &[
+    (shortcut!("f"), "Find in note"),
+    (shortcut!("z"), "Undo"),
+    (shortcut!("a"), "Select all"),
+];
+
+/// The shortcut bound to `action`, for showing a hint next to it.
+#[must_use]
+pub fn shortcut_for(action: &dyn Action) -> Option<&'static str> {
+    SHORTCUTS
+        .iter()
+        .find(|s| s.action().name() == action.name())
+        .map(|s| s.keys)
+}
 
 pub fn modifier_label() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -58,18 +123,16 @@ pub fn modifier_label() -> &'static str {
 }
 
 pub fn bind(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new(shortcut!("k"), OpenCommandPalette, None),
-        KeyBinding::new(shortcut!("n"), NewNote, None),
-        KeyBinding::new(shortcut!("shift-n"), NewTask, None),
-        KeyBinding::new(shortcut!("1"), GoToday, None),
-        KeyBinding::new(shortcut!("2"), GoNotes, None),
-        KeyBinding::new(shortcut!("3"), GoTasks, None),
-        KeyBinding::new(shortcut!(","), GoSettings, None),
-        KeyBinding::new(shortcut!("\\"), ToggleSidebar, None),
-        KeyBinding::new(shortcut!("shift-l"), ToggleListPanel, None),
-        KeyBinding::new(shortcut!("q"), Quit, None),
-    ]);
+    let mut bindings: Vec<KeyBinding> = SHORTCUTS
+        .iter()
+        .map(|s| KeyBinding::load(s.keys, s.action(), None, false, None, cx))
+        .filter_map(Result::ok)
+        .collect();
+    // Quitting by shortcut is a macOS convention; Windows and Linux close the window.
+    if cfg!(target_os = "macos") {
+        bindings.push(KeyBinding::new("cmd-q", Quit, None));
+    }
+    cx.bind_keys(bindings);
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
 
@@ -95,4 +158,37 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::action("Toggle Note List", ToggleListPanel),
         ]),
     ]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_shortcut_parses_and_is_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for s in SHORTCUTS {
+            assert!(
+                gpui_kit::Keystroke::parse(s.keys).is_ok(),
+                "{} does not parse",
+                s.keys
+            );
+            assert!(seen.insert(s.keys), "{} is bound twice", s.keys);
+            assert_eq!(shortcut_for(&*s.action()), Some(s.keys));
+        }
+        for (keys, _) in EDITING_SHORTCUTS {
+            assert!(gpui_kit::Keystroke::parse(keys).is_ok());
+            assert!(!seen.contains(keys), "{keys} clashes with an editor key");
+        }
+    }
+
+    #[test]
+    fn uses_the_platform_modifier() {
+        let expected = if cfg!(target_os = "macos") {
+            "cmd-"
+        } else {
+            "ctrl-"
+        };
+        assert!(SHORTCUTS.iter().all(|s| s.keys.starts_with(expected)));
+    }
 }

@@ -79,6 +79,22 @@ One layout grammar for every screen: **Sidebar (app nav) → List panel → Cont
 - Toggle buttons sit in the title bar so they never move when a panel collapses.
   Sidebar ⌘\\, note list ⌘⇧L. A new panel adds a `PanelSpec`, an action, and a title-bar toggle shown on its screen.
 
+## Shortcuts
+
+- One table, `actions::SHORTCUTS` (keys, label, group, action), drives key
+  bindings, the Keyboard settings page (grouped: General, Create, Go to, View,
+  Writing) and the palette hints. Add a shortcut there only.
+- Keys use the platform modifier: `cmd-` on macOS, `ctrl-` on Windows/Linux.
+  `Kbd` renders the platform symbols (⌘⇧N vs Ctrl+Shift+N). ⌘Q is macOS only.
+- The palette shows a shortcut next to each command so people learn them
+  where they already are (Linear/VS Code/Raycast pattern).
+
+## Sidebar header and footer
+
+- No logo or app name (that's the menu bar and Dock). The top row is
+  "Search ⌘K"; its hover covers only that row.
+- Settings is an icon button in the footer (tooltip shows name + shortcut).
+
 ## Overlays
 
 - One dialog at a time. ⌘K toggles the command palette (a second press closes

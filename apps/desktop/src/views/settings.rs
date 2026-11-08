@@ -22,6 +22,8 @@ use keepstone_ui::appearance::{
 };
 use keepstone_ui::components::segmented;
 
+use crate::actions::{EDITING_SHORTCUTS, SHORTCUTS, ShortcutGroup};
+
 pub struct SettingsView {
     data_dir: PathBuf,
     focus: FocusHandle,
@@ -227,24 +229,67 @@ impl SettingsView {
     }
 
     fn keyboard_page() -> SettingPage {
-        let items = crate::actions::SHORTCUTS
-            .iter()
-            .map(|&(keys, label)| {
-                SettingItem::new(
-                    label,
-                    SettingField::render(move |_: &RenderOptions, _: &mut Window, _: &mut App| {
-                        match Keystroke::parse(keys) {
-                            Ok(ks) => Kbd::new(ks).into_any_element(),
-                            Err(_) => div().child(keys).into_any_element(),
-                        }
-                    }),
-                )
-                .keywords(["shortcut", "hotkey"])
+        let key_row = |keys: &'static str, label: &'static str| {
+            SettingItem::new(
+                label,
+                SettingField::render(move |_: &RenderOptions, _: &mut Window, _: &mut App| {
+                    match Keystroke::parse(keys) {
+                        // Kbd draws the platform's symbols: ⌘⇧N on macOS, Ctrl+Shift+N on Windows.
+                        Ok(ks) => Kbd::new(ks).into_any_element(),
+                        Err(_) => div().child(keys).into_any_element(),
+                    }
+                }),
+            )
+            .keywords(["shortcut", "hotkey", "keyboard"])
+        };
+
+        let mut groups: Vec<SettingGroup> = ShortcutGroup::ALL
+            .into_iter()
+            .map(|group| {
+                let items = SHORTCUTS
+                    .iter()
+                    .filter(|s| s.group == group)
+                    .map(|s| key_row(s.keys, s.label))
+                    .collect::<Vec<_>>();
+                SettingGroup::new().title(group.title()).items(items)
             })
+            .collect();
+
+        let link = SettingItem::new(
+            "Link to another note",
+            SettingField::render(|_: &RenderOptions, _: &mut Window, cx: &mut App| {
+                div()
+                    .px_1p5()
+                    .rounded(cx.theme().radius)
+                    .bg(cx.theme().muted)
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_sm()
+                    .child("[[")
+            }),
+        )
+        .description("Type it in a note, then pick a title.")
+        .keywords(["wiki", "link", "autocomplete"]);
+        let mut editing = EDITING_SHORTCUTS
+            .iter()
+            .map(|&(keys, label)| key_row(keys, label))
             .collect::<Vec<_>>();
+        editing.push(link);
+        groups.push(
+            SettingGroup::new()
+                .title("Writing")
+                .items(editing)
+                .footer(|_, _| {
+                    if cfg!(target_os = "macos") {
+                        "On Windows and Linux, Ctrl takes the place of ⌘."
+                    } else {
+                        "On macOS, ⌘ takes the place of Ctrl."
+                    }
+                }),
+        );
+
         SettingPage::new("Keyboard")
             .icon(Lucide::Keyboard)
-            .group(SettingGroup::new().title("Shortcuts").items(items))
+            .groups(groups)
     }
 
     fn about_page() -> SettingPage {
