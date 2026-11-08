@@ -422,6 +422,9 @@ impl NoteEditor {
     }
 
     fn apply_style(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        zorite_editor::set_line_height_ratio(
+            keepstone_ui::appearance::settings(cx).line_spacing.ratio(),
+        );
         let spell_on = keepstone_ui::appearance::settings(cx).spell_check;
         if spell_on != self.spell_on {
             self.spell_on = spell_on;

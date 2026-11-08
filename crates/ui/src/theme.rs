@@ -1,43 +1,93 @@
-//! Registers the Keepstone themes with GPUI Kit's theme registry.
+//! The themes Keepstone ships and how a light/dark pair is installed.
+//!
+//! `keepstone.json` holds the house themes (Keepstone Light/Dark). The
+//! community sets under `themes/community/` are upstream GPUI Kit themes,
+//! copied unchanged. The user picks one light and one dark theme; the mode
+//! (System/Light/Dark) chooses which of the two is shown.
 
 use std::rc::Rc;
 
-use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
+use gpui_kit::component::{Theme, ThemeConfig, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, SharedString};
 
 pub const LIGHT: &str = "Keepstone Light";
 pub const DARK: &str = "Keepstone Dark";
 
-const THEMES_JSON: &str = include_str!("../themes/keepstone.json");
+/// Every bundled theme file, house themes first.
+const THEME_FILES: &[&str] = &[
+    include_str!("../themes/keepstone.json"),
+    include_str!("../themes/community/catppuccin.json"),
+    include_str!("../themes/community/tokyonight.json"),
+    include_str!("../themes/community/gruvbox.json"),
+    include_str!("../themes/community/solarized.json"),
+    include_str!("../themes/community/everforest.json"),
+    include_str!("../themes/community/flexoki.json"),
+    include_str!("../themes/community/ayu.json"),
+];
 
-/// Loads the Keepstone themes and installs them as the light and dark themes.
-/// Does not choose the mode; [`crate::appearance`] does that.
+/// A theme the user can pick, for the settings cards.
+#[derive(Debug, Clone)]
+pub struct ThemeChoice {
+    pub name: SharedString,
+    pub mode: ThemeMode,
+    pub config: Rc<ThemeConfig>,
+}
+
+/// Loads every bundled theme into GPUI Kit's registry. Call once at startup.
 pub fn register(cx: &mut App) {
-    if let Err(err) = ThemeRegistry::global_mut(cx).load_themes_from_str(THEMES_JSON) {
-        eprintln!("keepstone: failed to parse bundled themes: {err}");
-        return;
+    for file in THEME_FILES {
+        if let Err(err) = ThemeRegistry::global_mut(cx).load_themes_from_str(file) {
+            eprintln!("keepstone: failed to parse a bundled theme file: {err}");
+        }
     }
+}
+
+/// The bundled themes for one mode: house theme first, then by name.
+#[must_use]
+pub fn choices(mode: ThemeMode, cx: &App) -> Vec<ThemeChoice> {
+    let mut out: Vec<ThemeChoice> = ThemeRegistry::global(cx)
+        .themes()
+        .values()
+        .filter(|c| c.mode == mode)
+        // GPUI Kit's own fallback themes aren't offered: they duplicate ours.
+        .filter(|c| !c.name.starts_with("Default "))
+        .map(|c| ThemeChoice {
+            name: c.name.clone(),
+            mode: c.mode,
+            config: c.clone(),
+        })
+        .collect();
+    out.sort_by_key(|c| (!c.name.starts_with("Keepstone"), c.name.to_string()));
+    out
+}
+
+fn find(name: &str, fallback: &str, cx: &App) -> Option<Rc<ThemeConfig>> {
     let themes = ThemeRegistry::global(cx).themes();
-    let light = themes.get(&SharedString::from(LIGHT)).cloned();
-    let dark = themes.get(&SharedString::from(DARK)).cloned();
-    let (Some(light), Some(dark)) = (light, dark) else {
+    themes
+        .get(&SharedString::from(name.to_owned()))
+        .or_else(|| themes.get(&SharedString::from(fallback.to_owned())))
+        .cloned()
+}
+
+/// Installs the chosen light and dark themes (unknown names fall back to the
+/// Keepstone pair) and shows `mode`.
+pub fn install(light: &str, dark: &str, mode: ThemeMode, cx: &mut App) {
+    let (Some(light), Some(dark)) = (find(light, LIGHT, cx), find(dark, DARK, cx)) else {
         eprintln!("keepstone: bundled themes are missing");
         return;
     };
-    install(light, dark, cx);
-}
-
-fn install(
-    light: Rc<gpui_kit::component::ThemeConfig>,
-    dark: Rc<gpui_kit::component::ThemeConfig>,
-    cx: &mut App,
-) {
-    let mode = Theme::global(cx).mode;
+    let current = Theme::global(cx);
+    let unchanged = current.mode == mode
+        && current.light_theme.name == light.name
+        && current.dark_theme.name == dark.name;
+    if unchanged {
+        return;
+    }
     Theme::update(cx, |theme| {
         theme.apply_config(&light);
         theme.apply_config(&dark);
     });
-    // apply_config switched the mode to the last config applied; restore it.
+    // apply_config leaves the mode at the last config applied; show the right one.
     Theme::change(mode, None, cx);
 }
 
@@ -59,15 +109,43 @@ pub fn resolve_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::component::ThemeSet;
+
+    fn all() -> Vec<ThemeConfig> {
+        THEME_FILES
+            .iter()
+            .flat_map(|f| {
+                serde_json::from_str::<ThemeSet>(f)
+                    .expect("theme json parses")
+                    .themes
+            })
+            .collect()
+    }
 
     #[test]
-    fn bundled_theme_file_parses_with_both_modes() {
-        let set: gpui_kit::component::ThemeSet =
-            serde_json::from_str(THEMES_JSON).expect("theme json parses");
-        let names: Vec<_> = set.themes.iter().map(|t| t.name.to_string()).collect();
+    fn every_bundled_theme_parses_and_both_modes_have_choices() {
+        let themes = all();
+        let names: Vec<_> = themes.iter().map(|t| t.name.to_string()).collect();
         assert!(names.contains(&LIGHT.to_owned()));
         assert!(names.contains(&DARK.to_owned()));
-        assert!(set.themes.iter().any(|t| t.mode.is_dark()));
-        assert!(set.themes.iter().any(|t| !t.mode.is_dark()));
+        assert!(
+            themes.iter().filter(|t| t.mode.is_dark()).count() >= 6,
+            "{names:?}"
+        );
+        assert!(
+            themes.iter().filter(|t| !t.mode.is_dark()).count() >= 6,
+            "{names:?}"
+        );
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "theme names are unique");
+    }
+
+    #[test]
+    fn every_theme_colors_code_blocks() {
+        for t in all() {
+            assert!(t.highlight.is_some(), "{} defines syntax colors", t.name);
+        }
     }
 }

@@ -137,7 +137,7 @@ impl Element for EditorElement {
         style.size.width = relative(1.).into();
         let id = window.request_measured_layout(style, move |known, available, window, cx| {
             let editor = editor.read(cx);
-            let base_lh = font_size * LINE_HEIGHT_RATIO;
+            let base_lh = font_size * crate::line_height_ratio();
             let wrap_width = match available.width {
                 AvailableSpace::Definite(w) => Some(w),
                 _ => known.width,
@@ -340,7 +340,7 @@ impl Element for EditorElement {
         let style = window.text_style();
         let font = style.font();
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let base_lh = font_size * LINE_HEIGHT_RATIO;
+        let base_lh = font_size * crate::line_height_ratio();
         let wrap_width = Some(bounds.size.width);
         let text_color = style.color;
 
@@ -1406,7 +1406,7 @@ impl Element for EditorElement {
                 let text_lh = wrapped
                     .get(row)
                     .map_or(base_lh, |l| {
-                        l.unwrapped_layout.font_size * LINE_HEIGHT_RATIO
+                        l.unwrapped_layout.font_size * crate::line_height_ratio()
                     })
                     .min(lh);
                 let c = fill(
@@ -1514,7 +1514,7 @@ impl Element for EditorElement {
         let font = style.font();
         let text_color = style.color;
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let base_lh = font_size * LINE_HEIGHT_RATIO;
+        let base_lh = font_size * crate::line_height_ratio();
         // Inline-image resize: the accent color for the corner grips, and the
         // active drag (if any) so the dragged image paints at its live width.
         let grip_color = self
@@ -2997,7 +2997,7 @@ fn shape_document(
             }
         }
     };
-    let table_row_h = base_font_size * LINE_HEIGHT_RATIO + px(12.);
+    let table_row_h = base_font_size * crate::line_height_ratio() + px(12.);
     // Fenced-code-block tracking: collect a block's line indices (so its box can
     // be sized to its widest line + the first/last line marked for rounding) and
     // the running max line width.
@@ -3282,7 +3282,7 @@ fn shape_document(
                 link: st.link,
                 bg: st.code_bg,
                 border: st.marker,
-                height: fs * LINE_HEIGHT_RATIO + px(CHIP_PAD * 2.),
+                height: fs * crate::line_height_ratio() + px(CHIP_PAD * 2.),
                 wiki: true,
             })
         } else if let Some(st) = md
@@ -3297,7 +3297,7 @@ fn shape_document(
                     link: st.link,
                     bg: st.code_bg,
                     border: st.marker,
-                    height: fs * LINE_HEIGHT_RATIO + px(CHIP_PAD * 2.),
+                    height: fs * crate::line_height_ratio() + px(CHIP_PAD * 2.),
                     wiki: false,
                 })
             } else {
@@ -3874,7 +3874,7 @@ fn shape_document(
         // doesn't depend on the shaped text; a code line's wrap rows and width
         // (for its block's box) come from `code_rows`.
         let far_off = band.is_some_and(|(lo, hi)| {
-            y_acc > hi || y_acc + base_font_size * LINE_HEIGHT_RATIO * 40. < lo
+            y_acc > hi || y_acc + base_font_size * crate::line_height_ratio() * 40. < lo
         });
         let code_key = (is_code && !collapse_fence && line_inline_math.is_empty()).then(|| {
             use std::hash::{Hash, Hasher};
@@ -3936,7 +3936,7 @@ fn shape_document(
                                 r
                             }
                         };
-                        table_row_h + base_font_size * LINE_HEIGHT_RATIO * (rows - 1) as f32
+                        table_row_h + base_font_size * crate::line_height_ratio() * (rows - 1) as f32
                     }
                     None => match widget.as_ref() {
                         // Reserve a little space around an inline image so a list
@@ -3952,7 +3952,7 @@ fn shape_document(
                                 .max()
                                 .unwrap_or(px(0.));
                             let mut h =
-                                (fs * LINE_HEIGHT_RATIO).max(math_h + px(INLINE_MATH_ROW_PAD));
+                                (fs * crate::line_height_ratio()).max(math_h + px(INLINE_MATH_ROW_PAD));
                             // List items breathe like the reader's (LIST_ROW_GAP).
                             if md.is_some() && markdown_syntax::list_prefix(line).is_some() {
                                 h += px(LIST_ROW_GAP);
@@ -4156,7 +4156,7 @@ fn build_prop_panel(
     // `paint_prop_panel`), so the width needs 10 + val_w + 10 past key_w or
     // the hover border sits flush against the last value character.
     let width = key_w + val_w + px(20.);
-    let row_h = font_size * LINE_HEIGHT_RATIO + px(8.);
+    let row_h = font_size * crate::line_height_ratio() + px(8.);
     let height = row_h * rows.len() as f32;
     PropPanel {
         rows,
@@ -4186,7 +4186,7 @@ fn prop_pill_bounds(
     font_size: Pixels,
     window: &mut Window,
 ) -> Vec<Bounds<Pixels>> {
-    let line_h = font_size * LINE_HEIGHT_RATIO;
+    let line_h = font_size * crate::line_height_ratio();
     let pad = px(10.);
     let mut out = Vec::new();
     for (ri, (_key, _icon, segs)) in p.rows.iter().enumerate() {
@@ -4228,7 +4228,7 @@ fn paint_prop_panel(
     row_rects: &mut Vec<(Bounds<Pixels>, usize)>,
     base_row: usize,
 ) {
-    let line_h = font_size * LINE_HEIGHT_RATIO;
+    let line_h = font_size * crate::line_height_ratio();
     let pad = px(10.);
     let mouse = window.mouse_position();
     // Follow the VALUES, not the keys: a Persian note's property keys are
@@ -4441,7 +4441,7 @@ fn paint_chip(
         link,
         window,
     );
-    let line_h = font_size * LINE_HEIGHT_RATIO;
+    let line_h = font_size * crate::line_height_ratio();
     let _ = shaped.paint(
         point(ix + icon_w + gap, origin.y + (row_h - line_h) / 2.),
         line_h,

@@ -35,11 +35,14 @@ Calm, organized, not noisy; keyboard path; empty/error states; one source of tru
 
 ## 3. Settings → Appearance, themes, typography
 
-- [ ] Reorganize Appearance into calm groups (Theme, Text, Layout, Motion) with live preview.
-- [ ] More themes (e.g. Keepstone Light/Dark, Graphite, Paper, Nord, Solarized,
-      Rosé Pine, Gruvbox, Catppuccin), all from theme JSON, light/dark pairs,
-      "match system" picks the pair. Smooth switching, no flash.
-- [ ] Typography: UI font, reading font for notes, sizes, line height, all persisted and tested.
+- [x] Appearance reorganized: Theme (mode) → Light theme → Dark theme (preview cards in
+      each theme's own colors) → Text (fonts, sizes, line spacing, live preview) → Layout →
+      Writing and motion → Reset.
+- [x] 20 themes: Keepstone + Catppuccin (4), Tokyo Night (3), Gruvbox, Solarized, Everforest,
+      Flexoki, Ayu (light/dark each) from upstream GPUI Kit (Apache-2.0, `themes/community`).
+      One light + one dark choice; Mode picks which shows; switching is instant.
+- [x] Typography: interface/code fonts and sizes (existing), note line spacing
+      (Compact/Comfortable/Relaxed, vendored patch P8). UI test covers theme pick + persistence.
 
 ## 4. Calendar
 

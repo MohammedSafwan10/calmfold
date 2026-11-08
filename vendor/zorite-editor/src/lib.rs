@@ -216,6 +216,22 @@ const UNDO_LIMIT: usize = 256;
 /// math (e.g. Zorite's click-to-edit caret prediction) can mirror row heights.
 pub const LINE_HEIGHT_RATIO: f32 = 1.45;
 
+thread_local! {
+    static LINE_HEIGHT: std::cell::Cell<f32> = const { std::cell::Cell::new(LINE_HEIGHT_RATIO) };
+}
+
+/// Row height as a multiple of the font size, as currently configured
+/// (Keepstone patch P8: line spacing is a user setting).
+pub fn line_height_ratio() -> f32 {
+    LINE_HEIGHT.with(std::cell::Cell::get)
+}
+
+/// Sets the row height ratio for every editor on this thread (clamped to
+/// 1.1–2.2). Takes effect on the next layout.
+pub fn set_line_height_ratio(ratio: f32) {
+    LINE_HEIGHT.with(|c| c.set(ratio.clamp(1.1, 2.2)));
+}
+
 /// Extra height under each list/task row in WYSIWYG, matching the reader's
 /// roomier item gap (its list column uses a 4px inter-item gap) — the one
 /// place the reader's look wins over the editor's (see AGENTS.md "Parity

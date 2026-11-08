@@ -1262,7 +1262,7 @@ pub(crate) fn table_caret_pos(
     // the (wider) bold glyphs; position_for_index gives the exact kerned x — and,
     // shaped at the cell's width, the wrap row's y for drag-narrowed columns.
     let cf = cell_font(font, t.is_header);
-    let line_h = font_size * LINE_HEIGHT_RATIO;
+    let line_h = font_size * crate::line_height_ratio();
     let avail = (cw - pad * 2.).max(px(8.));
     let wl = shape_cell(
         window,
@@ -1308,7 +1308,7 @@ fn cell_offset_for_point(
     font_size: Pixels,
     window: &mut Window,
 ) -> usize {
-    let line_h = font_size * LINE_HEIGHT_RATIO;
+    let line_h = font_size * crate::line_height_ratio();
     let Some(wl) = shape_cell(
         window,
         content,

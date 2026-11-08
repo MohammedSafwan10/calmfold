@@ -1603,3 +1603,34 @@ fn spelling_flags_prose_skips_code_and_can_be_turned_off(cx: &mut TestAppContext
     cx.run_until_parked();
     assert!(flagged(cx).is_empty(), "the setting turns underlines off");
 }
+
+#[gpui_kit::test]
+fn picking_a_theme_card_applies_and_saves_it(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    dispatch(&app, cx, UseDarkTheme);
+    dispatch(&app, cx, GoSettings);
+    let name = |cx: &mut TestAppContext| cx.read(|cx| Theme::global(cx).theme_name().to_string());
+    assert_eq!(name(cx), keepstone_ui::theme::DARK);
+
+    click(&app, cx, "theme-catppuccin-mocha");
+    assert_eq!(name(cx), "Catppuccin Mocha");
+    assert_eq!(
+        cx.read(|cx| Theme::global(cx).highlight_theme.name.clone()),
+        "Catppuccin Mocha",
+        "code colors follow the theme"
+    );
+
+    // A light card switches to light mode so the choice is visible.
+    click(&app, cx, "theme-solarized-light");
+    assert_eq!(cx.read(|cx| Theme::global(cx).mode), ThemeMode::Light);
+    assert_eq!(name(cx), "Solarized Light");
+
+    let saved = keepstone_ui::appearance::AppearanceSettings::load(&app.paths.appearance);
+    assert_eq!(saved.dark_theme, "Catppuccin Mocha");
+    assert_eq!(saved.light_theme, "Solarized Light");
+
+    // Back to dark: the chosen dark theme comes back, not the default.
+    dispatch(&app, cx, UseDarkTheme);
+    assert_eq!(name(cx), "Catppuccin Mocha");
+}

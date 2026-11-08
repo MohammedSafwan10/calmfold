@@ -39,6 +39,28 @@ pub enum MonoFont {
     System,
 }
 
+/// Space between lines in notes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineSpacing {
+    Compact,
+    #[default]
+    Comfortable,
+    Relaxed,
+}
+
+impl LineSpacing {
+    /// Line height as a multiple of the font size.
+    #[must_use]
+    pub fn ratio(self) -> f32 {
+        match self {
+            Self::Compact => 1.35,
+            Self::Comfortable => 1.5,
+            Self::Relaxed => 1.7,
+        }
+    }
+}
+
 /// How wide documents (notes, task details) may grow on large windows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -75,6 +97,10 @@ pub enum MotionPreference {
 #[serde(default)]
 pub struct AppearanceSettings {
     pub theme: ThemePreference,
+    /// Theme shown in light mode (a bundled theme name).
+    pub light_theme: String,
+    /// Theme shown in dark mode.
+    pub dark_theme: String,
     pub ui_font: UiFont,
     pub ui_font_size: u8,
     pub mono_font: MonoFont,
@@ -84,6 +110,7 @@ pub struct AppearanceSettings {
     pub reduce_motion: MotionPreference,
     /// Underline misspelled words in notes (the OS spell checker).
     pub spell_check: bool,
+    pub line_spacing: LineSpacing,
 }
 
 impl AppearanceSettings {
@@ -154,6 +181,8 @@ impl Default for AppearanceSettings {
     fn default() -> Self {
         Self {
             theme: ThemePreference::default(),
+            light_theme: crate::theme::LIGHT.to_owned(),
+            dark_theme: crate::theme::DARK.to_owned(),
             ui_font: UiFont::default(),
             ui_font_size: Self::DEFAULT_UI_FONT_SIZE,
             mono_font: MonoFont::default(),
@@ -161,6 +190,7 @@ impl Default for AppearanceSettings {
             content_width: ContentWidth::default(),
             reduce_motion: MotionPreference::default(),
             spell_check: true,
+            line_spacing: LineSpacing::default(),
         }
     }
 }
@@ -229,9 +259,7 @@ fn apply(appearance: Option<WindowAppearance>, cx: &mut App) {
         WindowAppearance::Dark | WindowAppearance::VibrantDark
     );
     let mode: ThemeMode = crate::theme::resolve_mode(settings.theme, system_dark);
-    if Theme::global(cx).mode != mode {
-        Theme::change(mode, None, cx);
-    }
+    crate::theme::install(&settings.light_theme, &settings.dark_theme, mode, cx);
 
     let ui_family = settings.ui_font_family();
     let ui_family = if fonts::is_available(ui_family, cx) {
@@ -281,6 +309,9 @@ mod tests {
             content_width: ContentWidth::Wide,
             reduce_motion: MotionPreference::On,
             spell_check: false,
+            light_theme: "Solarized Light".into(),
+            dark_theme: "Catppuccin Mocha".into(),
+            line_spacing: LineSpacing::Relaxed,
         };
         settings.save(&path).expect("save");
         assert_eq!(AppearanceSettings::load(&path), settings);

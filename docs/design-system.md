@@ -13,6 +13,13 @@ This file records Keepstone's choices on top of them.
 
 ## Theme
 
+Themes: Keepstone Light/Dark (house) plus community GPUI Kit sets in
+`crates/ui/themes/community/` (unchanged copies, Apache-2.0). Users pick one
+light and one dark theme on cards that preview each theme in its own colors;
+the Mode (System/Light/Dark) decides which one shows. Every theme must define
+`highlight.syntax` (a test enforces it).
+
+
 - `crates/ui/themes/keepstone.json`: **Keepstone Dark** (default via System on
   dark Macs) and **Keepstone Light**. Radius 8 / 12 (large), shadows off.
 - Feature code uses tokens only: `background`, `foreground`, `muted_foreground`,

@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use gpui_kit::assets::IconName as Lucide;
+use gpui_kit::component::ThemeMode;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::group_box::GroupBoxVariant;
 use gpui_kit::component::kbd::Kbd;
@@ -13,12 +14,15 @@ use gpui_kit::component::setting::{
     RenderOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
 };
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Context, FocusHandle, Focusable, InteractiveElement as _, IntoElement, Keystroke,
-    ParentElement as _, Render, SharedString, Styled as _, Window, div,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    TestSupportExt as _, Window, div,
 };
 use keepstone_ui::appearance::{
-    self, AppearanceSettings, ContentWidth, MonoFont, MotionPreference, ThemePreference, UiFont,
+    self, AppearanceSettings, ContentWidth, LineSpacing, MonoFont, MotionPreference,
+    ThemePreference, UiFont,
 };
 use keepstone_ui::components::segmented;
 
@@ -38,8 +42,8 @@ impl SettingsView {
     }
 
     fn appearance_page() -> SettingPage {
-        let theme = SettingItem::new(
-            "Appearance",
+        let mode = SettingItem::new(
+            "Mode",
             SettingField::render(|_, _, cx| {
                 segmented(
                     "set-theme",
@@ -54,7 +58,131 @@ impl SettingsView {
             }),
         )
         .description("System follows your computer's light or dark setting.")
-        .keywords(["theme", "dark mode", "light mode", "color"]);
+        .keywords(["theme", "dark mode", "light mode", "appearance"]);
+
+        let light =
+            SettingItem::render(|_, _, cx| theme_cards(ThemeMode::Light, cx).into_any_element())
+                .keywords([
+                    "theme",
+                    "light",
+                    "colors",
+                    "catppuccin",
+                    "solarized",
+                    "gruvbox",
+                    "flexoki",
+                    "ayu",
+                    "everforest",
+                ]);
+        let dark =
+            SettingItem::render(|_, _, cx| theme_cards(ThemeMode::Dark, cx).into_any_element())
+                .keywords([
+                    "theme",
+                    "dark",
+                    "colors",
+                    "catppuccin",
+                    "tokyo night",
+                    "solarized",
+                    "gruvbox",
+                    "flexoki",
+                    "ayu",
+                    "everforest",
+                ]);
+
+        let ui_font = SettingItem::new(
+            "Interface",
+            SettingField::render(|_, _, cx| {
+                h_flex()
+                    .gap_2()
+                    .child(segmented(
+                        "set-ui-font",
+                        &[(UiFont::Inter, "Inter"), (UiFont::System, "System")],
+                        appearance::settings(cx).ui_font,
+                        |v, _, cx| appearance::update(cx, |s| s.ui_font = v),
+                    ))
+                    .child(size_stepper("ui-size", appearance::settings(cx).ui_font_size, AppearanceSettings::UI_FONT_SIZES, |s, v| s.ui_font_size = v))
+            }),
+        )
+        .description(format!(
+            "Font for everything outside code. The size also scales spacing, so it works as zoom. Default {} px.",
+            AppearanceSettings::DEFAULT_UI_FONT_SIZE
+        ))
+        .keywords(["typography", "font", "zoom", "text size", "font size"]);
+
+        let mono_font = SettingItem::new(
+            "Code",
+            SettingField::render(|_, _, cx| {
+                h_flex()
+                    .gap_2()
+                    .child(segmented(
+                        "set-mono-font",
+                        &[
+                            (MonoFont::JetbrainsMono, "JetBrains Mono"),
+                            (MonoFont::System, "System"),
+                        ],
+                        appearance::settings(cx).mono_font,
+                        |v, _, cx| appearance::update(cx, |s| s.mono_font = v),
+                    ))
+                    .child(size_stepper(
+                        "mono-size",
+                        appearance::settings(cx).mono_font_size,
+                        AppearanceSettings::MONO_FONT_SIZES,
+                        |s, v| s.mono_font_size = v,
+                    ))
+            }),
+        )
+        .description("Code blocks and inline code in notes.")
+        .keywords(["typography", "monospace", "font"]);
+
+        let spacing = SettingItem::new(
+            "Line spacing",
+            SettingField::render(|_, _, cx| {
+                segmented(
+                    "set-line-spacing",
+                    &[
+                        (LineSpacing::Compact, "Compact"),
+                        (LineSpacing::Comfortable, "Comfortable"),
+                        (LineSpacing::Relaxed, "Relaxed"),
+                    ],
+                    appearance::settings(cx).line_spacing,
+                    |v, _, cx| appearance::update(cx, |s| s.line_spacing = v),
+                )
+            }),
+        )
+        .description("Space between lines when writing notes.")
+        .keywords(["typography", "line height", "leading", "density"]);
+
+        let preview = SettingItem::render(|_, _, cx| {
+            let theme = cx.theme();
+            let ratio = appearance::settings(cx).line_spacing.ratio();
+            v_flex()
+                .w_full()
+                .gap_2()
+                .p_4()
+                .rounded(theme.radius)
+                .bg(theme.background)
+                .border_1()
+                .border_color(theme.border)
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                        .child("Weekend plans"),
+                )
+                .child(
+                    div()
+                        .line_height(gpui_kit::relative(ratio))
+                        .child("Pack the tent and check the weather on Friday. The quick brown fox jumps over the lazy dog, and the line keeps going so you can see how it wraps."),
+                )
+                .child(
+                    div()
+                        .font_family(theme.mono_font_family.clone())
+                        .text_size(theme.mono_font_size)
+                        .text_color(theme.muted_foreground)
+                        .child("fn main() { println!(\"0O 1lI\"); }"),
+                )
+                .into_any_element()
+        })
+        .keywords(["preview", "typography"]);
 
         let width = SettingItem::new(
             "Content width",
@@ -94,77 +222,6 @@ impl SettingsView {
         )
         .keywords(["animation", "accessibility"]);
 
-        let ui_font = SettingItem::new(
-            "Interface font",
-            SettingField::render(|_, _, cx| {
-                h_flex()
-                    .gap_2()
-                    .child(segmented(
-                        "set-ui-font",
-                        &[(UiFont::Inter, "Inter"), (UiFont::System, "System")],
-                        appearance::settings(cx).ui_font,
-                        |v, _, cx| appearance::update(cx, |s| s.ui_font = v),
-                    ))
-                    .child(size_stepper("ui-size", appearance::settings(cx).ui_font_size, AppearanceSettings::UI_FONT_SIZES, |s, v| s.ui_font_size = v))
-            }),
-        )
-        .description(format!(
-            "Everything outside code. The size also scales spacing, so it works as interface zoom. Default {} px.",
-            AppearanceSettings::DEFAULT_UI_FONT_SIZE
-        ))
-        .keywords(["typography", "zoom", "text size", "font size"]);
-
-        let mono_font = SettingItem::new(
-            "Code font",
-            SettingField::render(|_, _, cx| {
-                h_flex()
-                    .gap_2()
-                    .child(segmented(
-                        "set-mono-font",
-                        &[
-                            (MonoFont::JetbrainsMono, "JetBrains Mono"),
-                            (MonoFont::System, "System"),
-                        ],
-                        appearance::settings(cx).mono_font,
-                        |v, _, cx| appearance::update(cx, |s| s.mono_font = v),
-                    ))
-                    .child(size_stepper(
-                        "mono-size",
-                        appearance::settings(cx).mono_font_size,
-                        AppearanceSettings::MONO_FONT_SIZES,
-                        |s, v| s.mono_font_size = v,
-                    ))
-            }),
-        )
-        .description("Code blocks and inline code in notes.")
-        .keywords(["typography", "monospace"]);
-
-        let preview = SettingItem::render(|_, _, cx| {
-            let theme = cx.theme();
-            v_flex()
-                .w_full()
-                .gap_2()
-                .p_3()
-                .rounded(theme.radius)
-                .bg(theme.background)
-                .border_1()
-                .border_color(theme.border)
-                .child(
-                    div()
-                        .text_sm()
-                        .child("The quick brown fox jumps over the lazy dog."),
-                )
-                .child(
-                    div()
-                        .font_family(theme.mono_font_family.clone())
-                        .text_size(theme.mono_font_size)
-                        .text_color(theme.muted_foreground)
-                        .child("fn main() { println!(\"0O 1lI\"); }"),
-                )
-                .into_any_element()
-        })
-        .keywords(["preview", "typography"]);
-
         let spelling = SettingItem::new(
             "Check spelling",
             SettingField::switch(
@@ -192,20 +249,25 @@ impl SettingsView {
         })
         .keywords(["reset", "default"]);
 
+        // Calm order: how it looks (theme), how text reads, how it's laid out,
+        // then the two behaviour switches.
         SettingPage::new("Appearance")
             .icon(Lucide::Palette)
             .default_open(true)
+            .group(SettingGroup::new().title("Theme").items(vec![mode]))
+            .group(SettingGroup::new().title("Light theme").items(vec![light]))
+            .group(SettingGroup::new().title("Dark theme").items(vec![dark]))
             .group(
                 SettingGroup::new()
-                    .title("Theme")
-                    .items(vec![theme, width, motion]),
+                    .title("Text")
+                    .items(vec![ui_font, mono_font, spacing, preview]),
             )
+            .group(SettingGroup::new().title("Layout").items(vec![width]))
             .group(
                 SettingGroup::new()
-                    .title("Typography")
-                    .items(vec![ui_font, mono_font, preview]),
+                    .title("Writing and motion")
+                    .items(vec![spelling, motion]),
             )
-            .group(SettingGroup::new().title("Writing").items(vec![spelling]))
             .group(
                 SettingGroup::new()
                     .variant(GroupBoxVariant::Normal)
@@ -329,6 +391,111 @@ impl SettingsView {
 }
 
 /// A compact "− 15 px +" control for font sizes.
+/// One row of theme cards for `mode`. Each card previews the theme in its own
+/// colors (page, text, accent, two code colors); the chosen one has a ring.
+/// Choosing a theme of the other mode also switches to that mode, so the
+/// change is visible, unless the mode follows the system.
+fn theme_cards(mode: ThemeMode, cx: &App) -> impl IntoElement {
+    use gpui_kit::component::try_parse_color;
+    let app = cx.theme();
+    let settings = appearance::settings(cx);
+    let selected = if mode.is_dark() {
+        settings.dark_theme.clone()
+    } else {
+        settings.light_theme.clone()
+    };
+    let cards = keepstone_ui::theme::choices(mode, cx)
+        .into_iter()
+        .map(|choice| {
+            let c = &choice.config.colors;
+            let parse = |v: &Option<SharedString>| v.as_ref().and_then(|s| try_parse_color(s).ok());
+            let bg = parse(&c.background).unwrap_or(app.background);
+            let fg = parse(&c.foreground).unwrap_or(app.foreground);
+            let border = parse(&c.border).unwrap_or(app.border);
+            let accent = parse(&c.primary).unwrap_or(fg);
+            let syntax = choice.config.highlight.as_ref().map(|h| &h.syntax);
+            let tone =
+                |s: Option<&gpui_kit::component::highlighter::ThemeStyle>| s.and_then(|s| s.color);
+            let dots = [
+                accent,
+                syntax
+                    .and_then(|s| tone(s.keyword.as_ref()))
+                    .unwrap_or(accent),
+                syntax.and_then(|s| tone(s.string.as_ref())).unwrap_or(fg),
+                syntax.and_then(|s| tone(s.function.as_ref())).unwrap_or(fg),
+            ];
+            let is_selected = choice.name.as_ref() == selected;
+            let name = choice.name.clone();
+            let id = SharedString::from(format!(
+                "theme-{}",
+                choice.name.to_lowercase().replace(' ', "-")
+            ));
+            v_flex()
+                .id(gpui_kit::ElementId::Name(id))
+                .test_support()
+                .w(gpui_kit::rems(9.))
+                .gap_1p5()
+                .cursor_pointer()
+                .on_click(move |_, _, cx| {
+                    let name = name.to_string();
+                    appearance::update(cx, |s| {
+                        if mode.is_dark() {
+                            s.dark_theme = name;
+                        } else {
+                            s.light_theme = name;
+                        }
+                        if s.theme != ThemePreference::System {
+                            s.theme = if mode.is_dark() {
+                                ThemePreference::Dark
+                            } else {
+                                ThemePreference::Light
+                            };
+                        }
+                    });
+                })
+                .child(
+                    v_flex()
+                        .h(gpui_kit::rems(5.))
+                        .p_2()
+                        .gap_1()
+                        .justify_between()
+                        .rounded(app.radius_lg)
+                        .bg(bg)
+                        .border_1()
+                        .border_color(border)
+                        .when(is_selected, |this| this.border_2().border_color(app.ring))
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                .text_color(fg)
+                                .child("Aa"),
+                        )
+                        .child(
+                            h_flex().gap_1().children(
+                                dots.into_iter()
+                                    .map(|d| div().size(gpui_kit::rems(0.6)).rounded_full().bg(d)),
+                            ),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(if is_selected {
+                            app.foreground
+                        } else {
+                            app.muted_foreground
+                        })
+                        .when(is_selected, |this| {
+                            this.font_weight(gpui_kit::FontWeight::MEDIUM)
+                        })
+                        .truncate()
+                        .child(choice.name.clone()),
+                )
+        });
+    h_flex().w_full().flex_wrap().gap_3().children(cards)
+}
+
 fn size_stepper(
     id: &'static str,
     value: u8,

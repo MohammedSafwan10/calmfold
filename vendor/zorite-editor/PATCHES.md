@@ -15,6 +15,7 @@ upstream.
 | P5 | `element.rs` `shape_document` | `math_regions(content)` re-parsed the document every frame. | Uses the per-generation scan cache. |
 | P6 | `element.rs`, `lib.rs` | Ten per-line vectors grown from empty each frame. | `ShapedDoc::with_capacity(lines)`. |
 | P7 | `element.rs` `shape_document` | Off-screen table and code rows were always shaped. | Skipped when far outside the shaping band; code rows reuse cached (wrap rows, width). |
+| P8 | `lib.rs`, `element.rs`, `tables.rs` | Row height was a fixed 1.45 × font size. | `line_height_ratio()` / `set_line_height_ratio()` (thread-local, default 1.45); every use of the constant reads it. |
 | A1 | `lib.rs` | Hosts and tests could not read the current diagnostics. | `EditorState::diagnostics()` getter. |
 | — | `tables.rs`, `lib.rs` | Deprecated `ScrollWheelEvent` / `on_scroll_wheel`. | Renamed to `ScrollEvent` / `on_scroll`. |
 
