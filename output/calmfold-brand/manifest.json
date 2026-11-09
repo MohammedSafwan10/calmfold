@@ -1,0 +1,149 @@
+{
+  "favicon-16-white.png": {
+    "size": [
+      16,
+      16
+    ],
+    "mode": "RGBA"
+  },
+  "favicon-16.png": {
+    "size": [
+      16,
+      16
+    ],
+    "mode": "RGBA"
+  },
+  "favicon-256-white.png": {
+    "size": [
+      256,
+      256
+    ],
+    "mode": "RGBA"
+  },
+  "favicon-256.png": {
+    "size": [
+      256,
+      256
+    ],
+    "mode": "RGBA"
+  },
+  "favicon-32-white.png": {
+    "size": [
+      32,
+      32
+    ],
+    "mode": "RGBA"
+  },
+  "favicon-32.png": {
+    "size": [
+      32,
+      32
+    ],
+    "mode": "RGBA"
+  },
+  "favicon-48-white.png": {
+    "size": [
+      48,
+      48
+    ],
+    "mode": "RGBA"
+  },
+  "favicon-48.png": {
+    "size": [
+      48,
+      48
+    ],
+    "mode": "RGBA"
+  },
+  "favicon-64-white.png": {
+    "size": [
+      64,
+      64
+    ],
+    "mode": "RGBA"
+  },
+  "favicon-64.png": {
+    "size": [
+      64,
+      64
+    ],
+    "mode": "RGBA"
+  },
+  "favicon.png": {
+    "size": [
+      256,
+      256
+    ],
+    "mode": "RGBA"
+  },
+  "icon-mac.png": {
+    "size": [
+      1024,
+      1024
+    ],
+    "mode": "RGBA"
+  },
+  "icon-master.png": {
+    "size": [
+      1024,
+      1024
+    ],
+    "mode": "RGBA"
+  },
+  "icon-mono-white.png": {
+    "size": [
+      1024,
+      1024
+    ],
+    "mode": "RGBA"
+  },
+  "icon-mono.png": {
+    "size": [
+      1024,
+      1024
+    ],
+    "mode": "RGBA"
+  },
+  "icon-windows.png": {
+    "size": [
+      1024,
+      1024
+    ],
+    "mode": "RGBA"
+  },
+  "logo-horizontal-dark.png": {
+    "size": [
+      2000,
+      560
+    ],
+    "mode": "RGBA"
+  },
+  "logo-horizontal.png": {
+    "size": [
+      2000,
+      560
+    ],
+    "mode": "RGBA"
+  },
+  "platform-mockup.png": {
+    "size": [
+      2000,
+      1420
+    ],
+    "mode": "RGBA"
+  },
+  "wordmark-dark.png": {
+    "size": [
+      2000,
+      440
+    ],
+    "mode": "RGBA"
+  },
+  "wordmark.png": {
+    "size": [
+      2000,
+      440
+    ],
+    "mode": "RGBA"
+  }
+}

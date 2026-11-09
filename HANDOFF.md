@@ -74,7 +74,10 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 - Kept on purpose (format identifiers bound into existing data): vault AADs
   `keepstone-vault-key-v1`, `keepstone-vault-recovery-v1`, archive format
   `keepstone-vault-archive`.
-- Brand artwork goes in `assets/brand/` (see its README); not wired yet.
+- App icon: `assets/brand/source/icon-master.png` → `scripts/gen-icons.py`
+  (sizes, `.icns`, `.ico`, favicons + webmanifest). `scripts/bundle-mac.sh`
+  builds an unsigned Calmfold.app; Windows embeds the icon via `build.rs`
+  (winresource, untested on Windows). About screen shows the icon.
 - GitHub repo is still named `keepstone` (rename on GitHub if wanted).
 
 ### 2026-11-09: States, birthdays, holiday updates

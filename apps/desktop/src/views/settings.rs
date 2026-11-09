@@ -719,10 +719,36 @@ impl SettingsView {
             SettingField::render(|_, _, _| div().text_sm().child("Nexdark Labs")),
         )
         .description("calmfold.nexdark.com");
+        let header = SettingItem::render(|_, _, cx| {
+            h_flex()
+                .gap_3()
+                .items_center()
+                .child(
+                    gpui_kit::img(calmfold_ui::assets::APP_ICON)
+                        .size(gpui_kit::rems(3.5))
+                        .flex_shrink_0(),
+                )
+                .child(
+                    v_flex()
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                .child("Calmfold"),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Notes, tasks, calendar and passwords, in one calm place."),
+                        ),
+                )
+                .into_any_element()
+        });
         SettingPage::new("About").icon(Lucide::Info).group(
             SettingGroup::new()
                 .title("Calmfold")
-                .items(vec![version, maker, fonts, icons]),
+                .items(vec![header, version, maker, fonts, icons]),
         )
     }
 }

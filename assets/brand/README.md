@@ -1,8 +1,14 @@
 # Calmfold brand artwork
 
-Calmfold by Nexdark Labs. Put the generated artwork here with exactly these
-names. The packaging step builds the platform files from them: `.icns` for
-macOS, `.ico` for Windows, and favicons for `calmfold.nexdark.com`.
+Calmfold by Nexdark Labs. The master is `source/icon-master.png`; everything
+else is generated from it:
+
+    uv run scripts/gen-icons.py      # all sizes, Calmfold.icns, calmfold.ico, favicons
+    scripts/bundle-mac.sh            # target/release/Calmfold.app (unsigned)
+
+Windows embeds `calmfold.ico` into calmfold.exe at build time
+(`apps/desktop/build.rs`). The About screen uses `crates/ui/assets/brand/icon-256.png`.
+Optional extra artwork (logos, mono symbol) can be added with these names:
 
 | File | What | Size |
 | --- | --- | --- |

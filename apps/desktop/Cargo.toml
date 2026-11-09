@@ -15,6 +15,9 @@ path = "src/lib.rs"
 name = "calmfold"
 path = "src/main.rs"
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [dependencies]
 calmfold-core.workspace = true
 calmfold-storage.workspace = true
