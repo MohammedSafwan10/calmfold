@@ -1,0 +1,90 @@
+name: Release
+
+# Push a tag like `v0.1.0` (or run by hand) to build Calmfold and publish a
+# GitHub release with:
+#   Calmfold-<version>-windows-x64.zip   calmfold.exe (icon embedded)
+#   Calmfold-<version>-macos-arm64.zip   Calmfold.app
+# Builds are not code-signed (AGENTS.md rule 11): Windows SmartScreen and
+# macOS Gatekeeper will warn on first launch.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+          - os: macos-latest
+            target: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
+      - name: Version
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build --release -p calmfold-desktop --bin calmfold
+          mkdir -p dist/Calmfold
+          cp target/release/calmfold.exe dist/Calmfold/Calmfold.exe
+          cp README.md dist/Calmfold/README.md
+          cd dist && 7z a "Calmfold-${VERSION}-${{ matrix.target }}.zip" Calmfold
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          scripts/bundle-mac.sh
+          mkdir -p dist
+          ditto -c -k --keepParent target/release/Calmfold.app "dist/Calmfold-${VERSION}-${{ matrix.target }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Calmfold $TAG" \
+            --notes "Calmfold by Nexdark Labs.
+
+          **Windows:** download the windows-x64 zip, unzip, run Calmfold.exe. The build isn't signed yet, so Windows SmartScreen may say \"Windows protected your PC\": click **More info → Run anyway**.
+
+          **macOS (Apple Silicon):** unzip, move Calmfold.app to Applications, then right-click → **Open** the first time.
+
+          Your data stays on your computer (no account, no server)." \
+            || gh release upload "$TAG" dist/*.zip --repo "$GITHUB_REPOSITORY" --clobber

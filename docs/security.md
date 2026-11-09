@@ -2,7 +2,7 @@
 
 ## What we protect
 
-Notes, tasks, and (planned) passwords/2FA secrets on the user's own devices,
+Notes, tasks, events, habits, and passwords/2FA secrets on the user's own devices,
 and later on a self-hosted sync server the user controls.
 
 ## Threats in scope
@@ -15,16 +15,16 @@ and later on a self-hosted sync server the user controls.
 Out of scope: malware running as the user while the vault is unlocked, a
 compromised OS, physical attacks on unlocked RAM.
 
-## Current state (Phase 1)
+## Notes, tasks, calendar, habits
 
 - Notes and tasks are stored **unencrypted** in SQLite in the user data folder,
   like Obsidian. Users should rely on FileVault/BitLocker for at-rest protection.
-- No network access. No telemetry. No `unsafe` code.
+- No network access (holiday data is built in). No telemetry. No `unsafe` code.
 - Errors and logs never include note bodies or passwords.
 - User search input is escaped before FTS5 (`codec::fts_query`); all SQL uses
   bound parameters.
 
-## Vault design (Phase 3, crypto crate already built and tested)
+## Vault design
 
 - Master password → **Argon2id** v1.3, default m=64 MiB, t=3, p=4 (RFC 9106
   option 2), random 16-byte salt. Params stored per vault and bounded on read
@@ -38,7 +38,7 @@ compromised OS, physical attacks on unlocked RAM.
 - Auto-lock on idle/sleep, clipboard auto-clear for copied passwords, no
   secrets in search index or previews.
 
-## Vault as built (2026-11-09)
+## Vault as built
 
 - Hierarchy and format: ADR 0005. Storage holds the header and sealed blobs
   only; titles, URLs and favorites are encrypted too.

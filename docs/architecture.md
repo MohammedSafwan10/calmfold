@@ -59,11 +59,13 @@ and the command palette therefore run identical code.
 
 Data folder (`Settings → General → Data folder`):
 
-- `calmfold.sqlite3` (+ `-wal`, `-shm`): all notes and tasks.
+- `calmfold.sqlite3` (+ `-wal`, `-shm`): notes, tasks, events, habits, and the vault (ciphertext only).
+- `vault.json`: vault preferences (auto-lock, clipboard); `vault-archives/*.cfvault`: archived vaults.
 - `appearance.json`: appearance settings.
 - `layout.json`: sidebar width/collapsed.
 
 Debug builds use a separate `Calmfold Dev` folder; `CALMFOLD_DATA_DIR` overrides.
+A Keepstone folder from before the rename is moved here on first launch (`paths.rs`).
 
 ## Sync (planned, not built)
 

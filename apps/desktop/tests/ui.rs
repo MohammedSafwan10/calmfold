@@ -1992,7 +1992,7 @@ fn vault_setup_items_lock_unlock_and_copy(cx: &mut TestAppContext) {
     dispatch(&app, cx, GoPasswords);
     press(&app, cx, "down");
     assert_eq!(cx.read(|cx| passwords.read(cx).selected()), Some(id));
-    press(&app, cx, "cmd-c");
+    press(&app, cx, leak(secondary("c")));
     let copied = cx.read(|cx| cx.read_from_clipboard().and_then(|c| c.text()));
     assert_eq!(copied.as_deref(), Some("Tr0ub4dor&3-horse"));
     // …and it clears after the delay.

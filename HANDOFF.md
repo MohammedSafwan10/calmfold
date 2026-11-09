@@ -4,17 +4,13 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Current state (2026-11-09)
 
-- Branch `main`. `scripts/check.sh` passes (fmt, clippy `-D warnings`, all tests).
-- Done from `docs/TASKS.md`: editor perf (to 50 KB), find, code colors, Mermaid,
-  spell-check, 20 themes + typography, Calendar (§4), Habits (§5), Today rebuild (§6), **Password vault** (§7).
-- Calendar: `core::event` (+ quick add `event_quick_add`), migration 0003,
-  `storage/events.rs`, `Library::calendar` / event methods (`EventsChanged`),
-  `views/calendar.rs` (state, header, agenda), `calendar_grid.rs` (month, week/day
-  time grid), `calendar_layout.rs` (pure geometry, unit-tested), `event_detail.rs`
-  (sheet). Settings → Calendar: week start, 12/24-hour clock.
-- Vault: `core::vault` (items, generator, health, search, templates,
-  recovery), migrations 0005–0006, `apps/desktop/src/vault.rs`
-  (`VaultSession`), Passwords screen, encrypted backup export/restore.
+- App: **Calmfold by Nexdark Labs** (renamed from Keepstone). Branch `main`,
+  repo `MohammedSafwan10/calmfold`. `scripts/check.sh` passes; CI runs on
+  macOS and Windows.
+- Done: notes editor, tasks, Today, calendar (exceptions, ends, ICS import,
+  deleted events, holidays for ~245 countries + states, birthdays), habits,
+  password vault (recovery, backups), app icon, release workflow
+  (`release.yml`, unsigned Windows + macOS zips on `v*` tags).
 
 ## Next steps (in order)
 
