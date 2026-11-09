@@ -319,29 +319,23 @@ impl VaultSession {
             }
             .into());
         }
-        let meta = store.vault_meta()?.context("No vault is set up")?;
-        let items = store.vault_items()?;
-        let file = ArchiveFile::new(&meta, &items, now);
-        let json = serde_json::to_vec_pretty(&file).context("Couldn't write the archive")?;
-        if let Some(dir) = archive.parent() {
-            std::fs::create_dir_all(dir).context("Couldn't create the archive folder")?;
-        }
-        let tmp = archive.with_extension("tmp");
-        {
-            use std::io::Write as _;
-            let mut f = std::fs::File::create(&tmp).context("Couldn't write the archive")?;
-            f.write_all(&json).context("Couldn't write the archive")?;
-            f.sync_all().context("Couldn't write the archive")?;
-        }
-        std::fs::rename(&tmp, archive).context("Couldn't write the archive")?;
-        // Prove the archive reads back before removing anything.
-        let back = ArchiveFile::read(archive)?;
-        if back.items.len() != items.len() {
-            bail!("The archive didn't save correctly; nothing was changed.");
-        }
+        write_archive(store, archive, now)?;
         store.reset_vault()?;
         self.transition(LockEvent::Reset)?;
         Ok(())
+    }
+
+    /// "Export encrypted backup": the same file format as an archive,
+    /// written while unlocked and left in place. It opens with the master
+    /// password the vault has now. Returns the number of sealed items.
+    pub fn export(&self, store: &Store, path: &std::path::Path, now: Timestamp) -> Result<usize> {
+        if self.state != LockState::Unlocked {
+            return Err(DomainError::VaultState {
+                state: self.state.label(),
+            }
+            .into());
+        }
+        write_archive(store, path, now)
     }
 
     /// Decrypts an archived vault with its old master password's KEK and
@@ -726,6 +720,32 @@ struct ArchivedItem {
 }
 
 const ARCHIVE_FORMAT: &str = "keepstone-vault-archive";
+
+/// Writes the vault's header and sealed items to `path` atomically (temp
+/// file, fsync, rename) and proves the file reads back. Nothing is
+/// decrypted. Returns the number of sealed items written.
+fn write_archive(store: &Store, path: &std::path::Path, now: Timestamp) -> Result<usize> {
+    let meta = store.vault_meta()?.context("No vault is set up")?;
+    let items = store.vault_items()?;
+    let file = ArchiveFile::new(&meta, &items, now);
+    let json = serde_json::to_vec_pretty(&file).context("Couldn't write the archive")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).context("Couldn't create the archive folder")?;
+    }
+    let tmp = path.with_extension("ksvault-tmp");
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::File::create(&tmp).context("Couldn't write the archive")?;
+        f.write_all(&json).context("Couldn't write the archive")?;
+        f.sync_all().context("Couldn't write the archive")?;
+    }
+    std::fs::rename(&tmp, path).context("Couldn't write the archive")?;
+    let back = ArchiveFile::read(path)?;
+    if back.items.len() != items.len() {
+        bail!("The archive didn't save correctly; nothing was changed.");
+    }
+    Ok(items.len())
+}
 
 impl ArchiveFile {
     fn new(meta: &VaultMeta, items: &[SealedItem], now: Timestamp) -> Self {

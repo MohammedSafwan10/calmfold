@@ -62,6 +62,12 @@ compromised OS, physical attacks on unlocked RAM.
   zero; that's within "malware while unlocked" (out of scope).
 - **Health** (weak/reused/old) is computed locally with zxcvbn; no breach
   lookups, nothing leaves the device.
+- **Encrypted backup** (Settings → Passwords, File menu, ⌘K) writes the
+  header and sealed items to a `.ksvault` file (the archive format, ADR 0006)
+  atomically and reads it back. Nothing is decrypted to write it; it opens
+  with the master password at the time of export (not the recovery key).
+  Restore needs an unlocked vault, adds copies with new IDs, and skips items
+  identical to live ones.
 
 ## Keychain policy
 

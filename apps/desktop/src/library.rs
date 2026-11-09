@@ -800,6 +800,10 @@ impl Library {
         self.vault.state()
     }
 
+    pub fn vault_is_unlocked(&self) -> bool {
+        self.vault.is_unlocked()
+    }
+
     #[doc(hidden)]
     pub fn set_kdf_params_for_tests(&mut self, params: KdfParams) {
         self.kdf = params;
@@ -966,6 +970,13 @@ impl Library {
         Ok(path)
     }
 
+    /// Writes an encrypted backup of the (unlocked) vault to `path`. It opens
+    /// with the current master password via "Restore from backup".
+    pub fn export_vault(&self, path: &std::path::Path) -> Result<()> {
+        self.vault.export(&self.store, path, clock::now())?;
+        Ok(())
+    }
+
     /// Archived vaults, newest first: (path, archived at, item count).
     pub fn vault_archives(&self) -> Vec<(std::path::PathBuf, keepstone_core::Timestamp, usize)> {
         let Ok(entries) = std::fs::read_dir(&self.archive_dir) else {
@@ -1013,9 +1024,17 @@ impl Library {
             };
             this.update(cx, |lib, cx| {
                 // New IDs, so importing twice can't overwrite live items.
+                // Items identical to one already here are skipped, so
+                // restoring the same backup twice doesn't double the vault.
                 let now = clock::now();
                 let copies: Vec<VaultItem> = items
                     .iter()
+                    .filter(|i| {
+                        !lib.vault
+                            .items()
+                            .iter()
+                            .any(|live| !live.is_trashed() && live.fields() == i.fields())
+                    })
                     .filter_map(|i| {
                         let mut copy = VaultItem::new(i.fields(), now).ok()?;
                         if i.is_favorite() {

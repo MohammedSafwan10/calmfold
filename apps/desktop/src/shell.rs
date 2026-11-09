@@ -27,11 +27,12 @@ use keepstone_core::NoteId;
 use keepstone_ui::appearance::{self, ThemePreference};
 
 use crate::actions::{
-    ChangeMasterPassword, CreateRecoveryKey, ExportNotes, FindInNote, FindNext, FindPrevious,
-    GeneratePassword, GoCalendar, GoHabits, GoNotes, GoPasswords, GoSettings, GoTasks, GoToday,
-    ImportNotes, LockVault, NewEvent, NewHabit, NewLogin, NewNote, NewProject, NewTask,
-    OpenCommandPalette, OpenDailyNote, ShowVaultArchives, ToggleListPanel, ToggleMarkdownSource,
-    ToggleSidebar, UseDarkTheme, UseLightTheme, UseSystemTheme,
+    ChangeMasterPassword, CreateRecoveryKey, ExportNotes, ExportVaultBackup, FindInNote, FindNext,
+    FindPrevious, GeneratePassword, GoCalendar, GoHabits, GoNotes, GoPasswords, GoSettings,
+    GoTasks, GoToday, ImportNotes, LockVault, NewEvent, NewHabit, NewLogin, NewNote, NewProject,
+    NewTask, OpenCommandPalette, OpenDailyNote, RestoreVaultBackup, ShowVaultArchives,
+    ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseDarkTheme, UseLightTheme,
+    UseSystemTheme,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
@@ -834,6 +835,36 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["passwords", "secure"],
         ),
         cmd(
+            "Change master password",
+            Lucide::KeyRound,
+            Box::new(ChangeMasterPassword),
+            &["vault", "passwords", "security"],
+        ),
+        cmd(
+            "Create new recovery key",
+            Lucide::KeyRound,
+            Box::new(CreateRecoveryKey),
+            &["vault", "emergency kit", "forgot password"],
+        ),
+        cmd(
+            "Export vault backup",
+            Lucide::Download,
+            Box::new(ExportVaultBackup),
+            &["vault", "passwords", "encrypted", "save", "copy"],
+        ),
+        cmd(
+            "Restore vault backup",
+            Lucide::Upload,
+            Box::new(RestoreVaultBackup),
+            &["vault", "passwords", "import", "open backup"],
+        ),
+        cmd(
+            "Show archived vaults",
+            Lucide::Archive,
+            Box::new(ShowVaultArchives),
+            &["vault", "old vault", "restore"],
+        ),
+        cmd(
             "Open settings",
             Lucide::Settings,
             Box::new(GoSettings),
@@ -966,6 +997,16 @@ pub fn register_commands(cx: &mut App) {
     cx.on_action(|_: &ShowVaultArchives, cx| {
         with_shell(cx, |s, w, cx| {
             crate::views::vault_recovery::open_archives(s.library.clone(), w, cx)
+        })
+    });
+    cx.on_action(|_: &ExportVaultBackup, cx| {
+        with_shell(cx, |s, w, cx| {
+            crate::views::vault_recovery::export_backup(s.library.clone(), w, cx)
+        })
+    });
+    cx.on_action(|_: &RestoreVaultBackup, cx| {
+        with_shell(cx, |s, w, cx| {
+            crate::views::vault_recovery::restore_backup(s.library.clone(), w, cx)
         })
     });
     cx.on_action(|_: &GeneratePassword, cx| {

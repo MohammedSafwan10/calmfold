@@ -12,7 +12,9 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
   `views/calendar.rs` (state, header, agenda), `calendar_grid.rs` (month, week/day
   time grid), `calendar_layout.rs` (pure geometry, unit-tested), `event_detail.rs`
   (sheet). Settings → Calendar: week start, 12/24-hour clock.
-- Crypto crate for the vault is built and tested; the vault feature is not.
+- Vault: `core::vault` (items, generator, health, search, templates,
+  recovery), migrations 0005–0006, `apps/desktop/src/vault.rs`
+  (`VaultSession`), Passwords screen, encrypted backup export/restore.
 
 ## Next steps (in order)
 
@@ -34,8 +36,9 @@ Everything in `docs/TASKS.md` is done except the
 - "System" reduce motion is read once at startup.
 - Storage limits (VACUUM + FTS rowid, ASCII-only `lower()`): see `crates/storage/AGENTS.md`.
 - Global quick-capture hotkey and tray icon are unproven with GPUI; prototype first.
-- Vault: no encrypted export yet; Touch ID only in signed release builds
-  (not built); lock screen without sleep isn't detected.
+- Vault: Touch ID only in signed release builds
+  (not built); lock screen without sleep isn't detected. Backups open with
+  the master password at export time only (no recovery key in the file).
 - Calendar: repeating events can't be dragged (only whole-series edits exist; no
   per-occurrence exceptions yet). Deleted events have no trash view: Undo is the
   way back. No time zones (local wall-clock times) and no ICS import yet.
@@ -53,6 +56,14 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 ```
 
 ## Log
+
+### 2026-11-09: Encrypted vault backup
+
+- Export vault backup / Restore vault backup (actions, File menu, ⌘K,
+  Settings → Passwords → Encrypted backup). Same `.ksvault` format as
+  archives, written atomically and verified; restore skips items already in
+  the vault. ⌘K also gained Change master password, Create new recovery key,
+  Show archived vaults. UI test `encrypted_backup_exports_and_restores_without_duplicates`.
 
 ### 2026-11-09: Vault next level + recovery
 

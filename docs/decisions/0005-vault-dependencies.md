@@ -31,7 +31,8 @@ requires an ADR before adding anything crypto-adjacent.
 
 ## Not now
 
-- Encrypted export (`age`) and a secret key: with sync.
+- Encrypted export (`age`) and a secret key: with sync. (A password-only
+  `.ksvault` backup exists since 2026-11-09; see `docs/security.md`.)
 - Touch ID quick unlock: release builds only (signing policy in `docs/security.md`).
 
 ## Consequences

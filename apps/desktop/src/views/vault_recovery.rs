@@ -440,17 +440,99 @@ pub fn open_archive(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let view = cx.new(|cx| OpenArchive::new(path, library, window, cx));
+    open_vault_file(path, false, library, window, cx);
+}
+
+/// Opens an archive or an exported backup and adds its items. Both are the
+/// same file format; only the wording differs.
+fn open_vault_file(
+    path: std::path::PathBuf,
+    backup: bool,
+    library: Entity<Library>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let view = cx.new(|cx| OpenArchive::new(path, backup, library, window, cx));
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
-            .title("Open archived vault")
+            .title(if backup {
+                "Restore vault backup"
+            } else {
+                "Open archived vault"
+            })
             .w(px(440.))
             .child(view.clone())
     });
 }
 
+/// Saves an encrypted backup of the unlocked vault where the user picks.
+pub fn export_backup(library: Entity<Library>, window: &mut Window, cx: &mut App) {
+    if !library.read(cx).vault_is_unlocked() {
+        keepstone_ui::feedback::error_toast("Unlock the vault first.", window, cx);
+        return;
+    }
+    let dir = directories::UserDirs::new()
+        .and_then(|d| d.document_dir().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(std::env::temp_dir);
+    let name = format!(
+        "Keepstone Vault {}.ksvault",
+        keepstone_core::clock::today().strftime("%Y-%m-%d")
+    );
+    let path = cx.prompt_for_new_path(&dir, Some(&name));
+    window
+        .spawn(cx, async move |cx| {
+            let Ok(Ok(Some(path))) = path.await else {
+                return;
+            };
+            _ = cx.update(|window, cx| {
+                match library.read(cx).export_vault(&path) {
+                    Ok(()) => window.push_notification(
+                        "Vault backup saved. It's encrypted and opens with your current master password.",
+                        cx,
+                    ),
+                    Err(err) => {
+                        keepstone_ui::feedback::error_toast(format!("{err:#}"), window, cx);
+                    }
+                }
+            });
+        })
+        .detach();
+}
+
+/// Picks a `.ksvault` backup (or archive) and opens it to add its items.
+pub fn restore_backup(library: Entity<Library>, window: &mut Window, cx: &mut App) {
+    if !library.read(cx).vault_is_unlocked() {
+        keepstone_ui::feedback::error_toast("Unlock the vault first.", window, cx);
+        return;
+    }
+    let paths = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Restore".into()),
+    });
+    window
+        .spawn(cx, async move |cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            _ = cx.update(|window, cx| {
+                // Check the format before asking for a password.
+                match crate::vault::ArchiveFile::read(&path) {
+                    Ok(_) => open_vault_file(path, true, library, window, cx),
+                    Err(err) => keepstone_ui::feedback::error_toast(format!("{err:#}"), window, cx),
+                }
+            });
+        })
+        .detach();
+}
+
 pub struct OpenArchive {
     path: std::path::PathBuf,
+    backup: bool,
     library: Entity<Library>,
     password: Entity<InputState>,
     error: Option<SharedString>,
@@ -461,6 +543,7 @@ pub struct OpenArchive {
 impl OpenArchive {
     fn new(
         path: std::path::PathBuf,
+        backup: bool,
         library: Entity<Library>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -468,7 +551,11 @@ impl OpenArchive {
         let password = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
-                .placeholder("The old vault's master password")
+                .placeholder(if backup {
+                    "The master password when it was saved"
+                } else {
+                    "The old vault's master password"
+                })
         });
         let sub = cx.subscribe_in(&password, window, |this, _, e, window, cx| match e {
             InputEvent::PressEnter { .. } => this.submit(window, cx),
@@ -481,6 +568,7 @@ impl OpenArchive {
         password.update(cx, |i, cx| i.focus(window, cx));
         Self {
             path,
+            backup,
             library,
             password,
             error: None,
@@ -505,18 +593,30 @@ impl OpenArchive {
             _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match result {
+                    Ok(Some(0)) => {
+                        window.close_dialog(cx);
+                        window.push_notification(
+                            "Nothing to add: everything in it is already in your vault.",
+                            cx,
+                        );
+                    }
                     Ok(Some(n)) => {
                         window.close_dialog(cx);
                         window.push_notification(
                             format!(
-                                "Added {n} item{} from the archive.",
-                                if n == 1 { "" } else { "s" }
+                                "Added {n} item{} from the {}.",
+                                if n == 1 { "" } else { "s" },
+                                if this.backup { "backup" } else { "archive" }
                             ),
                             cx,
                         );
                     }
                     Ok(None) => {
-                        this.error = Some("That password doesn't open this archive.".into())
+                        this.error = Some(if this.backup {
+                            "That password doesn't open this backup.".into()
+                        } else {
+                            "That password doesn't open this archive.".into()
+                        })
                     }
                     Err(err) => this.error = Some(format!("{err:#}").into()),
                 }
@@ -532,9 +632,11 @@ impl Render for OpenArchive {
         let theme = cx.theme().clone();
         v_flex()
             .gap_4()
-            .child(div().text_sm().text_color(theme.muted_foreground).child(
-                "Its items are added to your current vault. The archive file stays as it is.",
-            ))
+            .child(div().text_sm().text_color(theme.muted_foreground).child(if self.backup {
+                "Its items are added to your current vault as copies. The backup file stays as it is."
+            } else {
+                "Its items are added to your current vault. The archive file stays as it is."
+            }))
             .child(Input::new(&self.password).mask_toggle())
             .children(
                 self.error

@@ -2301,6 +2301,76 @@ fn starting_over_archives_the_old_vault_and_it_can_be_reopened(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
+fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppContext) {
+    use keepstone_core::vault::{ItemFields, ItemKind};
+    use keepstone_desktop::actions::LockVault;
+
+    let app = launch(cx);
+    let lib = library(&app, cx);
+    set_up_with_key(&app, cx);
+    let make = |title: &str| ItemFields {
+        title: title.into(),
+        password: format!("{title}-secret-pw"),
+        ..ItemFields::new(ItemKind::Login)
+    };
+    let (bank, mail) = (make("Bank"), make("Mail"));
+    let bank_id = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.create_vault_item(&mail, cx).expect("mail");
+            l.create_vault_item(&bank, cx).expect("bank")
+        })
+    });
+    let path = app.paths.data_dir.join("backups/Keepstone Vault.ksvault");
+    cx.read(|cx| lib.read(cx).export_vault(&path))
+        .expect("export");
+    let text = std::fs::read_to_string(&path).expect("file");
+    assert!(
+        !text.contains("Bank") && !text.contains("secret-pw"),
+        "the backup stays encrypted"
+    );
+
+    // Lose one item, then restore: it comes back and Mail isn't doubled.
+    cx.update(|cx| lib.update(cx, |l, cx| l.delete_vault_items(&[bank_id], cx)))
+        .expect("delete");
+    let restore = |cx: &mut TestAppContext, password: &str| {
+        let task = cx.update(|cx| {
+            lib.update(cx, |l, cx| {
+                l.import_vault_archive(
+                    path.clone(),
+                    keepstone_crypto::SecretString::from(password.to_owned()),
+                    cx,
+                )
+            })
+        });
+        let result = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let out = result.clone();
+        cx.spawn(async move |_| *out.borrow_mut() = Some(task.await.expect("restore")))
+            .detach();
+        cx.run_until_parked();
+        result.borrow_mut().take().expect("finished")
+    };
+    assert_eq!(restore(cx, "not the password"), None);
+    assert_eq!(restore(cx, "plum-orbit-candle-9-meadow"), Some(1));
+    assert_eq!(restore(cx, "plum-orbit-candle-9-meadow"), Some(0));
+    let mut titles: Vec<String> = cx.read(|cx| {
+        lib.read(cx)
+            .vault()
+            .items()
+            .iter()
+            .map(|i| i.title().to_owned())
+            .collect()
+    });
+    titles.sort();
+    assert_eq!(titles, ["Bank", "Mail"]);
+
+    dispatch(&app, cx, LockVault);
+    assert!(
+        cx.read(|cx| lib.read(cx).export_vault(&path)).is_err(),
+        "export needs an unlocked vault"
+    );
+}
+
+#[gpui_kit::test]
 fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
     use keepstone_core::vault::template::Template;
     use keepstone_core::vault::{FieldKind, ItemFields, ItemKind};

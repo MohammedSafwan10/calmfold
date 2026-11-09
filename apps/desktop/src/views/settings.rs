@@ -514,6 +514,38 @@ impl SettingsView {
         )
         .description("Old vaults kept when you started a new one. Open one with its old password to get its items back.")
         .keywords(["archive", "old vault", "restore", "forgot password"]);
+        let backup = SettingItem::new(
+            "Encrypted backup",
+            SettingField::render(|_, _, _| {
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("set-vault-restore")
+                            .small()
+                            .ghost()
+                            .label("Restore…")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::actions::RestoreVaultBackup),
+                                    cx,
+                                )
+                            }),
+                    )
+                    .child(
+                        Button::new("set-vault-export")
+                            .small()
+                            .label("Export…")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::actions::ExportVaultBackup),
+                                    cx,
+                                )
+                            }),
+                    )
+            }),
+        )
+        .description("A copy of your vault that stays encrypted. It opens with the master password you have when you save it.")
+        .keywords(["backup", "export", "restore", "vault", "copy"]);
         SettingPage::new("Passwords")
             .icon(Lucide::KeyRound)
             .group(
@@ -524,7 +556,7 @@ impl SettingsView {
             .group(
                 SettingGroup::new()
                     .title("Vault")
-                    .items(vec![master, recovery, archives]),
+                    .items(vec![master, recovery, backup, archives]),
             )
     }
 

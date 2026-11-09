@@ -25,6 +25,8 @@ actions!(
         ChangeMasterPassword,
         CreateRecoveryKey,
         ShowVaultArchives,
+        ExportVaultBackup,
+        RestoreVaultBackup,
         GoSettings,
         ToggleSidebar,
         ToggleListPanel,
@@ -370,6 +372,9 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action("Import Markdown Folder…", ImportNotes),
             MenuItem::action("Export Notes as Markdown…", ExportNotes),
+            MenuItem::separator(),
+            MenuItem::action("Export Vault Backup…", ExportVaultBackup),
+            MenuItem::action("Restore Vault Backup…", RestoreVaultBackup),
         ]),
         Menu::new("View").items([
             MenuItem::action("Command Palette", OpenCommandPalette),
