@@ -9,6 +9,7 @@ mod error;
 pub mod event;
 pub mod event_quick_add;
 pub mod format;
+pub mod habit;
 mod id;
 pub mod links;
 pub mod note;
@@ -22,7 +23,8 @@ mod text;
 pub use error::{DomainError, DomainResult};
 pub use event::{Event, EventRecord, Occurrence};
 pub use event_quick_add::{EventDraft, parse_event};
-pub use id::{EventId, NoteId, ProjectId, TaskId};
+pub use habit::{Habit, HabitDraft, HabitRecord, Schedule, Stats, parse_habit};
+pub use id::{EventId, HabitId, NoteId, ProjectId, TaskId};
 pub use jiff::{
     Timestamp,
     civil::{Date, DateTime, Time},
@@ -30,6 +32,6 @@ pub use jiff::{
 pub use note::Note;
 pub use project::Project;
 pub use quick_add::{QuickAdd, parse_quick_add};
-pub use recurrence::Recurrence;
+pub use recurrence::{Recurrence, Weekdays};
 pub use task::{Priority, Task, TaskRecord, TaskStatus};
 pub use text::{MAX_BODY_BYTES, MAX_TITLE_CHARS, normalize_title};

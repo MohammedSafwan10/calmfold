@@ -12,6 +12,7 @@ fn migrations() -> Migrations<'static> {
             backfill_tags,
         ),
         M::up(include_str!("../migrations/0003_events.sql")),
+        M::up(include_str!("../migrations/0004_habits.sql")),
     ])
 }
 

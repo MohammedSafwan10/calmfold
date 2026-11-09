@@ -18,7 +18,8 @@ pub struct Weekdays(u8);
 impl Weekdays {
     pub const NONE: Self = Self(0);
     pub const WORKDAYS: Self = Self(0b001_1111);
-    const ORDER: [Weekday; 7] = [
+    pub const ALL: Self = Self(0b111_1111);
+    pub const ORDER: [Weekday; 7] = [
         Weekday::Monday,
         Weekday::Tuesday,
         Weekday::Wednesday,
@@ -48,8 +49,29 @@ impl Weekdays {
         self.0 & 0b111_1111 == 0
     }
 
-    fn iter(self) -> impl Iterator<Item = Weekday> {
+    pub fn iter(self) -> impl Iterator<Item = Weekday> {
         Self::ORDER.into_iter().filter(move |d| self.contains(*d))
+    }
+
+    #[must_use]
+    pub fn without(self, day: Weekday) -> Self {
+        Self(self.0 & !Self::single(day).0)
+    }
+
+    #[must_use]
+    pub fn len(self) -> usize {
+        (self.0 & 0b111_1111).count_ones() as usize
+    }
+
+    /// Bit set for storage (Monday = bit 0).
+    #[must_use]
+    pub fn bits(self) -> u8 {
+        self.0 & 0b111_1111
+    }
+
+    #[must_use]
+    pub fn from_bits(bits: u8) -> Self {
+        Self(bits & 0b111_1111)
     }
 }
 

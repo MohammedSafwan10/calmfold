@@ -77,6 +77,10 @@ define_id!(
     /// Identifies a [`crate::Event`].
     EventId
 );
+define_id!(
+    /// Identifies a [`crate::Habit`].
+    HabitId
+);
 
 #[cfg(test)]
 mod tests {
