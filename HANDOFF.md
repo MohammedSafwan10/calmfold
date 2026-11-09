@@ -52,6 +52,13 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 
 ## Log
 
+### 2026-11-09: Calmer calendar
+
+- Owner feedback: month view noisy (Gym + Standup on every day). Routines now
+  fold into dots, cells show titles first, a day panel lists the selected day
+  in full (wide windows), View options can hide routines. Week blocks: routines
+  quieter, short blocks one line, thinner now line. Checked month + week (dark).
+
 ### 2026-11-09: Habits
 
 - Research: Streaks (one big tap per habit), Loop (strength score that

@@ -14,6 +14,7 @@ use std::time::Duration;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -377,6 +378,24 @@ impl CalendarView {
         notify_err(result, window, cx);
     }
 
+    /// Whether a routine (repeats 3+ times a week) is behind `occ`.
+    pub(super) fn is_routine(&self, occ: &keepstone_core::Occurrence) -> bool {
+        self.span
+            .events
+            .get(&occ.event)
+            .is_some_and(keepstone_core::Event::is_routine)
+    }
+
+    /// Whether `occ` is shown (routines can be hidden from View options).
+    pub(super) fn shows(&self, occ: &keepstone_core::Occurrence, cx: &gpui_kit::App) -> bool {
+        appearance::settings(cx).calendar_routines || !self.is_routine(occ)
+    }
+
+    #[doc(hidden)]
+    pub fn shows_for_test(&self, occ: &keepstone_core::Occurrence, cx: &gpui_kit::App) -> bool {
+        self.shows(occ, cx)
+    }
+
     pub(super) fn toggle_task(&self, id: TaskId, window: &mut Window, cx: &mut Context<Self>) {
         notify_err(
             self.library.update(cx, |lib, cx| lib.toggle_task(id, cx)),
@@ -384,6 +403,26 @@ impl CalendarView {
             cx,
         );
     }
+}
+
+/// The "View options" menu: show or hide routines everywhere.
+fn view_options(cx: &gpui_kit::App) -> impl IntoElement {
+    let routines = appearance::settings(cx).calendar_routines;
+    Button::new("calendar-view-options")
+        .ghost()
+        .small()
+        .icon(Lucide::SlidersHorizontal)
+        .tooltip("View options")
+        .dropdown_menu(move |menu, _, _| {
+            menu.item(
+                PopupMenuItem::new("Show routines")
+                    .checked(routines)
+                    .on_click(move |_, _, cx| {
+                        appearance::update(cx, |s| s.calendar_routines = !routines)
+                    }),
+            )
+            .label("Events repeating 3+ times a week")
+        })
 }
 
 /// "Lunch with Sam — Fri, Nov 13 · 1 – 2 PM · Every week".
@@ -479,7 +518,14 @@ impl CalendarView {
                     .items_center()
                     .gap_4()
                     .child(div().min_w_0().child(page_header(heading, None, cx)))
-                    .child(h_flex().gap_3().items_center().child(nav).child(modes)),
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .items_center()
+                            .child(nav)
+                            .child(modes)
+                            .child(view_options(cx)),
+                    ),
             )
             .child(
                 v_flex()
@@ -509,7 +555,12 @@ impl CalendarView {
         let mut groups = Vec::new();
         let mut day = self.span.days.start;
         while day < self.span.days.end {
-            let events: Vec<_> = self.span.on_day(day).copied().collect();
+            let events: Vec<_> = self
+                .span
+                .on_day(day)
+                .filter(|o| self.shows(o, cx))
+                .copied()
+                .collect();
             let tasks: Vec<_> = self.span.tasks_on(day).cloned().collect();
             if !events.is_empty() || !tasks.is_empty() {
                 groups.push((day, events, tasks));

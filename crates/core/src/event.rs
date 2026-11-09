@@ -192,6 +192,17 @@ impl Event {
             self.end.date()
         }
     }
+    /// A routine: repeats at least three times a week (daily, weekdays,
+    /// Mon/Wed/Fri…). Calendars show routines quietly so one-off plans stand out.
+    #[must_use]
+    pub fn is_routine(&self) -> bool {
+        match self.recurrence {
+            Some(Recurrence::Days(n)) => n <= 2,
+            Some(Recurrence::Weeks { every: 1, days }) => days.len() >= 3,
+            _ => false,
+        }
+    }
+
     #[must_use]
     pub fn recurrence(&self) -> Option<Recurrence> {
         self.recurrence
@@ -530,6 +541,23 @@ mod tests {
                 d("2026-04-30")
             ]
         );
+    }
+
+    #[test]
+    fn routines_repeat_three_or_more_times_a_week() {
+        let mut e = Event::new_timed("Gym", dt("2026-11-10T07:00"), dt("2026-11-10T08:00"), now())
+            .expect("event");
+        assert!(!e.is_routine());
+        for (rule, routine) in [
+            (Recurrence::DAILY, true),
+            (Recurrence::WORKDAYS, true),
+            (Recurrence::WEEKLY, false),
+            (Recurrence::MONTHLY, false),
+            (Recurrence::Days(3), false),
+        ] {
+            e.set_recurrence(Some(rule), now()).expect("repeat");
+            assert_eq!(e.is_routine(), routine, "{rule}");
+        }
     }
 
     #[test]

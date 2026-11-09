@@ -335,9 +335,20 @@ impl SettingsView {
         )
         .description("How times are written: 2:30 PM or 14:30.")
         .keywords(["calendar", "clock", "time", "24 hour", "am pm"]);
+        let routines = SettingItem::new(
+            "Show routines",
+            SettingField::switch(
+                |cx| appearance::settings(cx).calendar_routines,
+                |on, cx| appearance::update(cx, |s| s.calendar_routines = on),
+            ),
+        )
+        .description(
+            "Events that repeat 3 or more times a week. In the month view they show as small dots.",
+        )
+        .keywords(["calendar", "routine", "repeat", "noise", "hide"]);
         SettingPage::new("Calendar")
             .icon(Lucide::CalendarDays)
-            .group(SettingGroup::new().items(vec![week, clock]))
+            .group(SettingGroup::new().items(vec![week, clock, routines]))
     }
 
     fn keyboard_page() -> SettingPage {

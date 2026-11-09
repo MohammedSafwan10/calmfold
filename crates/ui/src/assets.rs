@@ -56,6 +56,7 @@ icon_assets!(
         Archive,
         Check,
         Flame,
+        SlidersHorizontal,
         ChartColumn,
         TrendingUp,
         TrendingDown,

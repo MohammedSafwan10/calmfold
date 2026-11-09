@@ -131,6 +131,8 @@ pub struct AppearanceSettings {
     pub line_spacing: LineSpacing,
     pub week_start: WeekStart,
     pub clock: ClockFormat,
+    /// Show routines (events repeating 3+ times a week) in the calendar.
+    pub calendar_routines: bool,
 }
 
 impl AppearanceSettings {
@@ -213,6 +215,7 @@ impl Default for AppearanceSettings {
             line_spacing: LineSpacing::default(),
             week_start: WeekStart::default(),
             clock: ClockFormat::default(),
+            calendar_routines: true,
         }
     }
 }
@@ -336,6 +339,7 @@ mod tests {
             line_spacing: LineSpacing::Relaxed,
             week_start: WeekStart::Sunday,
             clock: ClockFormat::TwentyFourHour,
+            calendar_routines: false,
         };
         settings.save(&path).expect("save");
         assert_eq!(AppearanceSettings::load(&path), settings);

@@ -20,6 +20,7 @@ use keepstone_ui::appearance::{self, ClockFormat};
 use crate::views::calendar::{CalendarDrag, CalendarView};
 use crate::views::calendar_layout::{
     CalendarMode, MINUTES_PER_DAY, format_span, format_time, lay_out_timed, minutes_on, pack_spans,
+    short_time,
 };
 
 /// Day-number row at the top of a month cell.
@@ -36,6 +37,8 @@ const MIN_BLOCK: i32 = 22;
 const SNAP: i32 = 15;
 /// Room above the month grid (title bar, header, quick add, weekday row).
 const MONTH_CHROME: f32 = 15.0;
+/// Window width (rems) from which the month shows the day panel.
+const WIDE_MONTH: f32 = 70.0;
 
 fn add_days(day: Date, n: i64) -> Date {
     day.checked_add(Span::new().days(n)).unwrap_or(day)
@@ -58,7 +61,7 @@ fn bars_for(occurrences: &[Occurrence], first: Date, cols: usize) -> Vec<Bar> {
     let end = add_days(first, cols as i64);
     let mut bars: Vec<Bar> = occurrences
         .iter()
-        .filter(|o| o.all_day || o.days().end > add_days(o.days().start, 1))
+        .filter(|o| is_bar(o))
         .filter_map(|o| {
             let days = o.days();
             if days.end <= first || days.start >= end {
@@ -77,9 +80,13 @@ fn bars_for(occurrences: &[Occurrence], first: Date, cols: usize) -> Vec<Bar> {
     bars
 }
 
-/// Whether an occurrence is drawn as a bar (vs. a chip / time block).
+/// Whether an occurrence is drawn as a bar: all-day, or a day or longer.
+/// An overnight flight (10 PM – 2 AM) stays a single line on its first day.
 fn is_bar(o: &Occurrence) -> bool {
-    o.all_day || o.days().end > add_days(o.days().start, 1)
+    o.all_day
+        || o.start
+            .checked_add(Span::new().hours(24))
+            .is_ok_and(|limit| o.end >= limit)
 }
 
 impl CalendarView {
@@ -213,11 +220,17 @@ impl CalendarView {
             )
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(self.title_of(occ)),
+            )
+            .child(
+                div()
                     .flex_shrink_0()
                     .text_color(theme.muted_foreground)
-                    .child(format_time(occ.start.time(), clock)),
+                    .child(short_time(occ.start.time(), clock)),
             )
-            .child(div().min_w_0().truncate().child(self.title_of(occ)))
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.open_event(id, window, cx);
@@ -303,6 +316,12 @@ impl CalendarView {
 
     // ---- Month -----------------------------------------------------------
 
+    /// Month grid plus, on wide windows, the selected day's full list.
+    ///
+    /// Cells stay calm: bars for all-day and multi-day events, one line per
+    /// one-off event or task (title only), and routines folded into a row of
+    /// small dots at the bottom. What doesn't fit becomes "+N"; the day panel
+    /// on the right always lists everything for the selected day.
     pub(super) fn month(
         &mut self,
         window: &mut Window,
@@ -315,11 +334,13 @@ impl CalendarView {
             .map(|w| add_days(days.start, 7 * w))
             .take_while(|d| *d < days.end)
             .collect();
-        // How many item lines fit in a cell at this window height.
+        // How many item lines fit in a cell at this window height (the
+        // routine-dot row takes the last one).
         let rem = f32::from(window.rem_size()).max(1.);
         let grid = f32::from(window.viewport_size().height) / rem - MONTH_CHROME;
         let row_h = (grid / weeks.len().max(1) as f32).max(6.);
         let slots = (((row_h - DAY_HEADER - 0.25) / ROW).floor() as usize).clamp(1, 12);
+        let wide = f32::from(window.viewport_size().width) / rem >= WIDE_MONTH;
         let month = self.anchor.month();
 
         let weekday_row = h_flex().children((0..7).map(|i| {
@@ -334,41 +355,57 @@ impl CalendarView {
         }));
 
         let n_weeks = weeks.len();
+        let occurrences: Vec<Occurrence> = self
+            .span
+            .occurrences
+            .iter()
+            .filter(|o| self.shows(o, cx))
+            .copied()
+            .collect();
         let rows = weeks
             .into_iter()
             .enumerate()
             .map(|(w, week)| {
-                let bars = bars_for(&self.span.occurrences, week, 7);
+                let bars = bars_for(&occurrences, week, 7);
                 let lanes = pack_spans(
                     &bars
                         .iter()
                         .map(|b| (b.first_col, b.last_col))
                         .collect::<Vec<_>>(),
                 );
-                let lane_rows = lanes.iter().max().map_or(0, |m| m + 1);
-                let shown_lanes = lane_rows.min(slots);
+                let max_lanes = slots.saturating_sub(1).max(1);
                 let cells: Vec<_> = (0..7)
                     .map(|col| {
                         let day = add_days(week, col as i64);
-                        let hidden_bars = bars
+                        let covering: Vec<usize> = bars
                             .iter()
                             .zip(&lanes)
-                            .filter(|(b, lane)| {
-                                **lane >= shown_lanes && (b.first_col..=b.last_col).contains(&col)
-                            })
-                            .count();
-                        let chips: Vec<&Occurrence> =
-                            self.span.on_day(day).filter(|o| !is_bar(o)).collect();
+                            .filter(|(b, _)| (b.first_col..=b.last_col).contains(&col))
+                            .map(|(_, l)| *l)
+                            .collect();
+                        // Room only for the bars that cross this day.
+                        let bar_lines = covering.iter().max().map_or(0, |m| (m + 1).min(max_lanes));
+                        let hidden_bars = covering.iter().filter(|l| **l >= max_lanes).count();
+                        let (routines, plans): (Vec<&Occurrence>, Vec<&Occurrence>) = occurrences
+                            .iter()
+                            .filter(|o| o.days().contains(&day) && !is_bar(o))
+                            .partition(|o| self.is_routine(o));
                         let tasks: Vec<_> = self.span.tasks_on(day).collect();
-                        let room = slots - shown_lanes;
-                        let total = chips.len() + tasks.len();
-                        let visible = total.min(room);
+                        let dot_line = usize::from(!routines.is_empty());
+                        let room = slots.saturating_sub(bar_lines + dot_line);
+                        let total = plans.len() + tasks.len();
+                        // Keep a line for "+N" when something won't fit.
+                        let visible = if total > room {
+                            room.saturating_sub(1)
+                        } else {
+                            total
+                        };
                         let more = hidden_bars + total - visible;
                         let mut items: Vec<AnyElement> = Vec::new();
-                        for occ in chips.iter().take(visible) {
+                        for occ in plans.iter().take(visible) {
                             items.push(self.event_chip(occ, day, clock, cx));
                         }
-                        for task in tasks.iter().take(visible.saturating_sub(chips.len())) {
+                        for task in tasks.iter().take(visible.saturating_sub(plans.len())) {
                             items.push(self.task_chip(task, cx));
                         }
                         let selected = day == self.anchor;
@@ -379,7 +416,9 @@ impl CalendarView {
                             .min_w_0()
                             .h_full()
                             .px_0p5()
+                            .pb_1()
                             .when(col < 6, |s| s.border_r_1().border_color(theme.border))
+                            .when(outside, |s| s.bg(theme.muted.opacity(0.25)))
                             .when(selected, |s| s.bg(theme.accent))
                             .drag_over::<CalendarDrag>(|s, _, _, cx| s.bg(cx.theme().drop_target))
                             .on_drop(cx.listener(move |this, drag: &CalendarDrag, window, cx| {
@@ -400,30 +439,37 @@ impl CalendarView {
                                     .h(rems(DAY_HEADER))
                                     .px_0p5()
                                     .items_center()
-                                    .justify_between()
-                                    .child(self.day_number(day, outside, cx))
+                                    .child(self.day_number(day, outside, cx)),
+                            )
+                            .child(div().h(rems(bar_lines as f32 * ROW)).flex_shrink_0())
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_hidden()
+                                    .children(items)
                                     .when(more > 0, |s| {
                                         s.child(
-                                            Button::new(SharedString::from(format!("more-{day}")))
-                                                .ghost()
-                                                .xsmall()
-                                                .label(format!("{more} more"))
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    cx.stop_propagation();
-                                                    this.open_day(day, cx);
-                                                })),
+                                            div()
+                                                .h(rems(ROW))
+                                                .px_1()
+                                                .flex()
+                                                .items_center()
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground)
+                                                .child(format!("+{more} more")),
                                         )
                                     }),
                             )
-                            // Room for the bars drawn over the row.
-                            .child(div().h(rems(shown_lanes as f32 * ROW)).flex_shrink_0())
-                            .child(v_flex().min_h_0().overflow_hidden().children(items))
+                            .when(!routines.is_empty(), |s| {
+                                s.child(self.routine_dots(&routines, day, clock, cx))
+                            })
                     })
                     .collect();
                 let bar_elements: Vec<AnyElement> = bars
                     .iter()
                     .zip(&lanes)
-                    .filter(|(_, lane)| **lane < shown_lanes)
+                    .filter(|(_, lane)| **lane < max_lanes)
                     .map(|(bar, lane)| self.bar(bar, *lane, 7, DAY_HEADER, &week.to_string(), cx))
                     .collect();
                 h_flex()
@@ -438,16 +484,259 @@ impl CalendarView {
             })
             .collect::<Vec<_>>();
 
-        v_flex().size_full().px_6().pb_4().child(weekday_row).child(
-            v_flex()
-                .id("month-grid")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .border_t_1()
-                .border_color(theme.border)
-                .children(rows),
-        )
+        let grid = v_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(weekday_row)
+            .child(
+                v_flex()
+                    .id("month-grid")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .children(rows),
+            );
+        h_flex()
+            .size_full()
+            .px_6()
+            .pb_4()
+            .gap_5()
+            .child(grid)
+            .when(wide, |s| s.child(self.day_panel(clock, cx)))
+    }
+
+    /// Routines on one day as a row of small dots; the tooltip names them.
+    fn routine_dots(
+        &self,
+        routines: &[&Occurrence],
+        day: Date,
+        clock: ClockFormat,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let names: Vec<String> = routines
+            .iter()
+            .map(|o| {
+                format!(
+                    "{} {}",
+                    format_time(o.start.time(), clock),
+                    self.title_of(o)
+                )
+            })
+            .collect();
+        let tip: SharedString = names.join(" · ").into();
+        let color = theme.muted_foreground.opacity(0.6);
+        h_flex()
+            .id(SharedString::from(format!("routines-{day}")))
+            .h(rems(0.75))
+            .px_1()
+            .gap(rems(0.1875))
+            .items_center()
+            .flex_shrink_0()
+            .children(
+                routines
+                    .iter()
+                    .take(6)
+                    .map(|_| div().size(rems(0.3125)).rounded_full().bg(color)),
+            )
+            .tooltip(move |window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+            })
+            .into_any_element()
+    }
+
+    /// The selected day, in full: all-day, timed, routines, tasks.
+    fn day_panel(&self, clock: ClockFormat, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let day = self.anchor;
+        let occs: Vec<Occurrence> = self
+            .span
+            .on_day(day)
+            .filter(|o| self.shows(o, cx))
+            .copied()
+            .collect();
+        let (routines, plans): (Vec<&Occurrence>, Vec<&Occurrence>) =
+            occs.iter().partition(|o| self.is_routine(o));
+        let tasks: Vec<keepstone_core::Task> = self.span.tasks_on(day).cloned().collect();
+        let relative = crate::views::relative_day(day, self.today);
+        let heading = day.strftime("%A, %B %-d").to_string();
+
+        let row = |occ: &Occurrence, muted: bool, cx: &mut Context<Self>| {
+            let id = occ.event;
+            let event = self.span.events.get(&id);
+            let when: SharedString = if occ.all_day {
+                "All day".into()
+            } else if occ.start.date() < day {
+                format!("until {}", format_time(occ.end.time(), clock)).into()
+            } else {
+                format_time(occ.start.time(), clock).into()
+            };
+            let location = event.map(|e| e.location().to_owned()).unwrap_or_default();
+            h_flex()
+                .id(SharedString::from(format!("panel-{id}-{day}")))
+                .gap_3()
+                .px_2()
+                .py_1p5()
+                .items_start()
+                .rounded(theme.radius)
+                .hover(|s| s.bg(theme.list_hover))
+                .when(occ.end <= self.now, |s| s.opacity(0.6))
+                .on_click(cx.listener(move |this, _, window, cx| this.open_event(id, window, cx)))
+                .child(
+                    div()
+                        .w(rems(3.75))
+                        .flex_shrink_0()
+                        .text_xs()
+                        .pt(rems(0.125))
+                        .text_color(theme.muted_foreground)
+                        .child(when),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .text_sm()
+                                .truncate()
+                                .when(muted, |s| s.text_color(theme.muted_foreground))
+                                .child(self.title_of(occ)),
+                        )
+                        .when(!location.is_empty(), |s| {
+                            s.child(
+                                div()
+                                    .text_xs()
+                                    .truncate()
+                                    .text_color(theme.muted_foreground)
+                                    .child(location),
+                            )
+                        }),
+                )
+                .into_any_element()
+        };
+        let plan_rows: Vec<AnyElement> = plans.iter().map(|o| row(o, false, cx)).collect();
+        let routine_rows: Vec<AnyElement> = routines.iter().map(|o| row(o, true, cx)).collect();
+        let task_rows: Vec<AnyElement> = tasks
+            .iter()
+            .map(|t| {
+                let id = t.id();
+                let done = !t.status().is_open();
+                h_flex()
+                    .id(SharedString::from(format!("panel-task-{id}")))
+                    .gap_3()
+                    .px_2()
+                    .py_1p5()
+                    .items_center()
+                    .rounded(theme.radius)
+                    .hover(|s| s.bg(theme.list_hover))
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.open_task(id, window, cx)),
+                    )
+                    .child(
+                        h_flex().w(rems(3.75)).flex_shrink_0().child(
+                            Button::new(SharedString::from(format!("panel-check-{id}")))
+                                .ghost()
+                                .xsmall()
+                                .icon(if done {
+                                    Lucide::CircleCheckBig
+                                } else {
+                                    Lucide::Circle
+                                })
+                                .tooltip(if done { "Mark as not done" } else { "Complete" })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.toggle_task(id, window, cx);
+                                })),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .when(done, |s| {
+                                s.line_through().text_color(theme.muted_foreground)
+                            })
+                            .child(t.title().to_owned()),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        let group = |label: &'static str, rows: Vec<AnyElement>, cx: &Context<Self>| {
+            (!rows.is_empty()).then(|| {
+                v_flex()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .px_2()
+                            .pb_0p5()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(cx.theme().muted_foreground)
+                            .child(label),
+                    )
+                    .children(rows)
+            })
+        };
+        let empty = plan_rows.is_empty() && routine_rows.is_empty() && task_rows.is_empty();
+        let plans_group = group("Events", plan_rows, cx);
+        let tasks_group = group("Tasks", task_rows, cx);
+        let routines_group = group("Routines", routine_rows, cx);
+        v_flex()
+            .id("calendar-day-panel")
+            .w(rems(19.))
+            .flex_shrink_0()
+            .h_full()
+            .pt_1()
+            .gap_4()
+            .overflow_y_scroll()
+            .child(
+                v_flex()
+                    .px_2()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(if day == self.today {
+                                theme.primary
+                            } else {
+                                theme.muted_foreground
+                            })
+                            .child(relative),
+                    )
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(heading),
+                    ),
+            )
+            .when(empty, |s| {
+                s.child(
+                    div()
+                        .px_2()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("Nothing planned. Type above, or double-click the day."),
+                )
+            })
+            .children(plans_group)
+            .children(tasks_group)
+            .children(routines_group)
+            .child(
+                h_flex().px_1().child(
+                    Button::new("panel-open-day")
+                        .ghost()
+                        .small()
+                        .label("Open in day view")
+                        .on_click(cx.listener(move |this, _, _, cx| this.open_day(day, cx))),
+                ),
+            )
     }
 }
 
@@ -517,7 +806,14 @@ impl CalendarView {
             }));
 
         // All-day row: bars over the columns, then each day's tasks.
-        let bars = bars_for(&self.span.occurrences, first, cols);
+        let occurrences: Vec<Occurrence> = self
+            .span
+            .occurrences
+            .iter()
+            .filter(|o| self.shows(o, cx))
+            .copied()
+            .collect();
+        let bars = bars_for(&occurrences, first, cols);
         let lanes = pack_spans(
             &bars
                 .iter()
@@ -645,8 +941,10 @@ impl CalendarView {
                             ))
                     })
                     .collect();
-                let timed: Vec<&Occurrence> =
-                    self.span.on_day(day).filter(|o| !is_bar(o)).collect();
+                let timed: Vec<&Occurrence> = occurrences
+                    .iter()
+                    .filter(|o| o.days().contains(&day) && !is_bar(o))
+                    .collect();
                 let spans: Vec<(i32, i32)> = timed
                     .iter()
                     .map(|o| minutes_on(day, o.start, o.end))
@@ -678,13 +976,15 @@ impl CalendarView {
                                 .left_0()
                                 .right_0()
                                 .top(rems(now_minute as f32 / 60. * HOUR))
-                                .h_0p5()
+                                // A hairline: the now line must not hide text under it.
+                                .h(px(1.5))
                                 .bg(theme.primary)
                                 .child(
                                     div()
                                         .absolute()
                                         .left(rems(-0.25))
-                                        .top(rems(-0.1875))
+                                        // Centered on the 1.5 px line.
+                                        .top(rems(-0.21875))
                                         .size_2()
                                         .rounded_full()
                                         .bg(theme.primary),
@@ -808,11 +1108,15 @@ impl CalendarView {
         let theme = cx.theme();
         let id = occ.event;
         let minutes = (to - from).max(MIN_BLOCK);
-        let tall = minutes >= 45;
+        // Two lines need an hour; shorter blocks put the start time inline.
+        let tall = minutes >= 60;
+        let inline_time = (!tall).then(|| short_time(occ.start.time(), clock));
         let event = self.span.events.get(&id);
         let location = event.map(|e| e.location().to_owned()).unwrap_or_default();
         let repeats = event.is_some_and(|e| e.recurrence().is_some());
         let past = occ.end <= self.now;
+        // Routines sit back so one-off plans stand out.
+        let fill = if self.is_routine(occ) { 0.08 } else { 0.16 };
         let el = div()
             .id(SharedString::from(format!("block-{id}-{day}")))
             .absolute()
@@ -829,7 +1133,7 @@ impl CalendarView {
                     .px_1p5()
                     .py_0p5()
                     .rounded(theme.radius)
-                    .bg(theme.primary.opacity(0.16))
+                    .bg(theme.primary.opacity(fill))
                     .hover(|s| s.bg(theme.primary.opacity(0.24)))
                     .when(past, |s| s.opacity(0.6))
                     .text_xs()
@@ -849,7 +1153,13 @@ impl CalendarView {
                                         .xsmall()
                                         .text_color(theme.muted_foreground),
                                 )
-                            }),
+                            })
+                            .children(inline_time.map(|t| {
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(theme.muted_foreground)
+                                    .child(t)
+                            })),
                     )
                     .when(tall, |s| {
                         s.child(

@@ -1826,3 +1826,36 @@ fn habit_insights_render_with_history(cx: &mut TestAppContext) {
     press(&app, cx, "down");
     assert_eq!(cx.read(|cx| habits.read(cx).selected_habit()), None);
 }
+
+#[gpui_kit::test]
+fn calendar_routines_can_be_hidden(cx: &mut TestAppContext) {
+    use keepstone_desktop::actions::GoCalendar;
+
+    let app = launch(cx);
+    let today = keepstone_core::clock::today();
+    cx.update(|cx| {
+        app.shell.read(cx).library().clone().update(cx, |lib, cx| {
+            lib.quick_add_event("Gym 7am every day", today, cx)
+                .expect("event");
+            lib.quick_add_event("Dentist 4pm", today, cx)
+                .expect("event");
+        })
+    });
+    dispatch(&app, cx, GoCalendar);
+    let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
+    let shown = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            let c = calendar.read(cx);
+            c.span()
+                .on_day(today)
+                .filter(|o| c.shows_for_test(o, cx))
+                .count()
+        })
+    };
+    assert_eq!(shown(cx), 2);
+    cx.update(|cx| keepstone_ui::appearance::update(cx, |s| s.calendar_routines = false));
+    cx.update_window(app.window, |_, window, _| window.refresh())
+        .expect("window");
+    cx.run_until_parked();
+    assert_eq!(shown(cx), 1, "only the one-off dentist visit");
+}

@@ -166,6 +166,14 @@ Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`)
 - Geometry in rems (`calendar_grid.rs`): day header 1.75, line 1.375, hour 3.
   Multi-day and all-day events are bars that stack (`pack_spans`); overlapping
   timed events split the column (`lay_out_timed`).
+- Month cells stay calm: bars for all-day / 24 h+ events, one line per
+  one-off event or task (title first, compact time "9a" after), routines
+  (repeat 3+ times a week, `Event::is_routine`) folded into small dots at the
+  bottom, "+N more" when full. On wide windows the selected day's full list
+  sits beside the grid (`day_panel`). View options (⚙ in the header) or
+  Settings → Calendar can hide routines everywhere.
+- Week/day: routines fill at 8 %, plans at 16 %; blocks under an hour put the
+  time inline; the now line is a 1.5 px hairline.
 - Plain-key shortcuts (`CALENDAR_SHORTCUTS`) live only on the grid, never in
   the quick-add field.
 

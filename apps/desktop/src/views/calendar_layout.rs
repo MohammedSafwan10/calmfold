@@ -137,6 +137,23 @@ pub fn format_time(t: Time, clock: ClockFormat) -> String {
     }
 }
 
+/// Compact time for month cells: "9a", "2:30p" / "09:30".
+#[must_use]
+pub fn short_time(t: Time, clock: ClockFormat) -> String {
+    match clock {
+        ClockFormat::TwentyFourHour => t.strftime("%H:%M").to_string(),
+        ClockFormat::TwelveHour => {
+            let suffix = if t.hour() < 12 { "a" } else { "p" };
+            let base = if t.minute() == 0 {
+                t.strftime("%-I").to_string()
+            } else {
+                t.strftime("%-I:%M").to_string()
+            };
+            format!("{base}{suffix}")
+        }
+    }
+}
+
 /// "9 – 10:30 AM", "11 AM – 1 PM", "09:00 – 10:30". Multi-day spans name the days.
 #[must_use]
 pub fn format_span(start: DateTime, end: DateTime, clock: ClockFormat) -> String {
