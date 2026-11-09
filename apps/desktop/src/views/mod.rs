@@ -18,6 +18,7 @@ pub mod task_detail;
 pub mod task_row;
 pub mod tasks;
 pub mod today;
+pub mod today_layout;
 
 use keepstone_core::NoteId;
 

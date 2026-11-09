@@ -6,7 +6,7 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 - Branch `main`. `scripts/check.sh` passes (fmt, clippy `-D warnings`, all tests).
 - Done from `docs/TASKS.md`: editor perf (to 50 KB), find, code colors, Mermaid,
-  spell-check, 20 themes + typography, Calendar (§4), **Habits** (§5).
+  spell-check, 20 themes + typography, Calendar (§4), Habits (§5), **Today rebuild** (§6).
 - Calendar: `core::event` (+ quick add `event_quick_add`), migration 0003,
   `storage/events.rs`, `Library::calendar` / event methods (`EventsChanged`),
   `views/calendar.rs` (state, header, agenda), `calendar_grid.rs` (month, week/day
@@ -16,7 +16,7 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Next steps (in order)
 
-`docs/TASKS.md` §6 Today rebuild → §7 Password vault; then the
+`docs/TASKS.md` §7 Password vault; then the
 500 KB+ editor item in §1.
 
 ## Known issues / risks
@@ -51,6 +51,15 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 ```
 
 ## Log
+
+### 2026-11-09: Today rebuild
+
+- Sections as data (`today_layout.rs`: key/title/width, resolve/move/rows,
+  unit-tested); order + hidden keys in appearance settings. Customize menu on
+  Today; Settings → Today reorders with up/down and switches.
+- New: at-a-glance strip, schedule with now marker and "Now" badge, habits
+  with checks, week card with "habits kept" row, merged next-7-days list.
+- Checked in the real window (dark).
 
 ### 2026-11-09: Calmer calendar
 

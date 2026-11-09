@@ -133,6 +133,10 @@ pub struct AppearanceSettings {
     pub clock: ClockFormat,
     /// Show routines (events repeating 3+ times a week) in the calendar.
     pub calendar_routines: bool,
+    /// Today dashboard: section keys in display order (unknown keys are
+    /// ignored, missing ones appended) and the keys the user hid.
+    pub today_order: Vec<String>,
+    pub today_hidden: Vec<String>,
 }
 
 impl AppearanceSettings {
@@ -216,6 +220,8 @@ impl Default for AppearanceSettings {
             week_start: WeekStart::default(),
             clock: ClockFormat::default(),
             calendar_routines: true,
+            today_order: Vec::new(),
+            today_hidden: Vec::new(),
         }
     }
 }
@@ -340,6 +346,8 @@ mod tests {
             week_start: WeekStart::Sunday,
             clock: ClockFormat::TwentyFourHour,
             calendar_routines: false,
+            today_order: vec!["habits".into(), "agenda".into()],
+            today_hidden: vec!["notes".into()],
         };
         settings.save(&path).expect("save");
         assert_eq!(AppearanceSettings::load(&path), settings);

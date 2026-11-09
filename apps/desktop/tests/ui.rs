@@ -1859,3 +1859,56 @@ fn calendar_routines_can_be_hidden(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(shown(cx), 1, "only the one-off dentist visit");
 }
+
+#[gpui_kit::test]
+fn today_dashboard_shows_schedule_habits_and_respects_layout(cx: &mut TestAppContext) {
+    use keepstone_desktop::views::today::set_shown;
+    use keepstone_desktop::views::today_layout::TodaySection;
+
+    let app = launch(cx);
+    let lib = library(&app, cx);
+    let today = keepstone_core::clock::today();
+    let (event, habit) = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let e = l
+                .quick_add_event("Dentist 11:30pm", today, cx)
+                .expect("event");
+            let h = l.quick_add_habit("Read daily", cx).expect("habit");
+            (e, h)
+        })
+    });
+    dispatch(&app, cx, GoToday);
+    let find = |cx: &mut TestAppContext, id: String| {
+        cx.update_window(app.window, |_, window, cx| {
+            window.render_frame(cx);
+            window.try_find(leak(id)).is_some()
+        })
+        .expect("window")
+    };
+    assert!(
+        find(cx, format!("today-event-{event}")),
+        "event in today's schedule"
+    );
+    assert!(find(cx, "today-glance".into()));
+    assert!(
+        find(cx, format!("habit-check-{habit}")),
+        "habit check on Today"
+    );
+
+    // Checking the habit from Today saves it.
+    cx.update_window(app.window, |_, window, cx| {
+        window.render_frame(cx);
+        let id: &'static str = leak(format!("habit-check-{habit}"));
+        window.click(id, cx);
+    })
+    .expect("window");
+    cx.run_until_parked();
+    let done = cx.read(|cx| lib.read(cx).habits(false).expect("habits")[0].done_today());
+    assert!(done, "checked from Today");
+
+    // Hiding a section removes it; the setting persists in appearance.
+    cx.update(|cx| set_shown(TodaySection::Agenda, false, cx));
+    cx.run_until_parked();
+    assert!(!find(cx, "today-agenda".into()));
+    assert!(find(cx, "today-habits".into()));
+}

@@ -1,6 +1,6 @@
 //! Settings screen, built on GPUI Kit's searchable `Settings` component.
 //!
-//! Pages: Appearance, General, Calendar, Keyboard, About. Add a feature's settings as a
+//! Pages: Appearance, General, Today, Calendar, Keyboard, About. Add a feature's settings as a
 //! new `SettingPage` (or group) here; the search box covers every page.
 
 use std::path::PathBuf;
@@ -303,6 +303,125 @@ impl SettingsView {
                 .item(location)
                 .footer(|_, _| "Everything stays on this device. Sync is not set up yet."),
         )
+    }
+
+    fn today_page() -> SettingPage {
+        use crate::views::today_layout::{TodaySection, moved, resolve};
+        let rows = SettingItem::render(|_, _, cx| {
+            let prefs = appearance::settings(cx);
+            let sections = resolve(&prefs.today_order, &prefs.today_hidden);
+            let last = sections.len().saturating_sub(1);
+            let theme = cx.theme();
+            v_flex()
+                .w_full()
+                .children(
+                    sections
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (section, shown))| {
+                            let key = section.key();
+                            h_flex()
+                                .w_full()
+                                .gap_3()
+                                .py_2()
+                                .items_center()
+                                .when(i > 0, |s| s.border_t_1().border_color(theme.border))
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .when(!shown, |s| {
+                                                    s.text_color(theme.muted_foreground)
+                                                })
+                                                .child(section.title()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground)
+                                                .child(section.description()),
+                                        ),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!("today-up-{key}")))
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(Lucide::ChevronUp)
+                                        .tooltip("Move up")
+                                        .disabled(i == 0)
+                                        .on_click(move |_, _, cx| {
+                                            appearance::update(cx, |s| {
+                                                s.today_order = moved(&s.today_order, section, -1)
+                                            })
+                                        }),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!("today-down-{key}")))
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(Lucide::ChevronDown)
+                                        .tooltip("Move down")
+                                        .disabled(i == last)
+                                        .on_click(move |_, _, cx| {
+                                            appearance::update(cx, |s| {
+                                                s.today_order = moved(&s.today_order, section, 1)
+                                            })
+                                        }),
+                                )
+                                .child(
+                                    gpui_kit::component::switch::Switch::new(SharedString::from(
+                                        format!("today-show-{key}"),
+                                    ))
+                                    .checked(shown)
+                                    .accessibility_label(format!("Show {}", section.title()))
+                                    .on_click(
+                                        move |on, _, cx| {
+                                            crate::views::today::set_shown(section, *on, cx)
+                                        },
+                                    ),
+                                )
+                        }),
+                )
+                .into_any_element()
+        })
+        .keywords([
+            "today",
+            "dashboard",
+            "sections",
+            "order",
+            "hide",
+            "customize",
+        ]);
+        let reset = SettingItem::render(|_, _, _| {
+            h_flex()
+                .w_full()
+                .child(
+                    Button::new("today-reset")
+                        .ghost()
+                        .small()
+                        .label("Restore default layout")
+                        .on_click(|_, _, cx| {
+                            appearance::update(cx, |s| {
+                                s.today_order.clear();
+                                s.today_hidden.clear();
+                            })
+                        }),
+                )
+                .into_any_element()
+        });
+        let _ = TodaySection::ALL;
+        SettingPage::new("Today")
+            .icon(Lucide::House)
+            .group(
+                SettingGroup::new()
+                    .title("Sections")
+                    .items(vec![rows])
+                    .footer(|_, _| "Half-width sections sit side by side on wide windows."),
+            )
+            .group(SettingGroup::new().items(vec![reset]))
     }
 
     fn calendar_page() -> SettingPage {
@@ -615,6 +734,7 @@ impl Render for SettingsView {
                 .pages(vec![
                     Self::appearance_page(),
                     Self::general_page(self.data_dir.clone()),
+                    Self::today_page(),
                     Self::calendar_page(),
                     Self::keyboard_page(),
                     Self::about_page(),

@@ -187,6 +187,13 @@ Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`)
 - Charts: bars at `primary` 55 %, full `primary` only for the point that
   matters (today, best weekday); empty days at `muted_foreground` 25 %.
 
+## Today
+
+- Sections are cards (title + count + one quiet action, then content, then
+  its own empty line). Half-width sections pair up; full-width stand alone.
+- Add a section in `views/today_layout.rs` (key, title, description, width)
+  and render it in `today.rs`; saved layouts are by key.
+
 ## Shared components (`crates/ui/src/components.rs`)
 
 `segmented` (controlled segmented control), `page_header`, `empty_state`,

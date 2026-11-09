@@ -63,9 +63,10 @@ Calm, organized, not noisy; keyboard path; empty/error states; one source of tru
 
 ## 6. Today dashboard, next level
 
-- [ ] Rebuild after calendar + habits: today's agenda, habits strip, tasks, daily
-      note, week chart, organized and calm; sections reusable so more can be added
-      later (customizable order/visibility in Settings).
+- [x] Rebuilt: at a glance (next event, tasks, habits), today's schedule with a now
+      marker, habits with one-tap checks, due tasks, this week (tasks + habits kept),
+      next 7 days, recent notes. Sections are a data table (`today_layout.rs`);
+      Customize menu shows/hides, Settings → Today reorders. UI tests.
 
 ## 7. Password vault
 
