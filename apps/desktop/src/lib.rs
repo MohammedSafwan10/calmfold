@@ -292,6 +292,10 @@ fn dev_vault(window: AnyWindowHandle, shell: Entity<AppShell>, password: String,
         });
         // KEEPSTONE_DEV_VAULT_ITEM=<title>: open that item.
         if let Ok(title) = std::env::var("KEEPSTONE_DEV_VAULT_ITEM") {
+            // After the list has refreshed from the import above.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(300))
+                .await;
             _ = window.update(cx, |_, window, cx| {
                 let passwords = shell.read(cx).passwords().clone();
                 passwords.update(cx, |p, cx| p.select_for_dev(&title, window, cx));
