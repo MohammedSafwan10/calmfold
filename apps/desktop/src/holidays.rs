@@ -2,8 +2,10 @@
 //!
 //! The data is `keepstone_core::holidays` (offline). The settings live in
 //! the appearance file: on/off, observances on/off, and the user's
-//! countries. On first launch the country is guessed from the Mac's time
-//! zone (no location permission, nothing sent anywhere).
+//! countries. On first launch the country is guessed from the computer's
+//! time zone (no location permission, nothing sent anywhere). jiff reads it
+//! on every platform: `/etc/localtime` on macOS and Linux, the registry's
+//! Windows zone (mapped to its IANA name) on Windows.
 //!
 //! "Where you are": when the time zone points to a country that isn't one
 //! of the user's (travelling), its holidays show too, labelled with the
@@ -29,7 +31,7 @@ pub fn set_detected_country_for_tests(code: Option<&'static str>, cx: &mut App) 
     cx.set_global(DetectedOverride(Some(code)));
 }
 
-/// The country of the Mac's current time zone, if the table covers it.
+/// The country of the computer's current time zone, if the table covers it.
 #[must_use]
 pub fn detected_country(cx: &App) -> Option<&'static str> {
     if let Some(DetectedOverride(Some(code))) = cx.try_global::<DetectedOverride>() {

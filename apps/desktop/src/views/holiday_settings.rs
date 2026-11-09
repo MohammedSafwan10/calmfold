@@ -155,6 +155,17 @@ pub fn sync_picker(picker: &CountryPicker, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// "Mac's" on macOS, "PC's" on Windows, "computer's" elsewhere.
+fn device_possessive() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Mac's"
+    } else if cfg!(target_os = "windows") {
+        "PC's"
+    } else {
+        "computer's"
+    }
+}
+
 pub fn holiday_group(pickers: &HolidayPickers) -> SettingGroup {
     let picker = pickers.countries.clone();
     let region_picker = pickers.regions.clone();
@@ -232,10 +243,11 @@ pub fn holiday_group(pickers: &HolidayPickers) -> SettingGroup {
             |on, cx| appearance::update(cx, |s| s.holidays_where_you_are = on),
         ),
     )
-    .description(
+    .description(format!(
         "When you travel, also show the holidays of the country you're in, labelled with it. \
-         Uses your Mac's time zone; your location is never asked for or sent.",
-    )
+         Uses your {} time zone; your location is never asked for or sent.",
+        device_possessive()
+    ))
     .keywords(["travel", "abroad", "location", "time zone", "holiday"]);
     SettingGroup::new()
         .title("Holidays")
