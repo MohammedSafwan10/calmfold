@@ -11,6 +11,7 @@ mod habits;
 mod notes;
 mod schema;
 mod tasks;
+mod vault;
 
 use std::path::Path;
 
@@ -19,6 +20,7 @@ use rusqlite::Connection;
 pub use error::{StorageError, StorageResult};
 pub use notes::NoteSummary;
 pub use tasks::{Progress, TaskCounts, TaskFilter};
+pub use vault::{SealedItem, VaultMeta};
 
 pub struct Store {
     conn: Connection,

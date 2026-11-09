@@ -25,6 +25,13 @@ pub enum DomainError {
     FutureCheckIn,
     #[error("This habit is archived. Restore it to change it.")]
     Archived,
+    #[error("That isn't a valid one-time password setup key or otpauth:// link.")]
+    InvalidOneTimeCode,
+    /// Decrypted data didn't parse. Never says what was inside.
+    #[error("A vault item couldn't be read.")]
+    Corrupt,
+    #[error("That action isn't possible while the vault is {state}.")]
+    VaultState { state: &'static str },
 }
 
 pub type DomainResult<T> = Result<T, DomainError>;

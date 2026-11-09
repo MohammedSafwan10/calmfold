@@ -81,6 +81,10 @@ define_id!(
     /// Identifies a [`crate::Habit`].
     HabitId
 );
+define_id!(
+    /// Identifies a [`crate::vault::VaultItem`].
+    VaultItemId
+);
 
 #[cfg(test)]
 mod tests {

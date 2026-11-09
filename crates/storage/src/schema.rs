@@ -13,6 +13,7 @@ fn migrations() -> Migrations<'static> {
         ),
         M::up(include_str!("../migrations/0003_events.sql")),
         M::up(include_str!("../migrations/0004_habits.sql")),
+        M::up(include_str!("../migrations/0005_vault.sql")),
     ])
 }
 
