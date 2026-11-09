@@ -9,7 +9,7 @@ use rusqlite::{OptionalExtension, Row, params};
 use crate::codec::{date_to_sql, opt_ts_from_sql, ts_from_sql, ts_to_sql, uuid_from_sql};
 use crate::{StorageError, StorageResult, Store};
 
-const COLUMNS: &str = "id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions";
+const COLUMNS: &str = "id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions, until";
 
 /// Fixed-width ISO text, so SQLite's string order is time order.
 fn dt_to_sql(dt: DateTime) -> String {
@@ -24,8 +24,8 @@ impl Store {
     pub fn save_event(&mut self, event: &Event) -> StorageResult<()> {
         let r = event.to_record();
         self.conn.execute(
-            "INSERT INTO events (id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "INSERT INTO events (id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions, until)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT (id) DO UPDATE SET
                 title = excluded.title,
                 notes = excluded.notes,
@@ -36,7 +36,8 @@ impl Store {
                 recurrence = excluded.recurrence,
                 updated_at = excluded.updated_at,
                 deleted_at = excluded.deleted_at,
-                exceptions = excluded.exceptions",
+                exceptions = excluded.exceptions,
+                until = excluded.until",
             params![
                 r.id.to_string(),
                 r.title,
@@ -50,6 +51,7 @@ impl Store {
                 ts_to_sql(r.updated_at),
                 r.deleted_at.map(ts_to_sql),
                 exceptions_to_code(&r.exceptions),
+                r.until.map(date_to_sql),
             ],
         )?;
         Ok(())
@@ -144,6 +146,7 @@ struct RawEvent {
     updated_at: i64,
     deleted_at: Option<i64>,
     exceptions: Option<String>,
+    until: Option<String>,
 }
 
 impl RawEvent {
@@ -166,6 +169,8 @@ impl RawEvent {
                 .as_deref()
                 .map(exceptions_from_code)
                 .unwrap_or_default(),
+            // Like an unknown rule: an unreadable end repeats forever.
+            until: self.until.as_deref().and_then(|d| d.parse().ok()),
         }))
     }
 }
@@ -184,6 +189,7 @@ fn raw_event(row: &Row<'_>) -> rusqlite::Result<RawEvent> {
         updated_at: row.get(9)?,
         deleted_at: row.get(10)?,
         exceptions: row.get(11)?,
+        until: row.get(12)?,
     })
 }
 
@@ -226,6 +232,7 @@ mod tests {
             at(2),
         )
         .expect("move");
+        e.set_until(Some(d("2027-01-31")), at(3)).expect("end");
         store.save_event(&e).expect("save");
         assert_eq!(store.event(e.id()).expect("load").as_ref(), Some(&e));
         let early = store

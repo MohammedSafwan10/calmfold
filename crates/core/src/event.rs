@@ -16,6 +16,9 @@
 //! because their series dates no longer line up; title, notes and place
 //! changes keep them.
 //!
+//! A series repeats forever unless it has an end (`until`, the last date an
+//! occurrence may start on, inclusive).
+//!
 //! State machine: `Active ──trash──▶ Trashed ──restore──▶ Active`; a trashed
 //! event can't be edited.
 
@@ -105,6 +108,7 @@ pub struct Event {
     start: DateTime,
     end: DateTime,
     recurrence: Option<Recurrence>,
+    until: Option<Date>,
     exceptions: BTreeMap<Date, Exception>,
     created_at: Timestamp,
     updated_at: Timestamp,
@@ -122,6 +126,8 @@ pub struct EventRecord {
     pub start: DateTime,
     pub end: DateTime,
     pub recurrence: Option<Recurrence>,
+    /// Last date an occurrence may start on (inclusive); `None` = forever.
+    pub until: Option<Date>,
     pub exceptions: BTreeMap<Date, Exception>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -187,6 +193,7 @@ impl Event {
             start,
             end: start,
             recurrence: None,
+            until: None,
             exceptions: BTreeMap::new(),
             created_at: now,
             updated_at: now,
@@ -205,6 +212,7 @@ impl Event {
             start: r.start,
             end: r.end,
             recurrence: r.recurrence,
+            until: r.recurrence.and(r.until),
             // Exceptions only mean something on a repeating event.
             exceptions: if r.recurrence.is_some() {
                 r.exceptions
@@ -228,6 +236,7 @@ impl Event {
             start: self.start,
             end: self.end,
             recurrence: self.recurrence,
+            until: self.until,
             exceptions: self.exceptions.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -288,6 +297,11 @@ impl Event {
     #[must_use]
     pub fn recurrence(&self) -> Option<Recurrence> {
         self.recurrence
+    }
+    /// Last date a repeat may start on (inclusive), if the series ends.
+    #[must_use]
+    pub fn until(&self) -> Option<Date> {
+        self.until
     }
     /// Per-occurrence changes, by series date.
     #[must_use]
@@ -380,6 +394,7 @@ impl Event {
         self.start = start;
         self.end = end;
         self.exceptions.clear();
+        self.keep_until_valid();
         self.touch(now);
         Ok(())
     }
@@ -403,6 +418,7 @@ impl Event {
         self.start = first.to_datetime(Time::midnight());
         self.end = end.to_datetime(Time::midnight());
         self.exceptions.clear();
+        self.keep_until_valid();
         self.touch(now);
         Ok(())
     }
@@ -422,6 +438,32 @@ impl Event {
         self.start = start;
         self.end = end;
         self.exceptions.clear();
+        self.keep_until_valid();
+        self.touch(now);
+        Ok(())
+    }
+
+    /// An end before the (moved) start would hide the whole series: drop it.
+    fn keep_until_valid(&mut self) {
+        if self.until.is_some_and(|u| u < self.start.date()) {
+            self.until = None;
+        }
+    }
+
+    /// Ends the series after `until` (inclusive; `None` = repeat forever).
+    /// Exceptions after the end are dropped.
+    pub fn set_until(&mut self, until: Option<Date>, now: Timestamp) -> DomainResult<()> {
+        self.editable()?;
+        if let Some(u) = until {
+            if self.recurrence.is_none() {
+                return Err(DomainError::NoSuchOccurrence);
+            }
+            if u < self.start.date() {
+                return Err(DomainError::InvalidTimeRange);
+            }
+            self.exceptions.retain(|d, _| *d <= u);
+        }
+        self.until = until;
         self.touch(now);
         Ok(())
     }
@@ -430,6 +472,9 @@ impl Event {
         self.editable()?;
         if rule != self.recurrence {
             self.exceptions.clear();
+        }
+        if rule.is_none() {
+            self.until = None;
         }
         self.recurrence = rule;
         self.touch(now);
@@ -585,6 +630,9 @@ impl Event {
             let Exception::Moved { start, end } = *e else {
                 return None;
             };
+            if self.until.is_some_and(|u| *date > u) {
+                return None;
+            }
             // Validated when it was made; schedule changes clear exceptions.
             let occ = Occurrence {
                 event: self.id,
@@ -627,7 +675,7 @@ impl Event {
         for _ in 0..100_000 {
             let Some(occ) = make(start) else { break };
             let span = occ.days();
-            if span.start >= days.end {
+            if span.start >= days.end || self.until.is_some_and(|u| start.date() > u) {
                 break;
             }
             if span.end > days.start {
@@ -985,6 +1033,45 @@ mod tests {
         let occ = e.occurrences(d("2026-11-09")..d("2026-11-16"), 10);
         assert_eq!(occ.len(), 1);
         assert_eq!(occ[0].days(), d("2026-11-11")..d("2026-11-12"));
+    }
+
+    #[test]
+    fn a_series_can_end() {
+        let mut e = standup();
+        assert_eq!(
+            e.set_until(Some(d("2026-11-01")), now()),
+            Err(DomainError::InvalidTimeRange),
+            "not before it starts"
+        );
+        e.move_occurrence(
+            d("2026-11-13"),
+            dt("2026-11-13T10:00"),
+            dt("2026-11-13T10:15"),
+            now(),
+        )
+        .expect("move");
+        e.set_until(Some(d("2026-11-11")), now()).expect("end");
+        assert!(e.exceptions().is_empty(), "exceptions after the end go");
+        assert_eq!(
+            starts(&e, "2026-11-09", "2026-11-16"),
+            [
+                dt("2026-11-09T09:30"),
+                dt("2026-11-10T09:30"),
+                dt("2026-11-11T09:30")
+            ]
+        );
+        assert_eq!(Event::from_record(e.to_record()), e);
+        // Moving the series past its end drops the end; no repeat drops it too.
+        e.move_to_date(d("2026-11-20"), now()).expect("move");
+        assert_eq!(e.until(), None);
+        e.set_until(Some(d("2026-11-25")), now()).expect("end");
+        e.set_recurrence(None, now()).expect("once");
+        assert_eq!(e.until(), None);
+        assert_eq!(
+            e.set_until(Some(d("2026-11-25")), now()),
+            Err(DomainError::NoSuchOccurrence),
+            "a one-off can't end"
+        );
     }
 
     #[test]

@@ -2532,6 +2532,58 @@ fn deleted_events_can_be_restored_or_removed_for_good(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn ics_files_import_once(cx: &mut TestAppContext) {
+    use keepstone_desktop::actions::GoCalendar;
+
+    let app = launch(cx);
+    dispatch(&app, cx, GoCalendar);
+    let lib = library(&app, cx);
+    let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
+    let today = keepstone_core::clock::today();
+    let day = today.strftime("%Y%m%d").to_string();
+    let text = format!(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:a\r\nSUMMARY:Imported lunch\r\n\
+         DTSTART:{day}T130000\r\nDTEND:{day}T140000\r\nEND:VEVENT\r\n\
+         BEGIN:VEVENT\r\nUID:b\r\nSUMMARY:Gym\r\nDTSTART:{day}T070000\r\nDURATION:PT1H\r\n\
+         RRULE:FREQ=DAILY;COUNT=3\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    );
+    let first = cx
+        .update(|cx| lib.update(cx, |l, cx| l.import_ics(&text, cx)))
+        .expect("import");
+    assert_eq!((first.added, first.duplicates), (2, 0));
+    assert_eq!(first.message(), "Imported 2 events.");
+    let again = cx
+        .update(|cx| lib.update(cx, |l, cx| l.import_ics(&text, cx)))
+        .expect("import");
+    assert_eq!((again.added, again.duplicates), (0, 2));
+    assert!(again.message().starts_with("Nothing new to import."));
+
+    cx.update_window(app.window, |_, window, _| window.refresh())
+        .expect("window");
+    cx.run_until_parked();
+    let titles: Vec<String> = cx.read(|cx| {
+        let span = calendar.read(cx).span().clone();
+        span.on_day(today)
+            .filter_map(|o| span.events.get(&o.event).map(|e| e.title().to_owned()))
+            .collect()
+    });
+    assert_eq!(titles, ["Gym", "Imported lunch"]);
+    let gym = cx.read(|cx| {
+        let span = calendar.read(cx).span().clone();
+        span.events.values().find(|e| e.title() == "Gym").cloned()
+    });
+    assert_eq!(
+        gym.and_then(|g| g.until()),
+        today.checked_add(jiff::Span::new().days(2)).ok(),
+        "COUNT=3 ends two days later"
+    );
+    assert!(
+        cx.update(|cx| lib.update(cx, |l, cx| l.import_ics("not a calendar", cx)))
+            .is_err()
+    );
+}
+
+#[gpui_kit::test]
 fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
     use keepstone_core::vault::template::Template;
     use keepstone_core::vault::{FieldKind, ItemFields, ItemKind};

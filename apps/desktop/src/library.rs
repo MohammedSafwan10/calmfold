@@ -687,6 +687,41 @@ impl Library {
         self.save_new_event(&event, cx)
     }
 
+    /// Imports an iCalendar file's text. Events already in the calendar
+    /// (same title, times and repeat) are skipped, so importing the same
+    /// file twice adds nothing.
+    pub fn import_ics(&mut self, text: &str, cx: &mut Context<Self>) -> Result<IcsReport> {
+        let local = jiff::tz::TimeZone::system();
+        let zone = |name: &str| jiff::tz::db().get(name).ok();
+        let parsed = keepstone_core::ics::parse_ics(text, &local, &zone, clock::now())
+            .map_err(|msg| anyhow::anyhow!(msg))?;
+        let mut report = IcsReport {
+            skipped: parsed.skipped,
+            simplified: parsed.simplified,
+            ..IcsReport::default()
+        };
+        for event in parsed.events {
+            let day = event.start().date();
+            let next = day.tomorrow().unwrap_or(day);
+            let exists = self.store.events_between(day..next)?.iter().any(|e| {
+                e.title() == event.title()
+                    && e.start() == event.start()
+                    && e.end() == event.end()
+                    && e.recurrence() == event.recurrence()
+            });
+            if exists {
+                report.duplicates += 1;
+                continue;
+            }
+            self.store
+                .save_event(&event)
+                .context("Couldn't save the imported events")?;
+            report.added += 1;
+        }
+        cx.emit(LibraryEvent::EventsChanged);
+        Ok(report)
+    }
+
     fn save_new_event(&mut self, event: &Event, cx: &mut Context<Self>) -> Result<EventId> {
         self.store
             .save_event(event)
@@ -751,6 +786,16 @@ impl Library {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.update_event(id, cx, |e| e.set_recurrence(rule, clock::now()))
+    }
+
+    /// Ends a repeating event after `until` (`None` = repeat forever).
+    pub fn set_event_until(
+        &mut self,
+        id: EventId,
+        until: Option<Date>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_event(id, cx, |e| e.set_until(until, clock::now()))
     }
 
     pub fn trash_event(&mut self, id: EventId, cx: &mut Context<Self>) -> Result<()> {
@@ -1545,6 +1590,53 @@ impl HabitSummary {
 
 /// Repeats expanded per event and range; bounds work for daily repeats over a long agenda.
 const MAX_OCCURRENCES_PER_EVENT: usize = 500;
+
+/// What an `.ics` import did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IcsReport {
+    pub added: usize,
+    /// Already in the calendar.
+    pub duplicates: usize,
+    /// Unreadable in the file.
+    pub skipped: usize,
+    /// Repeat rule not supported; first date only.
+    pub simplified: usize,
+}
+
+impl IcsReport {
+    /// "Imported 12 events. 3 were already in your calendar."
+    #[must_use]
+    pub fn message(&self) -> String {
+        let plural = |n: usize| if n == 1 { "" } else { "s" };
+        let mut parts = vec![if self.added == 0 {
+            "Nothing new to import.".to_owned()
+        } else {
+            format!("Imported {} event{}.", self.added, plural(self.added))
+        }];
+        if self.duplicates > 0 {
+            parts.push(format!(
+                "{} {} already in your calendar.",
+                self.duplicates,
+                if self.duplicates == 1 { "was" } else { "were" }
+            ));
+        }
+        if self.simplified > 0 {
+            parts.push(format!(
+                "{} repeating event{} used a rule Keepstone can't follow yet, so only the first date was added.",
+                self.simplified,
+                plural(self.simplified)
+            ));
+        }
+        if self.skipped > 0 {
+            parts.push(format!(
+                "{} event{} couldn't be read.",
+                self.skipped,
+                plural(self.skipped)
+            ));
+        }
+        parts.join(" ")
+    }
+}
 
 /// What a calendar range shows.
 #[derive(Debug, Clone, Default)]

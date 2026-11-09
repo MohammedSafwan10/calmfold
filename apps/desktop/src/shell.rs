@@ -29,10 +29,10 @@ use keepstone_ui::appearance::{self, ThemePreference};
 use crate::actions::{
     ChangeMasterPassword, CreateRecoveryKey, ExportNotes, ExportVaultBackup, FindInNote, FindNext,
     FindPrevious, GeneratePassword, GoCalendar, GoHabits, GoNotes, GoPasswords, GoSettings,
-    GoTasks, GoToday, ImportNotes, LockVault, NewEvent, NewHabit, NewLogin, NewNote, NewProject,
-    NewTask, OpenCommandPalette, OpenDailyNote, RestoreVaultBackup, ShowDeletedEvents,
-    ShowVaultArchives, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseDarkTheme,
-    UseLightTheme, UseSystemTheme,
+    GoTasks, GoToday, ImportCalendar, ImportNotes, LockVault, NewEvent, NewHabit, NewLogin,
+    NewNote, NewProject, NewTask, OpenCommandPalette, OpenDailyNote, RestoreVaultBackup,
+    ShowDeletedEvents, ShowVaultArchives, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar,
+    UseDarkTheme, UseLightTheme, UseSystemTheme,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
@@ -805,6 +805,19 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["events", "schedule", "agenda", "month", "week"],
         ),
         cmd(
+            "Import calendar (.ics)",
+            Lucide::CalendarPlus,
+            Box::new(ImportCalendar),
+            &[
+                "ics",
+                "ical",
+                "google calendar",
+                "apple calendar",
+                "outlook",
+                "events",
+            ],
+        ),
+        cmd(
             "Show deleted events",
             Lucide::Trash,
             Box::new(ShowDeletedEvents),
@@ -957,6 +970,11 @@ pub fn register_commands(cx: &mut App) {
         with_shell(cx, |s, w, cx| s.navigate(Route::Calendar, w, cx))
     });
     cx.on_action(|_: &NewEvent, cx| with_shell(cx, |s, w, cx| s.new_event(w, cx)));
+    cx.on_action(|_: &ImportCalendar, cx| {
+        with_shell(cx, |s, w, cx| {
+            crate::views::calendar::import_ics_file(s.library.clone(), w, cx)
+        })
+    });
     cx.on_action(|_: &ShowDeletedEvents, cx| {
         with_shell(cx, |s, w, cx| {
             crate::views::event_trash::open_event_trash(s.library.clone(), w, cx)

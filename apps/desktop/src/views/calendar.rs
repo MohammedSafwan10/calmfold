@@ -498,6 +498,45 @@ impl CalendarView {
     }
 }
 
+/// Picks an `.ics` file (Google, Apple or Outlook export) and imports it.
+pub fn import_ics_file(
+    library: gpui_kit::Entity<crate::library::Library>,
+    window: &mut Window,
+    cx: &mut gpui_kit::App,
+) {
+    let paths = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Import".into()),
+    });
+    window
+        .spawn(cx, async move |cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let text = cx
+                .background_executor()
+                .spawn(async move { std::fs::read(path) })
+                .await;
+            _ = cx.update(|window, cx| {
+                let Ok(bytes) = text else {
+                    keepstone_ui::feedback::error_toast("Couldn't read that file.", window, cx);
+                    return;
+                };
+                let text = String::from_utf8_lossy(&bytes);
+                let result = library.update(cx, |lib, cx| lib.import_ics(&text, cx));
+                if let Some(report) = keepstone_ui::feedback::report(result, window, cx) {
+                    gpui_kit::component::WindowExt::push_notification(window, report.message(), cx);
+                }
+            });
+        })
+        .detach();
+}
+
 /// The "View options" menu: show or hide routines everywhere.
 fn view_options(cx: &gpui_kit::App) -> impl IntoElement {
     let routines = appearance::settings(cx).calendar_routines;
@@ -516,6 +555,11 @@ fn view_options(cx: &gpui_kit::App) -> impl IntoElement {
             )
             .label("Events repeating 3+ times a week")
             .separator()
+            .item(
+                PopupMenuItem::new("Import calendar file…")
+                    .icon(Lucide::CalendarPlus)
+                    .action(Box::new(crate::actions::ImportCalendar)),
+            )
             .item(
                 PopupMenuItem::new("Deleted events…")
                     .icon(Lucide::Trash)

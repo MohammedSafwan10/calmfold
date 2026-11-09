@@ -41,10 +41,12 @@ Everything in `docs/TASKS.md` is done except the
   the master password at export time only (no recovery key in the file).
 - Calendar: one occurrence of a repeating event can be moved (drag, or the
   detail panel → "Only this event") or deleted on its own; changing the
-  series' schedule resets those. Not yet: "this and following", a series end
-  date, per-occurrence titles/notes. Deleted events live in Calendar → View
-  options → Deleted events… (restore, delete forever, empty). No time zones
-  (local wall-clock times) and no ICS import yet.
+  series' schedule resets those. A series can end ("Ends" in the panel).
+  Not yet: "this and following", per-occurrence titles/notes. Deleted events
+  live in Calendar → View options → Deleted events… (restore, delete
+  forever, empty). Times are local wall-clock; `.ics` import converts UTC and
+  `TZID` times to local on the way in (Windows zone names fall back to
+  local). No ICS export or live subscriptions yet.
 - Calendar month cells fit as many lines as the window height allows (estimated
   from the viewport, `MONTH_CHROME`); the rest go behind "N more".
 
@@ -59,6 +61,19 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 ```
 
 ## Log
+
+### 2026-11-09: Calendar import and series ends
+
+- `core::ics::parse_ics` (pure; zone lookup passed in): unfolding, escapes,
+  VALARM skipped, DATE/floating/UTC/TZID times, DURATION, RRULE
+  (DAILY/WEEKLY+BYDAY/MONTHLY/YEARLY, INTERVAL, UNTIL, COUNT), EXDATE,
+  RECURRENCE-ID overrides, CANCELLED. Unsupported rules import their first
+  date and are reported. Limits: 20 MB, 20,000 events.
+- `Event::until` (`set_until`, migration 0008); panel "Ends" picker
+  (placeholder Never, clearable); summary "Every week until Dec 1, 2026".
+- `Library::import_ics` skips events already present (title, times, rule).
+  `ImportCalendar` action: File menu, ⌘K, Calendar → View options.
+- Tests: 6 ICS + 1 until (core), storage round-trip, UI `ics_files_import_once`.
 
 ### 2026-11-09: Deleted events
 

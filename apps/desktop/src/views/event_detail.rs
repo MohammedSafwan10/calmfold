@@ -24,6 +24,7 @@ use gpui_kit::component::time_field::{HourCycle, TimePrecision};
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Placement, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Subscription, Task as GpuiTask, Window, div, px,
@@ -77,6 +78,8 @@ pub struct EventDetail {
     /// All-day events: first and last day.
     first_day: Entity<DatePickerState>,
     last_day: Entity<DatePickerState>,
+    /// Repeating events: the last day a repeat may start (empty = never ends).
+    ends_on: Entity<DatePickerState>,
     dirty: bool,
     pending_save: Option<GpuiTask<()>>,
     _subscriptions: Vec<Subscription>,
@@ -124,6 +127,7 @@ impl EventDetail {
         };
         let first_day = day_picker(window, cx);
         let last_day = day_picker(window, cx);
+        let ends_on = day_picker(window, cx);
 
         let mut this = Self {
             id,
@@ -137,6 +141,7 @@ impl EventDetail {
             ends_at: ends_at.clone(),
             first_day: first_day.clone(),
             last_day: last_day.clone(),
+            ends_on: ends_on.clone(),
             dirty: false,
             pending_save: None,
             _subscriptions: Vec::new(),
@@ -214,6 +219,15 @@ impl EventDetail {
                     }
                 },
             ),
+            cx.subscribe_in(
+                &ends_on,
+                window,
+                |this, _, e: &DatePickerEvent, window, cx| {
+                    let DatePickerEvent::Change(v) = e;
+                    let until = v.start().and_then(|d| from_chrono(d.date()));
+                    this.change_until(until, window, cx);
+                },
+            ),
             // Follow changes made elsewhere (a drag in the calendar). Text
             // fields are left alone so typing is never overwritten.
             cx.subscribe_in(&library, window, |this, library, event, window, cx| {
@@ -250,6 +264,15 @@ impl EventDetail {
 
     /// Puts the shown dates into whichever pickers the event uses.
     fn sync_pickers(&mut self, event: &Event, window: &mut Window, cx: &mut Context<Self>) {
+        let until = event.until().and_then(to_chrono);
+        self.ends_on.update(cx, |p, cx| match until {
+            Some(d) => p.set_date(d, window, cx),
+            None => p.set_date(
+                gpui_kit::component::calendar::Date::Single(None),
+                window,
+                cx,
+            ),
+        });
         let (start, end) = self.shown_span(event);
         if event.is_all_day() {
             let last = end
@@ -474,6 +497,23 @@ impl EventDetail {
         notify_err(result, window, cx);
     }
 
+    fn change_until(&mut self, until: Option<Date>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(event) = self.event.clone().filter(|e| e.recurrence().is_some()) else {
+            return;
+        };
+        if until == event.until() {
+            return;
+        }
+        let id = self.id;
+        let result = self
+            .library
+            .update(cx, |lib, cx| lib.set_event_until(id, until, cx));
+        if result.is_err() {
+            self.sync_pickers(&event, window, cx);
+        }
+        notify_err(result, window, cx);
+    }
+
     fn set_recurrence(
         &mut self,
         rule: Option<Recurrence>,
@@ -653,7 +693,17 @@ impl Render for EventDetail {
                         "Repeat",
                         self.repeat_menu(event.recurrence(), cx).into_any_element(),
                         cx,
-                    )),
+                    ))
+                    .when(event.recurrence().is_some(), |s| {
+                        s.child(field_row(
+                            "Ends",
+                            DatePicker::new(&self.ends_on)
+                                .placeholder("Never")
+                                .cleanable(true)
+                                .into_any_element(),
+                            cx,
+                        ))
+                    }),
             )
             .child(
                 v_flex().gap_2().child(section_label("Location", cx)).child(
@@ -718,7 +768,10 @@ pub fn summary(event: &Event, occurrence: Option<&Occurrence>, clock: ClockForma
         parts.push(format_span(start, end, clock));
     }
     if let Some(rule) = event.recurrence() {
-        parts.push(rule.to_string());
+        parts.push(match event.until() {
+            Some(until) => format!("{rule} until {}", until.strftime("%b %-d, %Y")),
+            None => rule.to_string(),
+        });
     }
     if occurrence.is_some_and(|o| o.moved) {
         parts.push("Changed for this day".into());
