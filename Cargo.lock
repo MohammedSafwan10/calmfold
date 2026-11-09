@@ -4188,6 +4188,7 @@ dependencies = [
  "gpui-kit",
  "jiff",
  "keepstone-core",
+ "keepstone-crypto",
  "keepstone-storage",
  "keepstone-ui",
  "mermaid-rs-renderer",

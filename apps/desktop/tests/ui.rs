@@ -1912,3 +1912,235 @@ fn today_dashboard_shows_schedule_habits_and_respects_layout(cx: &mut TestAppCon
     assert!(!find(cx, "today-agenda".into()));
     assert!(find(cx, "today-habits".into()));
 }
+
+// ---- Password vault ----
+
+#[gpui_kit::test]
+fn vault_setup_items_lock_unlock_and_copy(cx: &mut TestAppContext) {
+    use keepstone_core::vault::lock::LockState;
+    use keepstone_core::vault::{ItemFields, ItemKind};
+    use keepstone_desktop::actions::{GoPasswords, LockVault};
+
+    let app = launch(cx);
+    let lib = library(&app, cx);
+    cx.update(|cx| {
+        lib.update(cx, |l, _| {
+            l.set_kdf_params_for_tests(keepstone_crypto::KdfParams::MINIMUM)
+        })
+    });
+    dispatch(&app, cx, GoPasswords);
+    assert_eq!(route(&app, cx), Route::Passwords);
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_state()),
+        LockState::Uninitialized
+    );
+
+    // Setup: the master field has focus; a weak password can't be used.
+    let passwords = cx.read(|cx| app.shell.read(cx).passwords().clone());
+    type_text(&app, cx, "short");
+    click(&app, cx, "vault-create");
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_state()),
+        LockState::Uninitialized
+    );
+
+    let master = cx.read(|cx| passwords.read(cx).master_input().clone());
+    cx.update_window(app.window, |_, window, cx| {
+        master.update(cx, |i, cx| {
+            i.set_value("plum-orbit-candle-9-meadow", window, cx)
+        });
+    })
+    .expect("window");
+    cx.run_until_parked();
+    // Tab to confirm, type it again, tick the box, create.
+    press(&app, cx, "tab");
+    type_text(&app, cx, "plum-orbit-candle-9-meadow");
+    click(&app, cx, "vault-ack");
+    click(&app, cx, "vault-create");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_state()),
+        LockState::Unlocked
+    );
+
+    // Items.
+    let id = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let fields = ItemFields {
+                title: "GitHub".into(),
+                username: "sam".into(),
+                password: "Tr0ub4dor&3-horse".into(),
+                urls: vec!["https://github.com".into()],
+                ..ItemFields::new(ItemKind::Login)
+            };
+            l.create_vault_item(&fields, cx).expect("create")
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| passwords.read(cx).ids().to_vec()), vec![id]);
+
+    // Select it from the search field with ↓, then ⌘C copies the password.
+    dispatch(&app, cx, GoPasswords);
+    press(&app, cx, "down");
+    assert_eq!(cx.read(|cx| passwords.read(cx).selected()), Some(id));
+    press(&app, cx, "cmd-c");
+    let copied = cx.read(|cx| cx.read_from_clipboard().and_then(|c| c.text()));
+    assert_eq!(copied.as_deref(), Some("Tr0ub4dor&3-horse"));
+    // …and it clears after the delay.
+    cx.executor().advance_clock(Duration::from_secs(31));
+    cx.run_until_parked();
+    let copied = cx.read(|cx| cx.read_from_clipboard().and_then(|c| c.text()));
+    assert!(copied.unwrap_or_default().is_empty(), "cleared");
+
+    // Lock drops everything; a wrong password doesn't unlock.
+    dispatch(&app, cx, LockVault);
+    assert_eq!(cx.read(|cx| lib.read(cx).vault_state()), LockState::Locked);
+    assert!(cx.read(|cx| lib.read(cx).vault().items().is_empty()));
+    dispatch(&app, cx, GoPasswords);
+    type_text(&app, cx, "not the password");
+    press(&app, cx, "enter");
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| lib.read(cx).vault_state()), LockState::Locked);
+
+    // The right one does, and the item is back.
+    cx.update_window(app.window, |_, window, cx| {
+        window.dispatch_action(Box::new(keepstone_desktop::actions::GoPasswords), cx)
+    })
+    .expect("window");
+    cx.run_until_parked();
+    let unlock_task = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.unlock_vault(
+                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                cx,
+            )
+        })
+    });
+    unlock_task.detach();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_state()),
+        LockState::Unlocked
+    );
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_item(id).map(|i| i.title().to_owned()))
+            .as_deref(),
+        Some("GitHub")
+    );
+}
+
+#[gpui_kit::test]
+fn vault_auto_locks_after_idle(cx: &mut TestAppContext) {
+    use keepstone_core::vault::lock::{AutoLock, LockState};
+    use keepstone_desktop::actions::GoPasswords;
+
+    let app = launch(cx);
+    let lib = library(&app, cx);
+    cx.update(|cx| {
+        lib.update(cx, |l, _| {
+            l.set_kdf_params_for_tests(keepstone_crypto::KdfParams::MINIMUM)
+        });
+        keepstone_desktop::vault_prefs::update(cx, |p| p.auto_lock = AutoLock::OneMinute);
+    });
+    dispatch(&app, cx, GoPasswords);
+    let setup = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.set_up_vault(
+                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                cx,
+            )
+        })
+    });
+    setup.detach();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_state()),
+        LockState::Unlocked
+    );
+    // Idle is measured on the real clock; pretend the last activity was long ago.
+    cx.update(|cx| {
+        lib.update(cx, |l, _| {
+            l.backdate_vault_activity_for_tests(Duration::from_secs(120))
+        })
+    });
+    cx.executor().advance_clock(Duration::from_secs(11));
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| lib.read(cx).vault_state()), LockState::Locked);
+}
+
+/// An unlocked vault on the Passwords screen (fast KDF).
+fn unlocked_vault(cx: &mut TestAppContext) -> App {
+    use keepstone_desktop::actions::GoPasswords;
+    let app = launch(cx);
+    let lib = library(&app, cx);
+    cx.update(|cx| {
+        lib.update(cx, |l, _| {
+            l.set_kdf_params_for_tests(keepstone_crypto::KdfParams::MINIMUM)
+        })
+    });
+    dispatch(&app, cx, GoPasswords);
+    let setup = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.set_up_vault(
+                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                cx,
+            )
+        })
+    });
+    setup.detach();
+    cx.run_until_parked();
+    app
+}
+
+#[gpui_kit::test]
+fn locking_wipes_unsaved_drafts_and_closes_the_generator(cx: &mut TestAppContext) {
+    use gpui_kit::component::WindowExt as _;
+    use keepstone_core::vault::ItemKind;
+    use keepstone_core::vault::lock::LockState;
+    use keepstone_desktop::actions::{GeneratePassword, LockVault};
+
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    let passwords = cx.read(|cx| app.shell.read(cx).passwords().clone());
+    let pane = cx.read(|cx| passwords.read(cx).pane().clone());
+    cx.update_window(app.window, |_, window, cx| {
+        pane.update(cx, |p, cx| {
+            p.start_new(ItemKind::Login, window, cx);
+            p.type_draft_password_for_tests("half-typed-secret", window, cx);
+        });
+    })
+    .expect("window");
+    cx.run_until_parked();
+    assert!(!cx.read(|cx| pane.read(cx).draft_is_empty(cx)));
+
+    dispatch(&app, cx, GeneratePassword);
+    let open = cx
+        .update_window(app.window, |_, window, cx| window.has_active_dialog(cx))
+        .expect("window");
+    assert!(open, "generator open");
+
+    dispatch(&app, cx, LockVault);
+    assert_eq!(cx.read(|cx| lib.read(cx).vault_state()), LockState::Locked);
+    assert!(
+        cx.read(|cx| pane.read(cx).draft_is_empty(cx)),
+        "draft wiped"
+    );
+    assert!(!cx.read(|cx| pane.read(cx).is_editing()));
+    let open = cx
+        .update_window(app.window, |_, window, cx| window.has_active_dialog(cx))
+        .expect("window");
+    assert!(!open, "generator closed on lock");
+}
+
+#[gpui_kit::test]
+fn waking_from_sleep_locks_the_vault(cx: &mut TestAppContext) {
+    use keepstone_core::vault::lock::LockState;
+
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    let passwords = cx.read(|cx| app.shell.read(cx).passwords().clone());
+    cx.update(|cx| passwords.update(cx, |p, _| p.pretend_slept_for_tests()));
+    cx.executor().advance_clock(Duration::from_secs(11));
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| lib.read(cx).vault_state()), LockState::Locked);
+}

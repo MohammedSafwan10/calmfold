@@ -14,6 +14,8 @@ pub mod paths;
 pub mod perf;
 pub mod shell;
 pub mod ui_state;
+pub mod vault;
+pub mod vault_prefs;
 pub mod views;
 
 use anyhow::{Context as _, Result};
@@ -54,6 +56,7 @@ pub fn start(
 ) -> Result<(AnyWindowHandle, Entity<AppShell>)> {
     gpui_kit::init(cx);
     keepstone_ui::init(paths.appearance.clone(), cx);
+    vault_prefs::init(&paths.data_dir, cx);
     // The note editor's own keys first: ours are bound after, so they win on a tie.
     zorite_editor::bind_keys(cx);
     actions::bind(cx);
@@ -131,6 +134,12 @@ pub fn start(
                 habits.update(cx, |h, cx| h.set_tab(tab, cx));
             }
         }
+        // KEEPSTONE_DEV_VAULT=<password> (debug builds only): set up or unlock
+        // the vault with that password and add sample items to an empty one.
+        #[cfg(debug_assertions)]
+        if let Ok(password) = std::env::var("KEEPSTONE_DEV_VAULT") {
+            dev_vault(window, shell.clone(), password, cx);
+        }
         // KEEPSTONE_DEV_NOTE=<title>: open that note with the caret at the end of its body.
         if let Ok(title) = std::env::var("KEEPSTONE_DEV_NOTE") {
             window.update(cx, |_, window, cx| {
@@ -140,4 +149,154 @@ pub fn start(
         }
     }
     Ok((window, shell))
+}
+
+/// Debug-only: unlock (or create) the vault and fill an empty one with
+/// sample items, for screenshots and manual testing.
+#[cfg(debug_assertions)]
+fn dev_vault(window: AnyWindowHandle, shell: Entity<AppShell>, password: String, cx: &mut App) {
+    let library = shell.read(cx).library().clone();
+    use keepstone_core::vault::lock::LockState;
+    use keepstone_core::vault::{ItemFields, ItemKind};
+    use keepstone_crypto::SecretString;
+    let fresh = library.read(cx).vault_state() == LockState::Uninitialized;
+    let (setup, unlock) = library.update(cx, |lib, cx| {
+        if fresh {
+            (
+                Some(lib.set_up_vault(SecretString::from(password), cx)),
+                None,
+            )
+        } else {
+            (
+                None,
+                Some(lib.unlock_vault(SecretString::from(password), cx)),
+            )
+        }
+    });
+    cx.spawn(async move |cx| {
+        let opened = match (setup, unlock) {
+            (Some(t), _) => t.await.is_ok(),
+            (_, Some(t)) => matches!(t.await, Ok(true)),
+            _ => false,
+        };
+        if !opened {
+            eprintln!("keepstone: KEEPSTONE_DEV_VAULT couldn't open the vault");
+            return;
+        }
+        library.update(cx, |lib, cx| {
+            if lib.vault().count(vault::VaultFilter::All) > 0 {
+                return;
+            }
+            let login =
+                |title: &str, user: &str, pw: &str, url: &str, totp: &str, tags: &[&str]| {
+                    ItemFields {
+                        title: title.into(),
+                        username: user.into(),
+                        password: pw.into(),
+                        urls: vec![url.into()],
+                        totp: totp.into(),
+                        tags: tags.iter().map(|t| (*t).to_owned()).collect(),
+                        ..ItemFields::new(ItemKind::Login)
+                    }
+                };
+            let rows = vec![
+                (
+                    login(
+                        "GitHub",
+                        "sam@example.com",
+                        "Tangy-Velvet-Orbit-42!",
+                        "https://github.com/login",
+                        "JBSWY3DPEHPK3PXP",
+                        &["work"],
+                    ),
+                    true,
+                ),
+                (
+                    login(
+                        "Gmail",
+                        "sam@example.com",
+                        "hunter2",
+                        "https://mail.google.com",
+                        "",
+                        &[],
+                    ),
+                    false,
+                ),
+                (
+                    login(
+                        "Amazon",
+                        "sam@example.com",
+                        "Tangy-Velvet-Orbit-42!",
+                        "https://amazon.com",
+                        "",
+                        &["shopping"],
+                    ),
+                    false,
+                ),
+                (
+                    login(
+                        "Netflix",
+                        "sam.family",
+                        "q7#Lp2!xVz9rT4mK",
+                        "https://netflix.com",
+                        "",
+                        &["home"],
+                    ),
+                    true,
+                ),
+                (
+                    login(
+                        "Figma",
+                        "sam@studio.io",
+                        "Walrus-Quiet-Ember-Trumpet-7",
+                        "https://figma.com",
+                        "",
+                        &["work"],
+                    ),
+                    false,
+                ),
+                (
+                    login(
+                        "Home router",
+                        "admin",
+                        "password123",
+                        "192.168.1.1",
+                        "",
+                        &["home"],
+                    ),
+                    false,
+                ),
+                (
+                    ItemFields {
+                        title: "Travel Visa".into(),
+                        cardholder: "SAM RIVERA".into(),
+                        number: "4111 1111 1111 4242".into(),
+                        expiry: "08/29".into(),
+                        cvv: "123".into(),
+                        ..ItemFields::new(ItemKind::Card)
+                    },
+                    false,
+                ),
+                (
+                    ItemFields {
+                        title: "Home Wi-Fi".into(),
+                        notes: "Network: Rivera-5G\nPassword: plum orbit candle".into(),
+                        ..ItemFields::new(ItemKind::Note)
+                    },
+                    false,
+                ),
+            ];
+            if let Err(err) = lib.import_vault_items(rows, cx) {
+                eprintln!("keepstone: sample vault items failed: {err:#}");
+            }
+        });
+        // KEEPSTONE_DEV_VAULT_ITEM=<title>: open that item.
+        if let Ok(title) = std::env::var("KEEPSTONE_DEV_VAULT_ITEM") {
+            _ = window.update(cx, |_, window, cx| {
+                let passwords = shell.read(cx).passwords().clone();
+                passwords.update(cx, |p, cx| p.select_for_dev(&title, window, cx));
+            });
+        }
+    })
+    .detach();
 }

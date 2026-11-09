@@ -10,6 +10,14 @@ use anyhow::{Context as _, Result};
 use gpui_kit::{Context, EventEmitter};
 use std::collections::HashMap;
 use std::ops::Range;
+use std::time::SystemTime;
+
+use keepstone_core::VaultItemId;
+use keepstone_core::vault::lock::LockState;
+use keepstone_core::vault::{ItemFields, VaultItem};
+use keepstone_crypto::{KdfParams, SecretString};
+
+use crate::vault::{KdfInput, VaultFilter, VaultSession, derive};
 
 use keepstone_core::{
     Date, DateTime, Event, EventId, Habit, HabitId, Note, NoteId, Occurrence, Priority, Project,
@@ -24,10 +32,19 @@ pub enum LibraryEvent {
     TasksChanged,
     EventsChanged,
     HabitsChanged,
+    /// Locked, unlocked, or an item changed.
+    VaultChanged,
 }
 
 pub struct Library {
     store: Store,
+    vault: VaultSession,
+    /// Argon2 cost for new vaults and password changes (tests lower it).
+    kdf: KdfParams,
+    /// Last time the user did anything while the vault was unlocked. Wall
+    /// clock on purpose: `Instant` stops while macOS sleeps, so time asleep
+    /// would not count as idle.
+    vault_activity: SystemTime,
 }
 
 impl EventEmitter<LibraryEvent> for Library {}
@@ -35,7 +52,17 @@ impl EventEmitter<LibraryEvent> for Library {}
 impl Library {
     #[must_use]
     pub fn new(store: Store) -> Self {
-        Self { store }
+        let vault = VaultSession::load(&store).unwrap_or_else(|err| {
+            eprintln!("keepstone: couldn't read the vault header: {err:#}");
+            // Locked, never "set up": setup must not overwrite a header it couldn't read.
+            VaultSession::locked()
+        });
+        Self {
+            store,
+            vault,
+            kdf: KdfParams::RECOMMENDED,
+            vault_activity: SystemTime::now(),
+        }
     }
 
     // ---- Notes -----------------------------------------------------------
@@ -756,6 +783,232 @@ impl Library {
 }
 
 impl Library {
+    // ---- Vault -----------------------------------------------------------
+
+    pub fn vault(&self) -> &VaultSession {
+        &self.vault
+    }
+
+    pub fn vault_state(&self) -> LockState {
+        self.vault.state()
+    }
+
+    #[doc(hidden)]
+    pub fn set_kdf_params_for_tests(&mut self, params: KdfParams) {
+        self.kdf = params;
+    }
+
+    #[doc(hidden)]
+    pub fn backdate_vault_activity_for_tests(&mut self, by: std::time::Duration) {
+        if let Some(earlier) = SystemTime::now().checked_sub(by) {
+            self.vault_activity = earlier;
+        }
+    }
+
+    /// Records activity, postponing auto-lock.
+    pub fn touch_vault(&mut self) {
+        self.vault_activity = SystemTime::now();
+    }
+
+    /// Time since the last activity. A clock moved backwards counts as
+    /// long idle, so the vault locks rather than stays open.
+    pub fn vault_idle(&self) -> std::time::Duration {
+        SystemTime::now()
+            .duration_since(self.vault_activity)
+            .unwrap_or(std::time::Duration::MAX)
+    }
+
+    /// Creates the vault. Argon2 runs in the background; the task resolves
+    /// once the vault is set up and unlocked.
+    pub fn set_up_vault(
+        &mut self,
+        password: SecretString,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<()>> {
+        let input = match KdfInput::fresh(self.kdf) {
+            Ok(i) => i,
+            Err(err) => return gpui_kit::Task::ready(Err(err)),
+        };
+        cx.spawn(async move |this, cx| {
+            let kek = cx
+                .background_executor()
+                .spawn(async move { derive(&password, &input.salt, input.params) })
+                .await?;
+            this.update(cx, |lib, cx| {
+                lib.vault
+                    .finish_setup(&mut lib.store, input, &kek, clock::now())?;
+                lib.touch_vault();
+                cx.emit(LibraryEvent::VaultChanged);
+                anyhow::Ok(())
+            })?
+        })
+    }
+
+    /// Unlocks; resolves to `false` for a wrong password.
+    pub fn unlock_vault(
+        &mut self,
+        password: SecretString,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<bool>> {
+        let input = match self.vault.start_unlock(&self.store) {
+            Ok(i) => i,
+            Err(err) => return gpui_kit::Task::ready(Err(err)),
+        };
+        cx.emit(LibraryEvent::VaultChanged);
+        cx.spawn(async move |this, cx| {
+            let kek = cx
+                .background_executor()
+                .spawn(async move { derive(&password, &input.salt, input.params) })
+                .await;
+            this.update(cx, |lib, cx| {
+                let ok = lib.vault.finish_unlock(&lib.store, kek)?;
+                if ok {
+                    lib.touch_vault();
+                }
+                cx.emit(LibraryEvent::VaultChanged);
+                anyhow::Ok(ok)
+            })?
+        })
+    }
+
+    pub fn lock_vault(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.vault.state(),
+            LockState::Unlocked | LockState::Unlocking
+        ) {
+            self.vault.lock();
+            cx.emit(LibraryEvent::VaultChanged);
+        }
+    }
+
+    /// Changes the master password; resolves to `false` if `current` is wrong.
+    pub fn change_master_password(
+        &mut self,
+        current: SecretString,
+        new: SecretString,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<bool>> {
+        let (current_input, new_input) = match (
+            VaultSession::current_kdf(&self.store),
+            KdfInput::fresh(self.kdf),
+        ) {
+            (Ok(a), Ok(b)) => (a, b),
+            (Err(e), _) | (_, Err(e)) => return gpui_kit::Task::ready(Err(e)),
+        };
+        cx.spawn(async move |this, cx| {
+            let (old_kek, new_kek) = cx
+                .background_executor()
+                .spawn(async move {
+                    anyhow::Ok((
+                        derive(&current, &current_input.salt, current_input.params)?,
+                        derive(&new, &new_input.salt, new_input.params)?,
+                    ))
+                })
+                .await?;
+            this.update(cx, |lib, cx| {
+                let ok = lib.vault.change_password(
+                    &mut lib.store,
+                    &old_kek,
+                    new_input,
+                    &new_kek,
+                    clock::now(),
+                )?;
+                cx.emit(LibraryEvent::VaultChanged);
+                anyhow::Ok(ok)
+            })?
+        })
+    }
+
+    pub fn vault_list(&mut self, filter: VaultFilter, query: &str) -> Vec<VaultItemId> {
+        self.vault.list(filter, query, clock::now())
+    }
+
+    pub fn vault_item(&self, id: VaultItemId) -> Option<VaultItem> {
+        self.vault.item(id).cloned()
+    }
+
+    pub fn create_vault_item(
+        &mut self,
+        fields: &ItemFields,
+        cx: &mut Context<Self>,
+    ) -> Result<VaultItemId> {
+        let id = self.vault.create(&mut self.store, fields, clock::now())?;
+        self.touch_vault();
+        cx.emit(LibraryEvent::VaultChanged);
+        Ok(id)
+    }
+
+    pub fn update_vault_item(
+        &mut self,
+        id: VaultItemId,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut VaultItem) -> keepstone_core::DomainResult<bool>,
+    ) -> Result<()> {
+        self.vault.update(&mut self.store, id, change)?;
+        self.touch_vault();
+        cx.emit(LibraryEvent::VaultChanged);
+        Ok(())
+    }
+
+    pub fn duplicate_vault_item(
+        &mut self,
+        id: VaultItemId,
+        cx: &mut Context<Self>,
+    ) -> Result<VaultItemId> {
+        let copy = self
+            .vault
+            .item(id)
+            .context("That item no longer exists")?
+            .duplicate(clock::now())?;
+        let new_id = copy.id();
+        self.vault.put(&mut self.store, vec![copy])?;
+        cx.emit(LibraryEvent::VaultChanged);
+        Ok(new_id)
+    }
+
+    pub fn delete_vault_items(
+        &mut self,
+        ids: &[VaultItemId],
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.vault.delete(&mut self.store, ids)?;
+        cx.emit(LibraryEvent::VaultChanged);
+        Ok(())
+    }
+
+    /// Imports parsed rows; returns how many were added.
+    pub fn import_vault_items(
+        &mut self,
+        rows: Vec<(ItemFields, bool)>,
+        cx: &mut Context<Self>,
+    ) -> Result<usize> {
+        let now = clock::now();
+        let mut items = Vec::with_capacity(rows.len());
+        for (fields, favorite) in rows {
+            if let Ok(mut item) = VaultItem::new(&fields, now) {
+                if favorite {
+                    item.set_favorite(true, now)?;
+                }
+                items.push(item);
+            }
+        }
+        let n = items.len();
+        self.vault.put(&mut self.store, items)?;
+        cx.emit(LibraryEvent::VaultChanged);
+        Ok(n)
+    }
+
+    pub fn vault_health(&mut self) -> keepstone_core::vault::health::Report {
+        self.vault.health(clock::now())
+    }
+
+    pub fn vault_strength(
+        &mut self,
+        id: VaultItemId,
+    ) -> Option<keepstone_core::vault::health::Strength> {
+        self.vault.strength_of(id)
+    }
+
     // ---- Habits ----------------------------------------------------------
 
     /// Habits with today's state, the last 7 days and their statistics.

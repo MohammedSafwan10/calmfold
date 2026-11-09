@@ -38,6 +38,31 @@ compromised OS, physical attacks on unlocked RAM.
 - Auto-lock on idle/sleep, clipboard auto-clear for copied passwords, no
   secrets in search index or previews.
 
+## Vault as built (2026-11-09)
+
+- Hierarchy and format: ADR 0005. Storage holds the header and sealed blobs
+  only; titles, URLs and favorites are encrypted too.
+- Unlock/setup/password change derive on a background thread; the UI never
+  blocks on Argon2. A result arriving after the user locked again is ignored.
+- **Locking** (manual ⌃⌘L, idle timer, background, waking from sleep) drops
+  the vault key and every decrypted item, wipes unsaved drafts and the
+  search field, and closes an open generator.
+- **Idle** is measured on the wall clock (`SystemTime`), because `Instant`
+  stops while macOS sleeps. A 10 s tick that arrives ≥ 60 s late means the
+  Mac slept: the vault locks on wake.
+- **Not detected:** the macOS lock screen without sleep. GPUI exposes no
+  hook and `unsafe` FFI is forbidden, so use "Lock when Keepstone is in the
+  background" for that.
+- **Randomness** never falls back: if the OS RNG fails, nothing is generated
+  (the generator shows an error; a stuck source stops after 1,000 tries).
+- **Clipboard:** copied secrets are cleared after 15/30/90 s, only if the
+  clipboard still holds them. macOS clipboard history apps may still keep a copy.
+- **Memory:** decrypted items zero on drop. Text in input fields lives in
+  GPUI's input state and its undo history, which Keepstone clears but can't
+  zero; that's within "malware while unlocked" (out of scope).
+- **Health** (weak/reused/old) is computed locally with zxcvbn; no breach
+  lookups, nothing leaves the device.
+
 ## Keychain policy
 
 - Unsigned `cargo run` binaries change their code signature on every build,

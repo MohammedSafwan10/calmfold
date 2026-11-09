@@ -27,10 +27,11 @@ use keepstone_core::NoteId;
 use keepstone_ui::appearance::{self, ThemePreference};
 
 use crate::actions::{
-    ExportNotes, FindInNote, FindNext, FindPrevious, GoCalendar, GoHabits, GoNotes, GoSettings,
-    GoTasks, GoToday, ImportNotes, NewEvent, NewHabit, NewNote, NewProject, NewTask,
-    OpenCommandPalette, OpenDailyNote, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar,
-    UseDarkTheme, UseLightTheme, UseSystemTheme,
+    ChangeMasterPassword, ExportNotes, FindInNote, FindNext, FindPrevious, GeneratePassword,
+    GoCalendar, GoHabits, GoNotes, GoPasswords, GoSettings, GoTasks, GoToday, ImportNotes,
+    LockVault, NewEvent, NewHabit, NewLogin, NewNote, NewProject, NewTask, OpenCommandPalette,
+    OpenDailyNote, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseDarkTheme,
+    UseLightTheme, UseSystemTheme,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
@@ -39,6 +40,7 @@ use crate::ui_state::{self, LayoutState, LayoutStore};
 use crate::views::calendar::CalendarView;
 use crate::views::habits::HabitsView;
 use crate::views::notes::NotesView;
+use crate::views::passwords::PasswordsView;
 use crate::views::settings::SettingsView;
 use crate::views::tasks::TasksView;
 use crate::views::today::TodayView;
@@ -69,6 +71,7 @@ pub struct AppShell {
     tasks: Entity<TasksView>,
     calendar: Entity<CalendarView>,
     habits: Entity<HabitsView>,
+    passwords: Entity<PasswordsView>,
     settings: Entity<SettingsView>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -95,6 +98,7 @@ impl AppShell {
         let tasks = cx.new(|cx| TasksView::new(library.clone(), window, cx));
         let calendar = cx.new(|cx| CalendarView::new(library.clone(), window, cx));
         let habits = cx.new(|cx| HabitsView::new(library.clone(), window, cx));
+        let passwords = cx.new(|cx| PasswordsView::new(library.clone(), window, cx));
         let settings = cx.new(|cx| SettingsView::new(paths.data_dir.clone(), cx));
 
         let subscriptions = vec![
@@ -130,7 +134,14 @@ impl AppShell {
                 appearance::system_appearance_changed(window, cx);
             }),
             // Refresh "today" when the window comes back to the front (date may have changed).
+            // Any key counts as activity for vault auto-lock.
+            cx.observe_keystrokes(|this, _, _, cx| {
+                this.library.update(cx, |lib, _| lib.touch_vault());
+            }),
             cx.observe_window_activation(window, |this, window, cx| {
+                if !window.is_window_active() && crate::vault_prefs::get(cx).lock_on_hide {
+                    this.library.update(cx, |lib, cx| lib.lock_vault(cx));
+                }
                 if window.is_window_active() {
                     this.today.update(cx, |today, cx| today.reload(cx));
                     this.tasks
@@ -154,6 +165,7 @@ impl AppShell {
             tasks,
             calendar,
             habits,
+            passwords,
             settings,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -207,6 +219,11 @@ impl AppShell {
                 self.tasks
                     .update(cx, |tasks, cx| tasks.show_project(id, cx));
             }
+            NavTarget::Vault(filter) => {
+                self.navigate(Route::Passwords, window, cx);
+                self.passwords
+                    .update(cx, |p, cx| p.set_filter(filter, window, cx));
+            }
         }
     }
 
@@ -220,6 +237,9 @@ impl AppShell {
             }
             NavTarget::Project(id) => {
                 self.route == Route::Tasks && self.tasks.read(cx).project() == Some(id)
+            }
+            NavTarget::Vault(filter) => {
+                self.route == Route::Passwords && self.passwords.read(cx).filter() == filter
             }
             NavTarget::DailyNote => {
                 self.route == Route::Notes
@@ -263,6 +283,7 @@ impl AppShell {
                 .update(cx, |notes, cx| notes.ensure_selection(window, cx)),
             Route::Calendar => self.calendar.update(cx, |c, cx| c.reload(cx)),
             Route::Habits => self.habits.update(cx, |h, cx| h.reload(cx)),
+            Route::Passwords => {}
             Route::Tasks | Route::Settings => {}
         }
         self.focus_route(window, cx);
@@ -276,6 +297,12 @@ impl AppShell {
             Route::Tasks => self.tasks.focus_handle(cx),
             Route::Calendar => self.calendar.focus_handle(cx),
             Route::Habits => self.habits.focus_handle(cx),
+            Route::Passwords => {
+                // The field that matters: master password, unlock, or search.
+                self.passwords
+                    .update(cx, |p, cx| p.focus_primary(window, cx));
+                return;
+            }
             Route::Settings => self.settings.focus_handle(cx),
         };
         window.focus(&handle, cx);
@@ -373,6 +400,10 @@ impl AppShell {
 
     pub fn habits(&self) -> &Entity<HabitsView> {
         &self.habits
+    }
+
+    pub fn passwords(&self) -> &Entity<PasswordsView> {
+        &self.passwords
     }
 
     pub fn layout(&self, cx: &App) -> LayoutState {
@@ -753,6 +784,30 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["routine", "streak", "check in"],
         ),
         cmd(
+            "Go to Passwords",
+            Lucide::KeyRound,
+            Box::new(GoPasswords),
+            &["vault", "password manager", "logins", "cards"],
+        ),
+        cmd(
+            "New login",
+            Lucide::KeyRound,
+            Box::new(NewLogin),
+            &["password", "vault", "account", "create"],
+        ),
+        cmd(
+            "Generate password",
+            Lucide::Dices,
+            Box::new(GeneratePassword),
+            &["random", "passphrase", "vault"],
+        ),
+        cmd(
+            "Lock vault",
+            Lucide::LockKeyhole,
+            Box::new(LockVault),
+            &["passwords", "secure"],
+        ),
+        cmd(
             "Open settings",
             Lucide::Settings,
             Box::new(GoSettings),
@@ -841,6 +896,31 @@ pub fn register_commands(cx: &mut App) {
     cx.on_action(|_: &NewEvent, cx| with_shell(cx, |s, w, cx| s.new_event(w, cx)));
     cx.on_action(|_: &GoHabits, cx| with_shell(cx, |s, w, cx| s.navigate(Route::Habits, w, cx)));
     cx.on_action(|_: &NewHabit, cx| with_shell(cx, |s, w, cx| s.new_habit(w, cx)));
+    cx.on_action(|_: &GoPasswords, cx| {
+        with_shell(cx, |s, w, cx| s.navigate(Route::Passwords, w, cx))
+    });
+    cx.on_action(|_: &LockVault, cx| {
+        with_shell(cx, |s, _, cx| {
+            s.library.update(cx, |lib, cx| lib.lock_vault(cx))
+        })
+    });
+    cx.on_action(|_: &NewLogin, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.navigate(Route::Passwords, w, cx);
+            s.passwords.update(cx, |p, cx| p.new_login(w, cx));
+        })
+    });
+    cx.on_action(|_: &ChangeMasterPassword, cx| {
+        with_shell(cx, |s, w, cx| {
+            crate::views::passwords::open_change_password(s.library.clone(), w, cx)
+        })
+    });
+    cx.on_action(|_: &GeneratePassword, cx| {
+        with_shell(cx, |s, w, cx| {
+            let library = s.library.clone();
+            crate::views::vault_generator::open_generator(None, &library, w, cx);
+        })
+    });
     cx.on_action(|_: &GoSettings, cx| {
         with_shell(cx, |s, w, cx| s.navigate(Route::Settings, w, cx))
     });
@@ -915,11 +995,16 @@ impl Render for AppShell {
             Route::Tasks => self.tasks.clone().into(),
             Route::Calendar => self.calendar.clone().into(),
             Route::Habits => self.habits.clone().into(),
+            Route::Passwords => self.passwords.clone().into(),
             Route::Settings => self.settings.clone().into(),
         };
         let theme = cx.theme();
         v_flex()
             .track_focus(&self.focus)
+            // Pointer activity also postpones auto-lock (no re-render).
+            .on_mouse_move(cx.listener(|this, _, _, cx| {
+                this.library.update(cx, |lib, _| lib.touch_vault());
+            }))
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)

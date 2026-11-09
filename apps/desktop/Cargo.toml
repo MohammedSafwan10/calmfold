@@ -19,6 +19,7 @@ path = "src/main.rs"
 keepstone-core.workspace = true
 keepstone-storage.workspace = true
 keepstone-ui.workspace = true
+keepstone-crypto.workspace = true
 gpui-kit.workspace = true
 zorite-editor.workspace = true
 ratex-gpui.workspace = true

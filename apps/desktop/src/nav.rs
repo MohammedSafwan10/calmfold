@@ -6,6 +6,9 @@
 
 use gpui_kit::assets::IconName as Lucide;
 
+use keepstone_core::vault::ItemKind;
+
+use crate::vault::VaultFilter;
 use crate::views::Route;
 use crate::views::tasks::TaskTab;
 
@@ -18,6 +21,7 @@ pub enum NavTarget {
     NotesTrash,
     DailyNote,
     Project(keepstone_core::ProjectId),
+    Vault(crate::vault::VaultFilter),
 }
 
 /// Which count badge an entry shows, if any.
@@ -141,6 +145,50 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
             route: Route::Habits,
             badge: Badge::HabitsLeft,
             children: &[],
+            dynamic: None,
+        },
+        NavEntry {
+            label: "Passwords",
+            icon: Lucide::KeyRound,
+            route: Route::Passwords,
+            badge: Badge::None,
+            children: &[
+                NavChild {
+                    label: "All items",
+                    target: NavTarget::Vault(VaultFilter::All),
+                    badge: Badge::None,
+                },
+                NavChild {
+                    label: "Favorites",
+                    target: NavTarget::Vault(VaultFilter::Favorites),
+                    badge: Badge::None,
+                },
+                NavChild {
+                    label: "Logins",
+                    target: NavTarget::Vault(VaultFilter::Kind(ItemKind::Login)),
+                    badge: Badge::None,
+                },
+                NavChild {
+                    label: "Cards",
+                    target: NavTarget::Vault(VaultFilter::Kind(ItemKind::Card)),
+                    badge: Badge::None,
+                },
+                NavChild {
+                    label: "Secure notes",
+                    target: NavTarget::Vault(VaultFilter::Kind(ItemKind::Note)),
+                    badge: Badge::None,
+                },
+                NavChild {
+                    label: "Password health",
+                    target: NavTarget::Vault(VaultFilter::Health),
+                    badge: Badge::None,
+                },
+                NavChild {
+                    label: "Trash",
+                    target: NavTarget::Vault(VaultFilter::Trash),
+                    badge: Badge::None,
+                },
+            ],
             dynamic: None,
         },
     ],

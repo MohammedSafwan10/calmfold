@@ -19,7 +19,7 @@ pub use error::{CryptoError, CryptoResult};
 pub use kdf::{KdfParams, Salt, derive_key};
 pub use key::SecretKey;
 pub use secrecy::{ExposeSecret, SecretString};
-pub use zeroize::Zeroizing;
+pub use zeroize::{Zeroize, Zeroizing};
 
 /// Fills `buf` with bytes from the operating system's CSPRNG.
 pub fn random_bytes(buf: &mut [u8]) -> CryptoResult<()> {

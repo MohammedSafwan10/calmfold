@@ -6,7 +6,7 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 - Branch `main`. `scripts/check.sh` passes (fmt, clippy `-D warnings`, all tests).
 - Done from `docs/TASKS.md`: editor perf (to 50 KB), find, code colors, Mermaid,
-  spell-check, 20 themes + typography, Calendar (§4), Habits (§5), **Today rebuild** (§6).
+  spell-check, 20 themes + typography, Calendar (§4), Habits (§5), Today rebuild (§6), **Password vault** (§7).
 - Calendar: `core::event` (+ quick add `event_quick_add`), migration 0003,
   `storage/events.rs`, `Library::calendar` / event methods (`EventsChanged`),
   `views/calendar.rs` (state, header, agenda), `calendar_grid.rs` (month, week/day
@@ -16,7 +16,7 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Next steps (in order)
 
-`docs/TASKS.md` §7 Password vault; then the
+Everything in `docs/TASKS.md` is done except the
 500 KB+ editor item in §1.
 
 ## Known issues / risks
@@ -34,6 +34,8 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 - "System" reduce motion is read once at startup.
 - Storage limits (VACUUM + FTS rowid, ASCII-only `lower()`): see `crates/storage/AGENTS.md`.
 - Global quick-capture hotkey and tray icon are unproven with GPUI; prototype first.
+- Vault: no encrypted export yet; Touch ID only in signed release builds
+  (not built); lock screen without sleep isn't detected.
 - Calendar: repeating events can't be dragged (only whole-series edits exist; no
   per-occurrence exceptions yet). Deleted events have no trash view: Undo is the
   way back. No time zones (local wall-clock times) and no ICS import yet.
@@ -51,6 +53,20 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 ```
 
 ## Log
+
+### 2026-11-09: Password vault
+
+- ADR 0005 (key hierarchy, totp-rs, zxcvbn, EFF list, csv). `core::vault`
+  (items, lock machine, generator, health, totp, import), migration 0005,
+  `storage/vault.rs` (ciphertext only), `apps/desktop/src/vault.rs` (crypto
+  glue, 7 unit tests incl. 2,000-item unlock), `vault_prefs.rs`, screens
+  `passwords.rs`, `vault_item.rs`, `vault_generator.rs`, Settings → Passwords.
+- External review (GPT) found 4 gaps, all fixed with tests: drafts survived
+  locking, generator stayed open after lock, RNG failure fell back to 0, no
+  sleep handling (now wall-clock idle + wake detection). Lock screen without
+  sleep is still undetectable: documented in `docs/security.md`.
+- Dev: `KEEPSTONE_DEV_VAULT=<password>` (debug only) unlocks/creates a vault
+  with samples; `KEEPSTONE_DEV_VAULT_ITEM=<title>` selects one.
 
 ### 2026-11-09: Today rebuild
 

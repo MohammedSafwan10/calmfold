@@ -13,12 +13,15 @@ pub mod habit_widgets;
 pub mod habits;
 pub mod note_editor;
 pub mod notes;
+pub mod passwords;
 pub mod settings;
 pub mod task_detail;
 pub mod task_row;
 pub mod tasks;
 pub mod today;
 pub mod today_layout;
+pub mod vault_generator;
+pub mod vault_item;
 
 use keepstone_core::NoteId;
 
@@ -30,16 +33,18 @@ pub enum Route {
     Tasks,
     Calendar,
     Habits,
+    Passwords,
     Settings,
 }
 
 impl Route {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Today,
         Self::Notes,
         Self::Tasks,
         Self::Calendar,
         Self::Habits,
+        Self::Passwords,
         Self::Settings,
     ];
 
@@ -59,6 +64,7 @@ impl Route {
             Self::Tasks => "Tasks",
             Self::Calendar => "Calendar",
             Self::Habits => "Habits",
+            Self::Passwords => "Passwords",
             Self::Settings => "Settings",
         }
     }

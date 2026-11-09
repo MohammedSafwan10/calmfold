@@ -1,0 +1,1205 @@
+//! Passwords screen: setup → locked → unlocked.
+//!
+//! * **Setup** (no vault yet): choose a master password with a live strength
+//!   meter, confirm it, acknowledge it can't be recovered.
+//! * **Locked**: one password field. Argon2 runs in the background; the
+//!   button shows progress and the field keeps its text on a wrong password.
+//! * **Unlocked**: master–detail. Left: search, New, a virtualized list
+//!   (fine with thousands of items). Right: the item (`vault_item.rs`).
+//!
+//! The list filter comes from the sidebar (All, Favorites, kinds, Password
+//! health, Trash). Auto-lock: a 10-second tick locks after the idle time in
+//! Settings → Passwords; any key or pointer activity in the app resets it
+//! (`Library::touch_vault`, from the shell).
+//!
+//! Keyboard (list focused): ↑/↓ select, ⌘C copy password, ⇧⌘C copy
+//! username, ⌥⌘C copy the one-time code, Enter edit, ⌘⌫ move to trash.
+
+use std::ops::Range;
+use std::time::Duration;
+
+use gpui_kit::assets::IconName as Lucide;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::{
+    AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable, FontWeight,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task as GpuiTask,
+    TestSupportExt as _, UniformListScrollHandle, Window, div, rems, uniform_list,
+};
+use keepstone_core::VaultItemId;
+use keepstone_core::vault::health::{Strength, estimate};
+use keepstone_core::vault::lock::LockState;
+use keepstone_core::vault::{ItemKind, VaultItem};
+use keepstone_crypto::SecretString;
+use keepstone_ui::components::empty_state;
+
+use crate::actions::{
+    VAULT_CONTEXT, VaultCopyCode, VaultCopyPassword, VaultCopyUsername, VaultEditSelected,
+    VaultNextItem, VaultPreviousItem, VaultTrashSelected,
+};
+use crate::library::{Library, LibraryEvent};
+use crate::vault::VaultFilter;
+use crate::vault_prefs;
+use crate::views::vault_item::{PaneEvent, VaultItemPane, avatar, copy_field};
+
+/// Shortest master password we accept (zxcvbn must also say "Fair" or better).
+pub const MIN_MASTER_CHARS: usize = 10;
+const ROW_HEIGHT: f32 = 3.25;
+const AUTO_LOCK_TICK: Duration = Duration::from_secs(10);
+/// A tick arriving this late means the Mac slept (timers don't run then):
+/// lock on wake. Keepstone can't observe the lock screen itself (GPUI has no
+/// hook and the workspace forbids `unsafe` FFI), so this plus "Lock when in
+/// background" is the defense.
+const SLEEP_GAP: Duration = Duration::from_secs(60);
+
+pub struct PasswordsView {
+    library: Entity<Library>,
+    filter: VaultFilter,
+    search: Entity<InputState>,
+    ids: Vec<VaultItemId>,
+    selected: Option<VaultItemId>,
+    scroll: UniformListScrollHandle,
+    pane: Entity<VaultItemPane>,
+    // Setup
+    master: Entity<InputState>,
+    confirm: Entity<InputState>,
+    acknowledged: bool,
+    // Unlock
+    unlock: Entity<InputState>,
+    error: Option<SharedString>,
+    busy: bool,
+    list_focus: FocusHandle,
+    focus: FocusHandle,
+    _tick: GpuiTask<()>,
+    /// Wall-clock time of the last auto-lock tick (sleep detection).
+    last_tick: std::time::SystemTime,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl PasswordsView {
+    pub fn new(library: Entity<Library>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let masked = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .masked(true)
+                    .placeholder(placeholder)
+            })
+        };
+        let master = masked("Master password", window, cx);
+        let confirm = masked("Type it again", window, cx);
+        let unlock = masked("Master password", window, cx);
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search vault"));
+        let pane = cx.new(|cx| VaultItemPane::new(library.clone(), window, cx));
+        let subscriptions = vec![
+            cx.subscribe_in(&library, window, |this, _, event, window, cx| {
+                if *event == LibraryEvent::VaultChanged {
+                    this.refresh(window, cx);
+                }
+            }),
+            cx.subscribe_in(&search, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.refresh(window, cx);
+                }
+            }),
+            cx.subscribe_in(&master, window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.error = None;
+                    cx.notify();
+                }
+            }),
+            cx.subscribe_in(&confirm, window, |this, _, event, window, cx| match event {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { .. } => this.create_vault(window, cx),
+                _ => {}
+            }),
+            cx.subscribe_in(&unlock, window, |this, _, event, window, cx| match event {
+                InputEvent::PressEnter { .. } => this.unlock(window, cx),
+                InputEvent::Change => {
+                    this.error = None;
+                    cx.notify();
+                }
+                _ => {}
+            }),
+            cx.subscribe_in(&pane, window, |this, _, event, window, cx| match event {
+                PaneEvent::Created(id) | PaneEvent::Selected(id) => {
+                    this.selected = Some(*id);
+                    this.refresh(window, cx);
+                    this.scroll_to_selection();
+                }
+                PaneEvent::Removed => {
+                    this.selected = None;
+                    this.refresh(window, cx);
+                }
+            }),
+        ];
+        let tick = cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(AUTO_LOCK_TICK).await;
+                let alive = this.update(cx, |this, cx| this.check_auto_lock(cx));
+                if alive.is_err() {
+                    break;
+                }
+            }
+        });
+        let mut this = Self {
+            library,
+            filter: VaultFilter::All,
+            search,
+            ids: Vec::new(),
+            selected: None,
+            scroll: UniformListScrollHandle::new(),
+            pane,
+            master,
+            confirm,
+            acknowledged: false,
+            unlock,
+            error: None,
+            busy: false,
+            list_focus: cx.focus_handle(),
+            focus: cx.focus_handle(),
+            _tick: tick,
+            last_tick: std::time::SystemTime::now(),
+            _subscriptions: subscriptions,
+        };
+        this.refresh(window, cx);
+        this
+    }
+
+    pub fn filter(&self) -> VaultFilter {
+        self.filter
+    }
+
+    pub fn ids(&self) -> &[VaultItemId] {
+        &self.ids
+    }
+
+    pub fn selected(&self) -> Option<VaultItemId> {
+        self.selected
+    }
+
+    pub fn pane(&self) -> &Entity<VaultItemPane> {
+        &self.pane
+    }
+
+    pub fn master_input(&self) -> &Entity<InputState> {
+        &self.master
+    }
+
+    #[doc(hidden)]
+    pub fn select_for_dev(&mut self, title: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self.ids.iter().copied().find(|id| {
+            self.library
+                .read(cx)
+                .vault_item(*id)
+                .is_some_and(|i| i.title().eq_ignore_ascii_case(title))
+        });
+        self.select(id, window, cx);
+    }
+
+    pub fn set_filter(&mut self, filter: VaultFilter, window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter != filter {
+            self.filter = filter;
+            self.selected = None;
+            self.refresh(window, cx);
+        }
+    }
+
+    /// Where focus goes when the screen opens: the field that matters.
+    pub fn focus_primary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.library.read(cx).vault_state();
+        let input = match state {
+            LockState::Uninitialized => &self.master,
+            LockState::Locked | LockState::Unlocking => &self.unlock,
+            LockState::Unlocked => &self.search,
+        };
+        input.update(cx, |i, cx| i.focus(window, cx));
+    }
+
+    fn check_auto_lock(&mut self, cx: &mut Context<Self>) {
+        let now = std::time::SystemTime::now();
+        let gap = now.duration_since(self.last_tick).unwrap_or(Duration::MAX);
+        self.last_tick = now;
+        let lib = self.library.read(cx);
+        if lib.vault_state() != LockState::Unlocked {
+            return;
+        }
+        let idle = vault_prefs::get(cx).auto_lock.expired(lib.vault_idle());
+        let slept = gap >= SLEEP_GAP;
+        if idle || slept {
+            self.library.update(cx, |lib, cx| lib.lock_vault(cx));
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn pretend_slept_for_tests(&mut self) {
+        self.last_tick = std::time::SystemTime::UNIX_EPOCH;
+    }
+
+    fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.library.read(cx).vault_state();
+        if state != LockState::Unlocked {
+            // Locked: drop every trace of plaintext the screen holds, drafts too.
+            self.ids.clear();
+            self.selected = None;
+            self.pane.update(cx, |p, cx| p.discard(window, cx));
+            self.search.update(cx, |i, cx| i.set_value("", window, cx));
+            cx.notify();
+            return;
+        }
+        let query = self.search.read(cx).value().to_string();
+        let filter = self.filter;
+        self.ids = self
+            .library
+            .update(cx, |lib, _| lib.vault_list(filter, &query));
+        if self.selected.is_some_and(|id| !self.ids.contains(&id)) {
+            // Keep a just-edited item open even if it no longer matches.
+            let exists = self
+                .selected
+                .is_some_and(|id| self.library.read(cx).vault_item(id).is_some());
+            if !exists {
+                self.selected = None;
+            }
+        }
+        let selected = self.selected;
+        self.pane.update(cx, |p, cx| p.show(selected, window, cx));
+        cx.notify();
+    }
+
+    fn select(&mut self, id: Option<VaultItemId>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pane.read(cx).is_editing() && self.selected != id {
+            // Leaving an edit saves it, like closing a sheet.
+            self.pane.update(cx, |p, cx| p.save(window, cx));
+        }
+        self.selected = id;
+        self.pane.update(cx, |p, cx| p.show(id, window, cx));
+        self.scroll_to_selection();
+        cx.notify();
+    }
+
+    fn scroll_to_selection(&self) {
+        if let Some(ix) = self
+            .selected
+            .and_then(|id| self.ids.iter().position(|i| *i == id))
+        {
+            self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
+        }
+    }
+
+    fn step(&mut self, dir: i64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.ids.is_empty() {
+            return;
+        }
+        let current = self
+            .selected
+            .and_then(|id| self.ids.iter().position(|i| *i == id));
+        let next = match current {
+            None if dir > 0 => 0,
+            None => self.ids.len() - 1,
+            Some(i) => (i as i64 + dir).clamp(0, self.ids.len() as i64 - 1) as usize,
+        };
+        let id = self.ids[next];
+        self.select(Some(id), window, cx);
+    }
+
+    // ---- Setup and unlock -------------------------------------------------
+
+    fn master_estimate(&self, cx: &App) -> Option<keepstone_core::vault::health::Estimate> {
+        let text = self.master.read(cx).value();
+        (!text.is_empty()).then(|| estimate(&text, &["keepstone", "vault", "password"]))
+    }
+
+    /// Why "Create vault" is disabled, or `None` when it can run.
+    fn setup_problem(&self, cx: &App) -> Option<&'static str> {
+        let master = self.master.read(cx).value();
+        let confirm = self.confirm.read(cx).value();
+        if master.chars().count() < MIN_MASTER_CHARS {
+            return Some("Use at least 10 characters.");
+        }
+        if self
+            .master_estimate(cx)
+            .is_some_and(|e| e.strength < Strength::Fair)
+        {
+            return Some("Choose something harder to guess.");
+        }
+        if confirm.is_empty() {
+            return Some("Type the password again to confirm it.");
+        }
+        if master != confirm {
+            return Some("The two passwords don't match.");
+        }
+        if !self.acknowledged {
+            return Some("Confirm you understand it can't be recovered.");
+        }
+        None
+    }
+
+    fn create_vault(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.setup_problem(cx).is_some() {
+            return;
+        }
+        let password = SecretString::from(self.master.read(cx).value().to_string());
+        self.busy = true;
+        cx.notify();
+        let task = self
+            .library
+            .update(cx, |lib, cx| lib.set_up_vault(password, cx));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(()) => {
+                        for input in [this.master.clone(), this.confirm.clone()] {
+                            input.update(cx, |i, cx| i.set_value("", window, cx));
+                        }
+                        this.acknowledged = false;
+                        this.focus_primary(window, cx);
+                    }
+                    Err(err) => this.error = Some(format!("{err:#}").into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn unlock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.unlock.read(cx).value().to_string();
+        if self.busy || text.is_empty() {
+            return;
+        }
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        let task = self
+            .library
+            .update(cx, |lib, cx| lib.unlock_vault(SecretString::from(text), cx));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(true) => {
+                        this.unlock.update(cx, |i, cx| i.set_value("", window, cx));
+                        this.focus_primary(window, cx);
+                    }
+                    Ok(false) => {
+                        this.error = Some("That password didn't unlock the vault.".into());
+                        this.unlock.update(cx, |i, cx| {
+                            i.focus(window, cx);
+                            i.select_all(window, cx);
+                        });
+                    }
+                    Err(err) => this.error = Some(format!("{err:#}").into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Fills both setup fields with a 5-word passphrase and shows it.
+    fn suggest_passphrase(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use keepstone_core::vault::generator::{Options, Style, generate};
+        let options = Options {
+            style: Style::Words,
+            words: 5,
+            ..Options::default()
+        };
+        let Some(phrase) = generate(&options, &mut crate::views::vault_item::random_below) else {
+            self.error = Some(crate::views::vault_item::RANDOM_FAILED.into());
+            cx.notify();
+            return;
+        };
+        for input in [self.master.clone(), self.confirm.clone()] {
+            input.update(cx, |i, cx| {
+                i.set_value(phrase.to_string(), window, cx);
+                i.set_masked(false, window, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn centered(content: impl IntoElement) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .p_8()
+            .child(v_flex().w_full().max_w(rems(26.)).gap_5().child(content))
+    }
+
+    fn hero(icon: Lucide, title: &'static str, text: &'static str, cx: &App) -> impl IntoElement {
+        let theme = cx.theme();
+        v_flex()
+            .items_center()
+            .gap_3()
+            .text_center()
+            .child(
+                div()
+                    .size(rems(3.5))
+                    .rounded_full()
+                    .bg(theme.muted)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(Icon::new(icon).text_color(theme.foreground)),
+            )
+            .child(
+                div()
+                    .text_xl()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(text),
+            )
+    }
+
+    fn setup(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let estimate = self.master_estimate(cx);
+        let problem = self.setup_problem(cx);
+        let meter = estimate
+            .as_ref()
+            .map(|e| strength_meter(e.strength, Some(&e.crack_time), cx));
+        let hint = estimate.as_ref().and_then(|e| e.hint.clone());
+        let ack = self.acknowledged;
+        Self::centered(
+            v_flex()
+                .gap_5()
+                .child(Self::hero(
+                    Lucide::KeyRound,
+                    "Set up your vault",
+                    "Passwords, cards and secure notes, encrypted on this device with a master password only you know.",
+                    cx,
+                ))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(Input::new(&self.master).id("vault-master").mask_toggle())
+                        .children(meter)
+                        .children(hint.map(|h| {
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(h)
+                        }))
+                        .child(Input::new(&self.confirm).id("vault-confirm").mask_toggle()),
+                )
+                .child(
+                    Checkbox::new("vault-ack")
+                        .checked(ack)
+                        .label("I understand Keepstone can't recover my vault if I forget this password.")
+                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            this.acknowledged = *checked;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("vault-create")
+                                .primary()
+                                .w_full()
+                                .label(if self.busy { "Securing your vault…" } else { "Create vault" })
+                                .loading(self.busy)
+                                .disabled(problem.is_some() || self.busy)
+                                .on_click(cx.listener(|this, _, window, cx| this.create_vault(window, cx))),
+                        )
+                        .child(
+                            div()
+                                .h(rems(1.25))
+                                .text_xs()
+                                .text_center()
+                                .text_color(if self.error.is_some() {
+                                    theme.danger
+                                } else {
+                                    theme.muted_foreground
+                                })
+                                .child(
+                                    self.error
+                                        .clone()
+                                        .or_else(|| problem.map(SharedString::from))
+                                        .unwrap_or_else(|| "Ready.".into()),
+                                ),
+                        ),
+                )
+                .child(
+                    h_flex().justify_center().child(
+                        Button::new("vault-suggest")
+                            .ghost()
+                            .small()
+                            .icon(Lucide::Sparkles)
+                            .label("Suggest a passphrase")
+                            .on_click(cx.listener(|this, _, window, cx| this.suggest_passphrase(window, cx))),
+                    ),
+                ),
+        )
+        .into_any_element()
+    }
+
+    fn locked(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let busy = self.busy || self.library.read(cx).vault_state() == LockState::Unlocking;
+        Self::centered(
+            v_flex()
+                .gap_5()
+                .child(Self::hero(
+                    Lucide::LockKeyhole,
+                    "Vault locked",
+                    "Enter your master password to unlock.",
+                    cx,
+                ))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(Input::new(&self.unlock).id("vault-unlock").mask_toggle())
+                        .child(
+                            Button::new("vault-unlock-button")
+                                .primary()
+                                .w_full()
+                                .label(if busy { "Unlocking…" } else { "Unlock" })
+                                .loading(busy)
+                                .disabled(busy)
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.unlock(window, cx)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .h(rems(1.25))
+                                .text_xs()
+                                .text_center()
+                                .text_color(theme.danger)
+                                .children(self.error.clone()),
+                        ),
+                ),
+        )
+        .into_any_element()
+    }
+
+    // ---- Unlocked ---------------------------------------------------------
+
+    /// The "New login" command (only does something when unlocked).
+    pub fn new_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.library.read(cx).vault_state() == LockState::Unlocked {
+            self.new_item(ItemKind::Login, window, cx);
+        } else {
+            self.focus_primary(window, cx);
+        }
+    }
+
+    fn new_item(&mut self, kind: ItemKind, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected = None;
+        self.pane.update(cx, |p, cx| p.start_new(kind, window, cx));
+        cx.notify();
+    }
+
+    fn row(&self, item: &VaultItem, issues: &[&'static str], cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let id = item.id();
+        let selected = self.selected == Some(id);
+        let subtitle: SharedString = if issues.is_empty() {
+            item.subtitle().into()
+        } else {
+            issues.join(" · ").into()
+        };
+        h_flex()
+            .id(SharedString::from(format!("vault-row-{id}")))
+            .w_full()
+            .h(rems(ROW_HEIGHT))
+            .px_3()
+            .gap_3()
+            .items_center()
+            .rounded(theme.radius)
+            .map(|s| {
+                if selected {
+                    s.bg(theme.list_active)
+                } else {
+                    s.hover(|s| s.bg(theme.list_hover))
+                }
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&this.list_focus, cx);
+                this.select(Some(id), window, cx);
+            }))
+            .test_support()
+            .child(avatar(item, rems(2.), cx))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .truncate()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(item.title().to_owned()),
+                    )
+                    .child(
+                        div()
+                            .truncate()
+                            .text_xs()
+                            .text_color(if issues.is_empty() {
+                                theme.muted_foreground
+                            } else {
+                                theme.warning
+                            })
+                            .child(subtitle),
+                    ),
+            )
+            .when(item.is_favorite(), |s| {
+                s.child(
+                    Icon::new(Lucide::Star)
+                        .xsmall()
+                        .text_color(theme.muted_foreground),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn list_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let health = (self.filter == VaultFilter::Health)
+            .then(|| self.library.update(cx, |lib, _| lib.vault_health()));
+        let ids: Vec<VaultItemId> =
+            self.ids[range.start.min(self.ids.len())..range.end.min(self.ids.len())].to_vec();
+        ids.into_iter()
+            .filter_map(|id| {
+                let item = self.library.read(cx).vault_item(id)?;
+                let issues = health
+                    .as_ref()
+                    .map(|h| h.issues_for(id))
+                    .unwrap_or_default();
+                Some(self.row(&item, &issues, cx))
+            })
+            .collect()
+    }
+
+    fn filter_title(&self) -> &'static str {
+        match self.filter {
+            VaultFilter::All => "All items",
+            VaultFilter::Favorites => "Favorites",
+            VaultFilter::Kind(k) => k.plural(),
+            VaultFilter::Health => "Password health",
+            VaultFilter::Trash => "Trash",
+        }
+    }
+
+    fn list_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let count = self.ids.len();
+        let view = cx.entity().downgrade();
+        let new_menu = Button::new("vault-new")
+            .small()
+            .icon(Lucide::Plus)
+            .tooltip("New item")
+            .dropdown_menu(move |menu, _, _| {
+                ItemKind::ALL.into_iter().fold(menu, |menu, kind| {
+                    let view = view.clone();
+                    menu.item(
+                        PopupMenuItem::new(format!("New {}", kind.label().to_lowercase()))
+                            .icon(kind_icon(kind))
+                            .on_click(move |_, window, cx| {
+                                _ = view.update(cx, |this, cx| this.new_item(kind, window, cx));
+                            }),
+                    )
+                })
+            });
+        let view = cx.entity().downgrade();
+        let more = Button::new("vault-more")
+            .ghost()
+            .small()
+            .icon(Lucide::Ellipsis)
+            .tooltip("Vault")
+            .dropdown_menu(move |menu, _, _| {
+                let gen_view = view.clone();
+                let import_view = view.clone();
+                menu.item(
+                    PopupMenuItem::new("Generate password…")
+                        .icon(Lucide::Dices)
+                        .on_click(move |_, window, cx| {
+                            _ = gen_view.update(cx, |this, cx| {
+                                crate::views::vault_generator::open_generator(
+                                    None,
+                                    &this.library,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        }),
+                )
+                .item(
+                    PopupMenuItem::new("Import from CSV…")
+                        .icon(Lucide::FolderInput)
+                        .on_click(move |_, window, cx| {
+                            _ = import_view.update(cx, |this, cx| this.import(window, cx));
+                        }),
+                )
+                .separator()
+                .item(
+                    PopupMenuItem::new("Lock vault")
+                        .icon(Lucide::LockKeyhole)
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::actions::LockVault), cx)
+                        }),
+                )
+            });
+        let list = uniform_list(
+            "vault-list",
+            count,
+            cx.processor(|this, range: Range<usize>, _, cx| this.list_rows(range, cx)),
+        )
+        .track_scroll(&self.scroll)
+        .flex_1()
+        .min_h_0()
+        .px_2()
+        .pb_2();
+        let empty_text: Option<(&'static str, &'static str)> = (count == 0).then(|| {
+            let searching = !self.search.read(cx).value().is_empty();
+            match (searching, self.filter) {
+                (true, _) => ("No matches", "Try another word, or clear the search."),
+                (_, VaultFilter::Trash) => (
+                    "Trash is empty",
+                    "Items you delete stay here until you empty the trash.",
+                ),
+                (_, VaultFilter::Favorites) => ("No favorites", "Star an item to keep it here."),
+                (_, VaultFilter::Health) => ("All clear", "No weak, reused or old passwords."),
+                _ => (
+                    "Nothing here yet",
+                    "Add a login with New, or import from another app.",
+                ),
+            }
+        });
+        v_flex()
+            .w(rems(22.))
+            .flex_shrink_0()
+            .h_full()
+            .border_r_1()
+            .border_color(theme.border)
+            .child(
+                v_flex()
+                    .px_3()
+                    .pt_4()
+                    .pb_2()
+                    .gap_3()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .on_key_down(cx.listener(
+                                        |this, e: &KeyDownEvent, window, cx| {
+                                            // ↓ from the search field moves into the list.
+                                            if e.keystroke.key == "down" && !this.ids.is_empty() {
+                                                cx.stop_propagation();
+                                                window.focus(&this.list_focus, cx);
+                                                this.step(1, window, cx);
+                                            }
+                                        },
+                                    ))
+                                    .child(
+                                        Input::new(&self.search)
+                                            .id("vault-search")
+                                            .small()
+                                            .cleanable(true)
+                                            .prefix(
+                                                Icon::new(Lucide::Search)
+                                                    .xsmall()
+                                                    .text_color(theme.muted_foreground),
+                                            ),
+                                    ),
+                            )
+                            .child(new_menu)
+                            .child(more),
+                    )
+                    .child(
+                        h_flex()
+                            .px_1()
+                            .justify_between()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(self.filter_title()),
+                            )
+                            .child(count.to_string()),
+                    ),
+            )
+            .child(
+                div()
+                    .id("vault-list-focus")
+                    .track_focus(&self.list_focus)
+                    .key_context(VAULT_CONTEXT)
+                    .on_action(cx.listener(|this, _: &VaultPreviousItem, window, cx| {
+                        this.step(-1, window, cx)
+                    }))
+                    .on_action(
+                        cx.listener(|this, _: &VaultNextItem, window, cx| this.step(1, window, cx)),
+                    )
+                    .on_action(cx.listener(|this, _: &VaultCopyPassword, window, cx| {
+                        this.copy_selected(CopyWhat::Password, window, cx)
+                    }))
+                    .on_action(cx.listener(|this, _: &VaultCopyUsername, window, cx| {
+                        this.copy_selected(CopyWhat::Username, window, cx)
+                    }))
+                    .on_action(cx.listener(|this, _: &VaultCopyCode, window, cx| {
+                        this.copy_selected(CopyWhat::Code, window, cx)
+                    }))
+                    .on_action(cx.listener(|this, _: &VaultEditSelected, window, cx| {
+                        this.pane.update(cx, |p, cx| p.edit(window, cx));
+                    }))
+                    .on_action(cx.listener(|this, _: &VaultTrashSelected, window, cx| {
+                        this.pane.update(cx, |p, cx| p.trash(window, cx));
+                    }))
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .map(|s| match empty_text {
+                        Some((title, desc)) => {
+                            s.child(empty_state(Lucide::KeyRound, title, desc, cx))
+                        }
+                        None => s.child(list),
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn copy_selected(&mut self, what: CopyWhat, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = self
+            .selected
+            .and_then(|id| self.library.read(cx).vault_item(id))
+        else {
+            return;
+        };
+        let f = item.fields();
+        let (label, value) = match (what, f.kind) {
+            (CopyWhat::Password, ItemKind::Card) => ("Card number", f.number.clone()),
+            (CopyWhat::Password, _) => ("Password", f.password.clone()),
+            (CopyWhat::Username, ItemKind::Card) => ("Cardholder", f.cardholder.clone()),
+            (CopyWhat::Username, _) => ("Username", f.username.clone()),
+            (CopyWhat::Code, _) => {
+                let code = keepstone_core::vault::totp::parse(&f.totp)
+                    .ok()
+                    .map(|t| t.code_at(unix_now()).code);
+                ("One-time code", code.unwrap_or_default())
+            }
+        };
+        if value.is_empty() {
+            keepstone_ui::feedback::error_toast(
+                format!("This item has no {}.", label.to_lowercase()),
+                window,
+                cx,
+            );
+            return;
+        }
+        copy_field(
+            label,
+            value,
+            label != "Username" && label != "Cardholder",
+            window,
+            cx,
+        );
+    }
+
+    fn import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Import".into()),
+        });
+        let library = self.library.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let text = cx
+                .background_executor()
+                .spawn(async move { std::fs::read_to_string(path) })
+                .await;
+            _ = cx.update(|window, cx| {
+                let text = match text {
+                    Ok(t) => keepstone_crypto::Zeroizing::new(t),
+                    Err(_) => {
+                        keepstone_ui::feedback::error_toast("Couldn't read that file.", window, cx);
+                        return;
+                    }
+                };
+                match keepstone_core::vault::import::parse_csv(&text) {
+                    Err(msg) => keepstone_ui::feedback::error_toast(msg, window, cx),
+                    Ok(parsed) => {
+                        let skipped = parsed.skipped;
+                        let source = parsed.source.map_or("CSV", |s| s.label());
+                        let result =
+                            library.update(cx, |lib, cx| lib.import_vault_items(parsed.items, cx));
+                        if let Some(n) = keepstone_ui::feedback::report(result, window, cx) {
+                            let mut msg = format!(
+                                "Imported {n} item{} from {source}.",
+                                if n == 1 { "" } else { "s" }
+                            );
+                            if skipped > 0 {
+                                msg.push_str(&format!(
+                                    " Skipped {skipped} empty row{}.",
+                                    if skipped == 1 { "" } else { "s" }
+                                ));
+                            }
+                            msg.push_str(" Delete the CSV file: it isn't encrypted.");
+                            window.push_notification(msg, cx);
+                        }
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn unlocked(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        h_flex()
+            .size_full()
+            .child(self.list_pane(cx))
+            .child(div().flex_1().min_w_0().h_full().child(self.pane.clone()))
+            .into_any_element()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CopyWhat {
+    Password,
+    Username,
+    Code,
+}
+
+/// Seconds since the Unix epoch (for one-time codes).
+pub fn unix_now() -> u64 {
+    u64::try_from(keepstone_core::clock::now().as_second()).unwrap_or(0)
+}
+
+pub fn kind_icon(kind: ItemKind) -> Lucide {
+    match kind {
+        ItemKind::Login => Lucide::KeyRound,
+        ItemKind::Card => Lucide::CreditCard,
+        ItemKind::Note => Lucide::StickyNote,
+    }
+}
+
+/// Four segments that fill with strength, the label, and an optional crack time.
+pub fn strength_meter(strength: Strength, crack_time: Option<&str>, cx: &App) -> AnyElement {
+    let crack_time = crack_time.map(str::to_owned);
+    let theme = cx.theme();
+    let level = strength.level();
+    let color = match strength {
+        Strength::VeryWeak | Strength::Weak => theme.danger,
+        Strength::Fair => theme.warning,
+        Strength::Strong | Strength::VeryStrong => theme.success,
+    };
+    v_flex()
+        .gap_1()
+        .child(h_flex().gap_1().children((1..=4).map(|i| {
+            div()
+                .flex_1()
+                .h(rems(0.25))
+                .rounded_full()
+                .bg(if level >= i { color } else { theme.muted })
+        })))
+        .child(
+            h_flex()
+                .justify_between()
+                .text_xs()
+                .child(div().text_color(color).child(strength.label()))
+                .children(crack_time.map(|t| {
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(format!("Time to crack: {t}"))
+                })),
+        )
+        .into_any_element()
+}
+
+impl Focusable for PasswordsView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl Render for PasswordsView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let body = match self.library.read(cx).vault_state() {
+            LockState::Uninitialized => self.setup(cx),
+            LockState::Locked | LockState::Unlocking => self.locked(cx),
+            LockState::Unlocked => self.unlocked(cx),
+        };
+        div()
+            .id("passwords")
+            .track_focus(&self.focus)
+            .size_full()
+            .child(body)
+    }
+}
+
+/// Opens "Change master password". Only while unlocked.
+pub fn open_change_password(library: Entity<Library>, window: &mut Window, cx: &mut App) {
+    if library.read(cx).vault_state() != LockState::Unlocked {
+        keepstone_ui::feedback::error_toast("Unlock the vault first.", window, cx);
+        return;
+    }
+    let form = cx.new(|cx| ChangePassword::new(library, window, cx));
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog
+            .title("Change master password")
+            .w(gpui_kit::px(440.))
+            .child(form.clone())
+    });
+}
+
+pub struct ChangePassword {
+    library: Entity<Library>,
+    current: Entity<InputState>,
+    new: Entity<InputState>,
+    confirm: Entity<InputState>,
+    error: Option<SharedString>,
+    busy: bool,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl ChangePassword {
+    fn new(library: Entity<Library>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let masked = |p: &'static str, window: &mut Window, cx: &mut Context<Self>| {
+            cx.new(|cx| InputState::new(window, cx).masked(true).placeholder(p))
+        };
+        let current = masked("Current master password", window, cx);
+        let new = masked("New master password", window, cx);
+        let confirm = masked("Type the new one again", window, cx);
+        let subscriptions = [&current, &new, &confirm]
+            .into_iter()
+            .map(|input| {
+                cx.subscribe_in(input, window, |this, _, e, window, cx| match e {
+                    InputEvent::Change => {
+                        this.error = None;
+                        cx.notify();
+                    }
+                    InputEvent::PressEnter { .. } => this.submit(window, cx),
+                    _ => {}
+                })
+            })
+            .collect();
+        current.update(cx, |i, cx| i.focus(window, cx));
+        Self {
+            library,
+            current,
+            new,
+            confirm,
+            error: None,
+            busy: false,
+            _subscriptions: subscriptions,
+        }
+    }
+
+    fn problem(&self, cx: &App) -> Option<&'static str> {
+        let current = self.current.read(cx).value();
+        let new = self.new.read(cx).value();
+        let confirm = self.confirm.read(cx).value();
+        if current.is_empty() {
+            return Some("Enter your current master password.");
+        }
+        if new.chars().count() < MIN_MASTER_CHARS {
+            return Some("Use at least 10 characters for the new one.");
+        }
+        if estimate(&new, &[]).strength < Strength::Fair {
+            return Some("Choose something harder to guess.");
+        }
+        if new != confirm {
+            return Some("The new passwords don't match.");
+        }
+        None
+    }
+
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.problem(cx).is_some() {
+            return;
+        }
+        self.busy = true;
+        cx.notify();
+        let current = SecretString::from(self.current.read(cx).value().to_string());
+        let new = SecretString::from(self.new.read(cx).value().to_string());
+        let task = self
+            .library
+            .update(cx, |lib, cx| lib.change_master_password(current, new, cx));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(true) => {
+                        window.close_dialog(cx);
+                        window.push_notification("Master password changed.", cx);
+                    }
+                    Ok(false) => this.error = Some("The current password isn't right.".into()),
+                    Err(err) => this.error = Some(format!("{err:#}").into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+}
+
+impl Render for ChangePassword {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let new = self.new.read(cx).value().to_string();
+        let meter = (!new.is_empty()).then(|| {
+            let e = estimate(&new, &[]);
+            strength_meter(e.strength, Some(&e.crack_time), cx)
+        });
+        let problem = self.problem(cx);
+        v_flex()
+            .gap_4()
+            .child(Input::new(&self.current).mask_toggle())
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Input::new(&self.new).mask_toggle())
+                    .children(meter)
+                    .child(Input::new(&self.confirm).mask_toggle()),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(if self.error.is_some() { theme.danger } else { theme.muted_foreground })
+                    .child(
+                        self.error
+                            .clone()
+                            .or_else(|| problem.map(SharedString::from))
+                            .unwrap_or_else(|| "Your items stay as they are; only the key that protects them changes.".into()),
+                    ),
+            )
+            .child(
+                h_flex().justify_end().child(
+                    Button::new("change-master")
+                        .primary()
+                        .label(if self.busy { "Changing…" } else { "Change password" })
+                        .loading(self.busy)
+                        .disabled(problem.is_some() || self.busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
+                ),
+            )
+    }
+}

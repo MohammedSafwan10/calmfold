@@ -70,10 +70,13 @@ Calm, organized, not noisy; keyboard path; empty/error states; one source of tru
 
 ## 7. Password vault
 
-- [ ] Research (1Password, Bitwarden, KeePassXC UX and security).
-- [ ] Vault per `docs/plans/05-vault.md` + `docs/security.md`: setup, unlock/lock
-      state machine, auto-lock, items (login, card, note), password generator,
-      copy with clipboard clear, search. Elegant, calm UI.
+- [x] Research (1Password, Bitwarden, KeePassXC, Proton Pass; OWASP Argon2; EFF words).
+- [x] Vault per `docs/plans/05-vault.md` + `docs/security.md`: setup, unlock/lock
+      state machine, auto-lock (idle, background, wake from sleep), logins/cards/notes,
+      TOTP codes, generator (characters / EFF words), password health, copy with
+      clipboard clear, search over thousands of items, CSV import, change master
+      password. Master–detail UI. Security review fixes: drafts wiped on lock,
+      generator closes on lock, RNG fails closed, sleep detection.
 
 ## Done
 

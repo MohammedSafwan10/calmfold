@@ -18,6 +18,11 @@ actions!(
         NewEvent,
         GoHabits,
         NewHabit,
+        GoPasswords,
+        LockVault,
+        NewLogin,
+        GeneratePassword,
+        ChangeMasterPassword,
         GoSettings,
         ToggleSidebar,
         ToggleListPanel,
@@ -90,6 +95,23 @@ actions!(
         HabitQuickAdd,
     ]
 );
+
+// Vault list keys (context "VaultList", never in a text field).
+actions!(
+    keepstone_vault,
+    [
+        VaultPreviousItem,
+        VaultNextItem,
+        VaultCopyPassword,
+        VaultCopyUsername,
+        VaultCopyCode,
+        VaultEditSelected,
+        VaultTrashSelected,
+    ]
+);
+
+/// Key context set on the vault item list.
+pub const VAULT_CONTEXT: &str = "VaultList";
 
 /// Key context set on the habit list.
 pub const HABITS_CONTEXT: &str = "HabitList";
@@ -174,6 +196,8 @@ pub const SHORTCUTS: &[Shortcut] = shortcuts![
     Navigate, "3", "Tasks", GoTasks;
     Navigate, "4", "Calendar", GoCalendar;
     Navigate, "5", "Habits", GoHabits;
+    Navigate, "6", "Passwords", GoPasswords;
+    General, "ctrl-l", "Lock vault", LockVault;
     View, "\\", "Toggle sidebar", ToggleSidebar;
     View, "shift-l", "Toggle note list", ToggleListPanel;
     View, "f", "Find in note", FindInNote;
@@ -243,6 +267,25 @@ pub const HABIT_SHORTCUTS: &[Shortcut] = &[
     plain("n", "New habit", || Box::new(HabitQuickAdd)),
 ];
 
+/// Vault list keys, active while the item list has focus (1Password keys).
+pub const VAULT_SHORTCUTS: &[Shortcut] = &[
+    plain("up", "Previous item", || Box::new(VaultPreviousItem)),
+    plain("down", "Next item", || Box::new(VaultNextItem)),
+    plain(shortcut!("c"), "Copy password or card number", || {
+        Box::new(VaultCopyPassword)
+    }),
+    plain(shortcut!("shift-c"), "Copy username", || {
+        Box::new(VaultCopyUsername)
+    }),
+    plain(shortcut!("alt-c"), "Copy one-time code", || {
+        Box::new(VaultCopyCode)
+    }),
+    plain("enter", "Edit item", || Box::new(VaultEditSelected)),
+    plain(shortcut!("backspace"), "Move to trash", || {
+        Box::new(VaultTrashSelected)
+    }),
+];
+
 /// Built-in editing keys of the note editor (zorite-editor), shown for reference only.
 pub const EDITING_SHORTCUTS: &[(&str, &str)] = &[
     (shortcut!("z"), "Undo"),
@@ -291,6 +334,14 @@ pub fn bind(cx: &mut App) {
     bindings.extend(HABIT_SHORTCUTS.iter().filter_map(|s| {
         KeyBinding::load(s.keys, s.action(), habits.clone(), false, None, cx).ok()
     }));
+    let vault = gpui_kit::KeyBindingContextPredicate::parse(VAULT_CONTEXT)
+        .ok()
+        .map(std::rc::Rc::new);
+    bindings.extend(
+        VAULT_SHORTCUTS.iter().filter_map(|s| {
+            KeyBinding::load(s.keys, s.action(), vault.clone(), false, None, cx).ok()
+        }),
+    );
     // Quitting by shortcut is a macOS convention; Windows and Linux close the window.
     if cfg!(target_os = "macos") {
         bindings.push(KeyBinding::new("cmd-q", Quit, None));
@@ -311,6 +362,7 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::action("New Task", NewTask),
             MenuItem::action("New Event", NewEvent),
             MenuItem::action("New Habit", NewHabit),
+            MenuItem::action("New Login", NewLogin),
             MenuItem::action("New Project…", NewProject),
             MenuItem::action("Today's Note", OpenDailyNote),
             MenuItem::separator(),
@@ -325,6 +377,8 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::action("Tasks", GoTasks),
             MenuItem::action("Calendar", GoCalendar),
             MenuItem::action("Habits", GoHabits),
+            MenuItem::action("Passwords", GoPasswords),
+            MenuItem::action("Lock Vault", LockVault),
             MenuItem::separator(),
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::action("Toggle Note List", ToggleListPanel),
@@ -362,7 +416,7 @@ mod tests {
                 s.keys
             );
         }
-        for table in [CALENDAR_SHORTCUTS, HABIT_SHORTCUTS] {
+        for table in [CALENDAR_SHORTCUTS, HABIT_SHORTCUTS, VAULT_SHORTCUTS] {
             let mut calendar_keys = std::collections::HashSet::new();
             for s in table {
                 assert!(

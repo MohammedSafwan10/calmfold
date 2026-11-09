@@ -424,6 +424,78 @@ impl SettingsView {
             .group(SettingGroup::new().items(vec![reset]))
     }
 
+    fn passwords_page() -> SettingPage {
+        use keepstone_core::vault::lock::{AutoLock, ClipboardClear};
+        let auto: &'static [(AutoLock, &'static str)] = &[
+            (AutoLock::OneMinute, "1 min"),
+            (AutoLock::FiveMinutes, "5 min"),
+            (AutoLock::FifteenMinutes, "15 min"),
+            (AutoLock::OneHour, "1 hour"),
+            (AutoLock::Never, "Never"),
+        ];
+        let clear: &'static [(ClipboardClear, &'static str)] = &[
+            (ClipboardClear::FifteenSeconds, "15 s"),
+            (ClipboardClear::ThirtySeconds, "30 s"),
+            (ClipboardClear::NinetySeconds, "90 s"),
+        ];
+        let auto_lock = SettingItem::new(
+            "Lock after",
+            SettingField::render(move |_, _, cx| {
+                segmented(
+                    "set-auto-lock",
+                    auto,
+                    crate::vault_prefs::get(cx).auto_lock,
+                    |v, _, cx| crate::vault_prefs::update(cx, |p| p.auto_lock = v),
+                )
+            }),
+        )
+        .description("Lock the vault when you haven't used Keepstone for this long.")
+        .keywords(["vault", "auto-lock", "timeout", "security", "passwords"]);
+        let hide = SettingItem::new(
+            "Lock when Keepstone is in the background",
+            SettingField::switch(
+                |cx| crate::vault_prefs::get(cx).lock_on_hide,
+                |on, cx| crate::vault_prefs::update(cx, |p| p.lock_on_hide = on),
+            ),
+        )
+        .description("Locks as soon as you switch to another app.")
+        .keywords(["vault", "lock", "background", "security"]);
+        let clipboard = SettingItem::new(
+            "Clear copied passwords after",
+            SettingField::render(move |_, _, cx| {
+                segmented(
+                    "set-clipboard",
+                    clear,
+                    crate::vault_prefs::get(cx).clipboard,
+                    |v, _, cx| crate::vault_prefs::update(cx, |p| p.clipboard = v),
+                )
+            }),
+        )
+        .description("Only if the clipboard still holds what Keepstone copied.")
+        .keywords(["clipboard", "copy", "vault", "security"]);
+        let master = SettingItem::new(
+            "Master password",
+            SettingField::render(|_, _, _| {
+                Button::new("set-change-master")
+                    .small()
+                    .label("Change…")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(crate::actions::ChangeMasterPassword), cx)
+                    })
+            }),
+        )
+        .description("Requires the current password. Keepstone can't recover a forgotten one.")
+        .keywords(["master password", "vault", "change password"]);
+        SettingPage::new("Passwords")
+            .icon(Lucide::KeyRound)
+            .group(
+                SettingGroup::new()
+                    .title("Security")
+                    .items(vec![auto_lock, hide, clipboard]),
+            )
+            .group(SettingGroup::new().title("Vault").items(vec![master]))
+    }
+
     fn calendar_page() -> SettingPage {
         let week = SettingItem::new(
             "Week starts on",
@@ -497,6 +569,14 @@ impl SettingsView {
             })
             .collect();
 
+        groups.push(
+            SettingGroup::new().title("Passwords").items(
+                crate::actions::VAULT_SHORTCUTS
+                    .iter()
+                    .map(|s| key_row(s.keys, s.label))
+                    .collect::<Vec<_>>(),
+            ),
+        );
         groups.push(
             SettingGroup::new().title("Habits").items(
                 HABIT_SHORTCUTS
@@ -735,6 +815,7 @@ impl Render for SettingsView {
                     Self::appearance_page(),
                     Self::general_page(self.data_dir.clone()),
                     Self::today_page(),
+                    Self::passwords_page(),
                     Self::calendar_page(),
                     Self::keyboard_page(),
                     Self::about_page(),

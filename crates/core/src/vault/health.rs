@@ -87,19 +87,30 @@ pub struct Report {
 }
 
 impl Report {
+    /// Every item with at least one issue, once.
+    #[must_use]
+    pub fn flagged(&self) -> Vec<VaultItemId> {
+        let mut flagged: Vec<VaultItemId> = self.weak.clone();
+        flagged.extend(self.reused.iter().flatten().copied());
+        flagged.extend(self.old.iter().copied());
+        flagged.sort_unstable();
+        flagged.dedup();
+        flagged
+    }
+
+    /// Checked logins with no issue.
+    #[must_use]
+    pub fn clean(&self) -> usize {
+        self.checked.saturating_sub(self.flagged().len())
+    }
+
     /// Share of checked logins with no issue, 0..=100.
     #[must_use]
     pub fn score(&self) -> u8 {
         if self.checked == 0 {
             return 100;
         }
-        let mut flagged: Vec<VaultItemId> = self.weak.clone();
-        flagged.extend(self.reused.iter().flatten().copied());
-        flagged.extend(self.old.iter().copied());
-        flagged.sort_unstable();
-        flagged.dedup();
-        let ok = self.checked.saturating_sub(flagged.len());
-        u8::try_from(ok * 100 / self.checked).unwrap_or(100)
+        u8::try_from(self.clean() * 100 / self.checked).unwrap_or(100)
     }
 
     #[must_use]

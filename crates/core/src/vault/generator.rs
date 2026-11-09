@@ -118,8 +118,16 @@ fn words() -> &'static [&'static str] {
     })
 }
 
-/// A new password or passphrase.
-pub fn generate(options: &Options, below: &mut dyn FnMut(u32) -> u32) -> Zeroizing<String> {
+/// Tries before giving up on "must contain every class" (a healthy source
+/// needs one or two at length 8; hitting this means it isn't random).
+const MAX_TRIES: usize = 1_000;
+
+/// A new password or passphrase, or `None` if the random source failed or
+/// isn't behaving randomly. Never falls back to a predictable value.
+pub fn generate(
+    options: &Options,
+    below: &mut dyn FnMut(u32) -> Option<u32>,
+) -> Option<Zeroizing<String>> {
     let o = options.clamped();
     match o.style {
         Style::Random => random(&o, below),
@@ -127,55 +135,59 @@ pub fn generate(options: &Options, below: &mut dyn FnMut(u32) -> u32) -> Zeroizi
     }
 }
 
-fn pick<T: Copy>(items: &[T], below: &mut dyn FnMut(u32) -> u32) -> T {
-    let n = u32::try_from(items.len()).unwrap_or(u32::MAX);
-    items[below(n) as usize % items.len()]
+fn pick<T: Copy>(items: &[T], below: &mut dyn FnMut(u32) -> Option<u32>) -> Option<T> {
+    let n = u32::try_from(items.len()).ok()?;
+    let i = below(n)? as usize;
+    // An out-of-range answer is a broken source, not something to wrap.
+    items.get(i).copied()
 }
 
-fn random(o: &Options, below: &mut dyn FnMut(u32) -> u32) -> Zeroizing<String> {
+fn random(o: &Options, below: &mut dyn FnMut(u32) -> Option<u32>) -> Option<Zeroizing<String>> {
     let alphabet = o.alphabet();
     let has = |s: &str, class: &str| s.chars().any(|c| class.contains(c));
-    loop {
-        let candidate: Zeroizing<String> =
-            Zeroizing::new((0..o.length).map(|_| pick(&alphabet, below)).collect());
+    for _ in 0..MAX_TRIES {
+        let mut candidate = Zeroizing::new(String::with_capacity(usize::from(o.length)));
+        for _ in 0..o.length {
+            candidate.push(pick(&alphabet, below)?);
+        }
         let ok = has(&candidate, LOWER)
             && has(&candidate, UPPER)
             && (!o.digits || has(&candidate, DIGITS))
             && (!o.symbols || has(&candidate, SYMBOLS));
         if ok {
-            return candidate;
+            return Some(candidate);
         }
     }
+    None
 }
 
-fn passphrase(o: &Options, below: &mut dyn FnMut(u32) -> u32) -> Zeroizing<String> {
+fn passphrase(o: &Options, below: &mut dyn FnMut(u32) -> Option<u32>) -> Option<Zeroizing<String>> {
     let list = words();
-    let mut parts: Vec<Zeroizing<String>> = (0..o.words)
-        .map(|_| {
-            let w = pick(list, below);
-            Zeroizing::new(if o.capitalize {
-                let mut c = w.chars();
-                c.next()
-                    .map(|f| f.to_uppercase().chain(c).collect())
-                    .unwrap_or_default()
-            } else {
-                w.to_owned()
-            })
-        })
-        .collect();
+    let mut parts: Vec<Zeroizing<String>> = Vec::with_capacity(usize::from(o.words));
+    for _ in 0..o.words {
+        let w = pick(list, below)?;
+        parts.push(Zeroizing::new(if o.capitalize {
+            let mut c = w.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect())
+                .unwrap_or_default()
+        } else {
+            w.to_owned()
+        }));
+    }
     if o.add_number {
-        let at = below(u32::from(o.words)) as usize % parts.len();
-        let digit = char::from(b'0' + u8::try_from(below(10) % 10).unwrap_or(0));
-        parts[at].push(digit);
+        let at = below(u32::from(o.words))? as usize;
+        let digit = char::from_digit(below(10)?, 10)?;
+        parts.get_mut(at)?.push(digit);
     }
     let sep = o.separator.to_string();
-    Zeroizing::new(
+    Some(Zeroizing::new(
         parts
             .iter()
             .map(|p| p.as_str())
             .collect::<Vec<_>>()
             .join(&sep),
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -183,14 +195,29 @@ mod tests {
     use super::*;
 
     /// A deterministic "random" source for tests.
-    fn counter() -> impl FnMut(u32) -> u32 {
+    fn counter() -> impl FnMut(u32) -> Option<u32> {
         let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
         move |n| {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;
-            (state % u64::from(n.max(1))) as u32
+            Some((state % u64::from(n.max(1))) as u32)
         }
+    }
+
+    #[test]
+    fn a_failing_stuck_or_broken_source_gives_nothing() {
+        for style in [Style::Random, Style::Words] {
+            let o = Options {
+                style,
+                ..Options::default()
+            };
+            assert!(generate(&o, &mut |_| None).is_none(), "{style:?}: failure");
+            assert!(generate(&o, &mut Some).is_none(), "{style:?}: out of range");
+        }
+        // A stuck source (always 0) can't meet "has a digit and a symbol":
+        // it must stop, not hang.
+        assert!(generate(&Options::default(), &mut |_| Some(0)).is_none());
     }
 
     #[test]
@@ -198,7 +225,7 @@ mod tests {
         let mut rng = counter();
         let o = Options::default();
         for _ in 0..50 {
-            let p = generate(&o, &mut rng);
+            let p = generate(&o, &mut rng).expect("generated");
             assert_eq!(p.chars().count(), 20);
             assert!(p.chars().any(|c| c.is_ascii_digit()));
             assert!(p.chars().any(|c| SYMBOLS.contains(c)));
@@ -210,7 +237,7 @@ mod tests {
             length: 3,
             ..o
         };
-        let p = generate(&letters, &mut rng);
+        let p = generate(&letters, &mut rng).expect("generated");
         assert_eq!(p.len(), usize::from(MIN_LENGTH), "length is clamped");
         assert!(p.chars().all(|c| c.is_ascii_alphabetic()));
     }
@@ -224,7 +251,7 @@ mod tests {
             style: Style::Words,
             ..Options::default()
         };
-        let p = generate(&o, &mut rng);
+        let p = generate(&o, &mut rng).expect("generated");
         let parts: Vec<&str> = p.split('-').collect();
         assert_eq!(parts.len(), 5);
         assert!(
