@@ -12,6 +12,7 @@ pub mod habit_detail;
 pub mod habit_insights_view;
 pub mod habit_widgets;
 pub mod habits;
+pub mod holiday_settings;
 pub mod note_editor;
 pub mod notes;
 pub mod passwords;

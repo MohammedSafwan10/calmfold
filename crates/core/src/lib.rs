@@ -11,6 +11,7 @@ pub mod event_quick_add;
 pub mod format;
 pub mod habit;
 pub mod habit_insights;
+pub mod holidays;
 pub mod ics;
 mod id;
 pub mod links;

@@ -33,6 +33,11 @@ use crate::actions::{
 pub struct SettingsView {
     data_dir: PathBuf,
     focus: FocusHandle,
+    /// Created on first render (it needs a window).
+    countries: Option<(
+        crate::views::holiday_settings::CountryPicker,
+        gpui_kit::Subscription,
+    )>,
 }
 
 impl SettingsView {
@@ -40,6 +45,7 @@ impl SettingsView {
         Self {
             data_dir,
             focus: cx.focus_handle(),
+            countries: None,
         }
     }
 
@@ -560,7 +566,7 @@ impl SettingsView {
             )
     }
 
-    fn calendar_page() -> SettingPage {
+    fn calendar_page(countries: crate::views::holiday_settings::CountryPicker) -> SettingPage {
         let week = SettingItem::new(
             "Week starts on",
             SettingField::render(|_, _, cx| {
@@ -604,6 +610,7 @@ impl SettingsView {
         SettingPage::new("Calendar")
             .icon(Lucide::CalendarDays)
             .group(SettingGroup::new().items(vec![week, clock, routines]))
+            .group(crate::views::holiday_settings::holiday_group(countries))
     }
 
     fn keyboard_page() -> SettingPage {
@@ -871,7 +878,19 @@ impl Focusable for SettingsView {
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use crate::views::holiday_settings::{country_picker, sync_picker};
+        let picker = match &self.countries {
+            Some((picker, _)) => {
+                sync_picker(picker, window, cx);
+                picker.clone()
+            }
+            None => {
+                let (picker, sub) = country_picker(window, cx);
+                self.countries = Some((picker.clone(), sub));
+                picker
+            }
+        };
         div().track_focus(&self.focus).size_full().child(
             Settings::new("keepstone-settings")
                 .with_group_variant(GroupBoxVariant::Outline)
@@ -880,7 +899,7 @@ impl Render for SettingsView {
                     Self::general_page(self.data_dir.clone()),
                     Self::today_page(),
                     Self::passwords_page(),
-                    Self::calendar_page(),
+                    Self::calendar_page(picker),
                     Self::keyboard_page(),
                     Self::about_page(),
                 ]),

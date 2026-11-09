@@ -72,6 +72,8 @@ pub struct TodayView {
     habits: Vec<HabitSummary>,
     /// Today through the next 7 days.
     span: CalendarSpan,
+    /// Holidays over the same days.
+    holidays: crate::holidays::DayHolidays,
     has_daily_note: bool,
     focus: FocusHandle,
     _clock: GpuiTask<()>,
@@ -85,8 +87,8 @@ impl TodayView {
     pub fn new(library: Entity<Library>, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![
             cx.subscribe(&library, |this, _, _, cx| this.reload(cx)),
-            // Section order and visibility live in the appearance settings.
-            cx.observe_global::<gpui_kit::component::Theme>(|_, cx| cx.notify()),
+            // Section order, visibility and holidays live in the appearance settings.
+            cx.observe_global::<gpui_kit::component::Theme>(|this, cx| this.reload(cx)),
         ];
         let clock_task = cx.spawn(async move |this, cx| {
             loop {
@@ -116,6 +118,7 @@ impl TodayView {
             recent: Vec::new(),
             habits: Vec::new(),
             span: CalendarSpan::default(),
+            holidays: crate::holidays::DayHolidays::default(),
             has_daily_note: false,
             focus: cx.focus_handle(),
             _clock: clock_task,
@@ -129,6 +132,10 @@ impl TodayView {
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.today = clock::today();
         self.now = clock::now_local();
+        self.holidays = crate::holidays::DayHolidays::load(
+            self.today..add_days(self.today, UPCOMING_DAYS + 1),
+            cx,
+        );
         let lib = self.library.read(cx);
         self.counts = lib.task_counts().unwrap_or_default();
         self.due = lib.tasks(TaskFilter::Today(self.today)).unwrap_or_default();
@@ -870,19 +877,41 @@ impl TodayView {
         let clock = appearance::settings(cx).clock;
         let items = self.upcoming_items();
         let mut rows: Vec<AnyElement> = Vec::new();
+        // A day heading names its holidays ("Tomorrow · Diwali"); a holiday
+        // with nothing else planned still gets its heading.
+        let heading = |day: Date, rows: &mut Vec<AnyElement>| {
+            let label = match self.holidays.summary(day) {
+                Some(h) => format!("{} · {h}", relative_day(day, self.today)),
+                None => relative_day(day, self.today),
+            };
+            rows.push(
+                div()
+                    .pt_1p5()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.muted_foreground)
+                    .truncate()
+                    .child(label)
+                    .into_any_element(),
+            );
+        };
+        let item_days: Vec<Date> = items.iter().map(|(d, _)| *d).collect();
+        let last_item_day = item_days.last().copied();
+        let mut holiday_days = self
+            .holidays
+            .days()
+            .filter(|d| *d > self.today && !item_days.contains(d))
+            // When the list was cut short, don't add days beyond it.
+            .filter(|d| items.len() < UPCOMING_MAX || last_item_day.is_some_and(|l| *d <= l))
+            .peekable();
         let mut last_day = None;
         for (day, item) in &items {
+            while let Some(h) = holiday_days.next_if(|h| h < day) {
+                heading(h, &mut rows);
+            }
             if last_day != Some(*day) {
                 last_day = Some(*day);
-                rows.push(
-                    div()
-                        .pt_1p5()
-                        .text_xs()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(theme.muted_foreground)
-                        .child(relative_day(*day, self.today))
-                        .into_any_element(),
-                );
+                heading(*day, &mut rows);
             }
             let (key, icon, when, title, on_click): (String, Lucide, String, String, ClickFn) =
                 match item {
@@ -950,6 +979,9 @@ impl TodayView {
                     .child(div().flex_1().min_w_0().truncate().child(title))
                     .into_any_element(),
             );
+        }
+        for h in holiday_days {
+            heading(h, &mut rows);
         }
         Self::card("upcoming-card", cx)
             .child(self.title_row(
@@ -1090,7 +1122,10 @@ impl Focusable for TodayView {
 impl Render for TodayView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let date_label = self.today.strftime("%A, %B %-d").to_string();
+        let mut date_label = self.today.strftime("%A, %B %-d").to_string();
+        if let Some(h) = self.holidays.summary(self.today) {
+            date_label = format!("{date_label} · {h}");
+        }
         let prefs = appearance::settings(cx);
         let visible: Vec<TodaySection> =
             today_layout::resolve(&prefs.today_order, &prefs.today_hidden)

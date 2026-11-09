@@ -100,6 +100,10 @@ pub struct CalendarView {
     pub(super) today: Date,
     pub(super) now: DateTime,
     pub(super) span: CalendarSpan,
+    /// Holidays in the visible period (Settings → Calendar → Holidays).
+    pub(super) holidays: crate::holidays::DayHolidays,
+    /// Country of the time zone when last loaded (reload when you travel).
+    here: Option<&'static str>,
     load_error: bool,
     pub(super) focus: FocusHandle,
     pub(super) time_scroll: ScrollHandle,
@@ -158,6 +162,8 @@ impl CalendarView {
             today,
             now: clock::now_local(),
             span: CalendarSpan::default(),
+            holidays: crate::holidays::DayHolidays::default(),
+            here: None,
             load_error: false,
             focus: cx.focus_handle(),
             time_scroll: ScrollHandle::new(),
@@ -182,9 +188,13 @@ impl CalendarView {
         &self.span
     }
 
+    pub fn holidays(&self) -> &crate::holidays::DayHolidays {
+        &self.holidays
+    }
+
     fn tick(&mut self, cx: &mut Context<Self>) {
         let now = clock::now_local();
-        if now.date() != self.today {
+        if now.date() != self.today || crate::holidays::detected_country(cx) != self.here {
             self.reload(cx);
         } else if now.hour() != self.now.hour() || now.minute() != self.now.minute() {
             self.now = now;
@@ -205,6 +215,8 @@ impl CalendarView {
         self.today = now.date();
         self.now = now;
         let days = visible_days(self.mode, self.anchor, self.first_weekday(cx));
+        self.here = crate::holidays::detected_country(cx);
+        self.holidays = crate::holidays::DayHolidays::load(days.clone(), cx);
         match self.library.read(cx).calendar(days) {
             Ok(span) => {
                 self.span = span;
@@ -489,6 +501,55 @@ impl CalendarView {
         self.shows(occ, cx)
     }
 
+    /// Quiet lines naming `day`'s holidays (agenda and day panel).
+    pub(super) fn holiday_rows(&self, day: Date, cx: &gpui_kit::App) -> Vec<gpui_kit::AnyElement> {
+        let theme = cx.theme();
+        self.holidays
+            .on(day)
+            .iter()
+            .map(|h| {
+                let public = h.kind == keepstone_core::holidays::HolidayKind::Holiday;
+                let note = crate::holidays::describe(h);
+                h_flex()
+                    .gap_3()
+                    .px_2()
+                    .py_1()
+                    .items_center()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(
+                        h_flex().w(rems(3.75)).flex_shrink_0().child(
+                            Icon::new(if public {
+                                Lucide::Flag
+                            } else {
+                                Lucide::Sparkles
+                            })
+                            .xsmall()
+                            .text_color(theme.muted_foreground),
+                        ),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .when(public, |s| s.text_color(theme.foreground))
+                                    .child(self.holidays.label(h)),
+                            )
+                            .child(
+                                div().text_xs().truncate().child(
+                                    note.split_once(" · ")
+                                        .map_or(note.clone(), |(_, rest)| rest.to_owned()),
+                                ),
+                            ),
+                    )
+                    .into_any_element()
+            })
+            .collect()
+    }
+
     pub(super) fn toggle_task(&self, id: TaskId, window: &mut Window, cx: &mut Context<Self>) {
         notify_err(
             self.library.update(cx, |lib, cx| lib.toggle_task(id, cx)),
@@ -537,9 +598,23 @@ pub fn import_ics_file(
         .detach();
 }
 
-/// The "View options" menu: show or hide routines everywhere.
+/// The "View options" menu: what the calendar shows (routines, holidays),
+/// then import and deleted events.
 fn view_options(cx: &gpui_kit::App) -> impl IntoElement {
-    let routines = appearance::settings(cx).calendar_routines;
+    let prefs = appearance::settings(cx);
+    let routines = prefs.calendar_routines;
+    let holidays = prefs.holidays;
+    let observances = prefs.holiday_observances;
+    let where_you_are = prefs.holidays_where_you_are;
+    let countries: Vec<&'static str> = crate::holidays::chosen(cx)
+        .into_iter()
+        .filter_map(keepstone_core::holidays::country_name)
+        .collect();
+    let countries_label: SharedString = if countries.is_empty() {
+        "No countries chosen".into()
+    } else {
+        format!("Holidays: {}", countries.join(", ")).into()
+    };
     Button::new("calendar-view-options")
         .ghost()
         .small()
@@ -554,6 +629,34 @@ fn view_options(cx: &gpui_kit::App) -> impl IntoElement {
                     }),
             )
             .label("Events repeating 3+ times a week")
+            .separator()
+            .item(
+                PopupMenuItem::new("Show holidays")
+                    .checked(holidays)
+                    .on_click(move |_, _, cx| appearance::update(cx, |s| s.holidays = !holidays)),
+            )
+            .item(
+                PopupMenuItem::new("Festivals and observances")
+                    .checked(observances)
+                    .disabled(!holidays)
+                    .on_click(move |_, _, cx| {
+                        appearance::update(cx, |s| s.holiday_observances = !observances)
+                    }),
+            )
+            .item(
+                PopupMenuItem::new("Holidays where you are")
+                    .checked(where_you_are)
+                    .disabled(!holidays)
+                    .on_click(move |_, _, cx| {
+                        appearance::update(cx, |s| s.holidays_where_you_are = !where_you_are)
+                    }),
+            )
+            .label(countries_label.clone())
+            .item(
+                PopupMenuItem::new("Choose countries…")
+                    .icon(Lucide::Flag)
+                    .action(Box::new(crate::actions::GoSettings)),
+            )
             .separator()
             .item(
                 PopupMenuItem::new("Import calendar file…")
@@ -705,7 +808,7 @@ impl CalendarView {
                 .copied()
                 .collect();
             let tasks: Vec<_> = self.span.tasks_on(day).cloned().collect();
-            if !events.is_empty() || !tasks.is_empty() {
+            if !events.is_empty() || !tasks.is_empty() || !self.holidays.on(day).is_empty() {
                 groups.push((day, events, tasks));
             }
             day = day.tomorrow().unwrap_or(self.span.days.end);
@@ -848,6 +951,7 @@ impl CalendarView {
                                 .when(day == today, |this| this.text_color(theme.primary))
                                 .child(label),
                         )
+                        .children(self.holiday_rows(day, cx))
                         .children(rows)
                         .children(task_rows)
                 }))

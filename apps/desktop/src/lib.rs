@@ -6,6 +6,7 @@
 //! so tests exercise the real app.
 
 pub mod actions;
+pub mod holidays;
 pub mod library;
 pub mod markdown_io;
 pub mod nav;
@@ -62,6 +63,7 @@ pub fn start(
     actions::bind(cx);
     actions::set_menus(cx);
     shell::register_commands(cx);
+    holidays::ensure_countries(cx);
 
     let library = cx.new(|_| {
         let mut lib = Library::new(store);

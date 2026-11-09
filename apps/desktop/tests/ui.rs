@@ -2584,6 +2584,72 @@ fn ics_files_import_once(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
+    use keepstone_desktop::actions::GoCalendar;
+    use keepstone_desktop::views::calendar_layout::CalendarMode;
+    use keepstone_ui::appearance;
+
+    let app = launch(cx);
+    cx.update(|cx| {
+        keepstone_desktop::holidays::set_detected_country_for_tests(Some("IN"), cx);
+        appearance::update(cx, |s| {
+            s.holidays = true;
+            s.holiday_observances = true;
+            s.holidays_where_you_are = true;
+            s.holiday_countries = Some(vec!["IN".into()]);
+        });
+    });
+    dispatch(&app, cx, GoCalendar);
+    let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
+    let diwali: keepstone_core::Date = "2026-11-08".parse().expect("date");
+    let thanksgiving: keepstone_core::Date = "2026-11-26".parse().expect("date");
+    let names = |cx: &mut TestAppContext, day| -> Vec<String> {
+        cx.update_window(app.window, |_, window, _| window.refresh())
+            .expect("window");
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let c = calendar.read(cx);
+            c.holidays()
+                .on(day)
+                .iter()
+                .map(|h| c.holidays().label(h))
+                .collect()
+        })
+    };
+    cx.update(|cx| calendar.update(cx, |c, cx| c.select(diwali, cx)));
+    for (mode, _) in CalendarMode::OPTIONS {
+        cx.update(|cx| calendar.update(cx, |c, cx| c.set_mode(mode, cx)));
+        assert_eq!(names(cx, diwali), ["Diwali"], "{mode:?}");
+    }
+    cx.update(|cx| calendar.update(cx, |c, cx| c.set_mode(CalendarMode::Month, cx)));
+    assert!(names(cx, thanksgiving).is_empty(), "only India at home");
+
+    // Travelling to the US: its holidays join, labelled with the country.
+    cx.update(|cx| {
+        keepstone_desktop::holidays::set_detected_country_for_tests(Some("US"), cx);
+        appearance::update(cx, |s| s.holidays_where_you_are = true);
+        calendar.update(cx, |c, cx| c.reload(cx));
+    });
+    assert_eq!(names(cx, thanksgiving), ["Thanksgiving Day · US"]);
+    assert_eq!(names(cx, diwali), ["Diwali · IN"]);
+    cx.update(|cx| appearance::update(cx, |s| s.holidays_where_you_are = false));
+    assert!(
+        names(cx, thanksgiving).is_empty(),
+        "travel labels can be turned off"
+    );
+
+    // Observances (Holi in India) and the whole layer can be switched off.
+    let holi: keepstone_core::Date = "2026-03-04".parse().expect("date");
+    cx.update(|cx| calendar.update(cx, |c, cx| c.select(holi, cx)));
+    assert_eq!(names(cx, holi), ["Holi"]);
+    cx.update(|cx| appearance::update(cx, |s| s.holiday_observances = false));
+    assert!(names(cx, holi).is_empty());
+    cx.update(|cx| calendar.update(cx, |c, cx| c.select(diwali, cx)));
+    cx.update(|cx| appearance::update(cx, |s| s.holidays = false));
+    assert!(names(cx, diwali).is_empty());
+}
+
+#[gpui_kit::test]
 fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
     use keepstone_core::vault::template::Template;
     use keepstone_core::vault::{FieldKind, ItemFields, ItemKind};

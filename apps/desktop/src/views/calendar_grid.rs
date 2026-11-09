@@ -315,6 +315,36 @@ impl CalendarView {
             .child(label)
     }
 
+    /// The day's holidays as one quiet line ("Diwali", "Holi +1"); public
+    /// holidays a shade stronger than observances. The tooltip lists them.
+    fn holiday_tag(&self, day: Date, key: &str, cx: &Context<Self>) -> Option<AnyElement> {
+        let theme = cx.theme();
+        let text = self.holidays.summary(day)?;
+        let public = self
+            .holidays
+            .on(day)
+            .iter()
+            .any(|h| h.kind == keepstone_core::holidays::HolidayKind::Holiday);
+        let tip: SharedString = self.holidays.details(day).join("\n").into();
+        Some(
+            div()
+                .id(SharedString::from(format!("holiday-{key}-{day}")))
+                .min_w_0()
+                .truncate()
+                .text_xs()
+                .text_color(if public {
+                    theme.foreground.opacity(0.72)
+                } else {
+                    theme.muted_foreground
+                })
+                .child(text)
+                .tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+                })
+                .into_any_element(),
+        )
+    }
+
     // ---- Month -----------------------------------------------------------
 
     /// Month grid plus, on wide windows, the selected day's full list.
@@ -439,8 +469,10 @@ impl CalendarView {
                                 h_flex()
                                     .h(rems(DAY_HEADER))
                                     .px_0p5()
+                                    .gap_1()
                                     .items_center()
-                                    .child(self.day_number(day, outside, cx)),
+                                    .child(self.day_number(day, outside, cx))
+                                    .children(self.holiday_tag(day, "month", cx)),
                             )
                             .child(div().h(rems(bar_lines as f32 * ROW)).flex_shrink_0())
                             .child(
@@ -686,6 +718,7 @@ impl CalendarView {
                     .children(rows)
             })
         };
+        let holiday_rows = self.holiday_rows(day, cx);
         let empty = plan_rows.is_empty() && routine_rows.is_empty() && task_rows.is_empty();
         let plans_group = group("Events", plan_rows, cx);
         let tasks_group = group("Tasks", task_rows, cx);
@@ -720,6 +753,9 @@ impl CalendarView {
                             .child(heading),
                     ),
             )
+            .when(!holiday_rows.is_empty(), |s| {
+                s.child(v_flex().children(holiday_rows))
+            })
             .when(empty, |s| {
                 s.child(
                     div()
@@ -776,7 +812,9 @@ impl CalendarView {
             self.time_scroll.set_offset(point(px(0.), px(-y)));
         }
 
-        // Header: weekday + date per column.
+        // Header: weekday + date per column, and a quiet holiday line when
+        // any shown day has one (every column gets the line so they align).
+        let holiday_line = days.iter().any(|d| !self.holidays.on(*d).is_empty());
         let header = h_flex()
             .border_b_1()
             .border_color(theme.border)
@@ -786,23 +824,37 @@ impl CalendarView {
                     day.weekday(),
                     jiff::civil::Weekday::Saturday | jiff::civil::Weekday::Sunday
                 );
-                h_flex()
+                v_flex()
                     .id(SharedString::from(format!("col-head-{day}")))
                     .flex_1()
                     .min_w_0()
                     .py_1p5()
-                    .gap_1()
-                    .justify_center()
+                    .px_1()
                     .items_center()
                     .border_l_1()
                     .border_color(theme.border)
                     .text_xs()
                     .child(
-                        div()
-                            .text_color(theme.muted_foreground)
-                            .child(day.strftime("%a").to_string()),
+                        h_flex()
+                            .gap_1()
+                            .justify_center()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_color(theme.muted_foreground)
+                                    .child(day.strftime("%a").to_string()),
+                            )
+                            .child(self.day_number(day, weekend && day != self.today, cx)),
                     )
-                    .child(self.day_number(day, weekend && day != self.today, cx))
+                    .when(holiday_line, |s| {
+                        s.child(
+                            h_flex()
+                                .h(rems(1.))
+                                .max_w_full()
+                                .justify_center()
+                                .children(self.holiday_tag(day, "week", cx)),
+                        )
+                    })
                     .when(self.mode == CalendarMode::Week, |s| {
                         s.hover(|s| s.bg(theme.muted))
                             .on_click(cx.listener(move |this, _, _, cx| this.open_day(day, cx)))
