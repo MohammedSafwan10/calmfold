@@ -15,6 +15,8 @@ icon_assets!(
     AppIcons,
     [
         ArchiveRestore,
+        Cake,
+        Gift,
         Heading,
         ArrowLeft,
         FolderOutput,

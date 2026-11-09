@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["holidays==0.108"]
+# ///
 """Regenerates crates/core/data/holidays.txt, the bundled holiday table.
 
 Source: the `holidays` Python package (MIT, https://github.com/vacanza/holidays),
@@ -6,16 +10,22 @@ which tracks official calendars per country, including lunar holidays such as
 Diwali, Holi and Eid. Keepstone ships the generated table so the calendar
 works offline; nothing is fetched at runtime.
 
-Usage (once a year, or when upgrading the package):
+Usage (once a year, or when upgrading the package; bump the pinned
+version above to the latest on https://pypi.org/project/holidays/):
 
-    python3 -m venv /tmp/hol && /tmp/hol/bin/pip install 'holidays==0.83'
-    /tmp/hol/bin/python scripts/gen-holidays.py
+    uv run scripts/gen-holidays.py
+
+`uv` (brew install uv) fetches the pinned package into a throwaway
+environment; nothing is installed globally.
 
 Format (tab separated, one record per line):
 
     C  <code>  <country name>
     Z  <IANA time zone>  <code>          (from zone.tab, for "where you are")
+    S  <code>-<sub>  <region name>       (states, provinces…)
     H  <code>  P|O  <name>  <YYYYMMDD,...>
+    H  <code>-<sub>  P|O  <name>  <dates>   (only days the country doesn't
+                                          already have)
        P = public holiday (day off), O = observance / festival / optional day.
        A date ending in "~" is estimated (lunar holidays announced later;
        it can move by a day).
@@ -70,6 +80,53 @@ def language(cls):
     return None
 
 
+def region_names(cls):
+    """Subdivision code -> readable name (first plain-ASCII alias)."""
+    names = {}
+    for name, code in (getattr(cls, "subdivisions_aliases", {}) or {}).items():
+        best = names.get(code)
+        # Prefer plain ASCII, then the fuller name ("Telangana" over "TG").
+        if best is None or (name.isascii(), len(name)) > (best.isascii(), len(best)):
+            names[code] = name
+    return names
+
+
+def collect(code, cls, subdiv, cats, lang):
+    found = {}
+    for kind, wanted in (("P", PUBLIC), ("O", OBSERVANCE)):
+        use = tuple(sorted(cats & wanted))
+        if not use:
+            continue
+        h = holidays.country_holidays(
+            code,
+            subdiv=subdiv,
+            years=range(FIRST_YEAR, LAST_YEAR + 1),
+            categories=use,
+            language=lang,
+        )
+        for day, names in sorted(h.items()):
+            for name in names.split("; "):
+                name = name.strip()
+                estimated = name.endswith("(estimated)")
+                name = name.removesuffix("(estimated)").strip()
+                key = (day, name)
+                if not name or key in found:
+                    continue  # public wins over observance
+                found[key] = (kind, estimated)
+    return found
+
+
+def rows_for(key, found):
+    by_name = {}
+    for (day, name), (kind, estimated) in found.items():
+        by_name.setdefault((kind, name), []).append((day, estimated))
+    out = []
+    for (kind, name), days in sorted(by_name.items(), key=lambda kv: min(kv[1])):
+        dates = ",".join(d.strftime("%Y%m%d") + ("~" if e else "") for d, e in sorted(days))
+        out.append(f"H\t{key}\t{kind}\t{name}\t{dates}")
+    return out
+
+
 def main():
     warnings.simplefilter("ignore")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -88,33 +145,24 @@ def main():
             continue
         cats = set(getattr(cls, "supported_categories", ("public",)))
         lang = language(cls)
-        found = {}
-        for kind, wanted in (("P", PUBLIC), ("O", OBSERVANCE)):
-            use = tuple(sorted(cats & wanted))
-            if not use:
-                continue
-            h = holidays.country_holidays(
-                code, years=range(FIRST_YEAR, LAST_YEAR + 1), categories=use, language=lang
-            )
-            for day, names in sorted(h.items()):
-                for name in names.split("; "):
-                    name = name.strip()
-                    estimated = name.endswith("(estimated)")
-                    name = name.removesuffix("(estimated)").strip()
-                    key = (day, name)
-                    if not name or key in found:
-                        continue  # public wins over observance
-                    found[key] = (kind, estimated)
+        found = collect(code, cls, None, cats, lang)
         if not found or code in codes:
             continue
         codes.add(code)
         lines.append(f"C\t{code}\t{pretty(class_name)}")
-        by_name = {}
-        for (day, name), (kind, estimated) in found.items():
-            by_name.setdefault((kind, name), []).append((day, estimated))
-        for (kind, name), days in sorted(by_name.items(), key=lambda kv: min(kv[1])):
-            dates = ",".join(d.strftime("%Y%m%d") + ("~" if e else "") for d, e in sorted(days))
-            rows.append(f"H\t{code}\t{kind}\t{name}\t{dates}")
+        rows += rows_for(code, found)
+        names = region_names(cls)
+        for sub in getattr(cls, "subdivisions", ()) or ():
+            try:
+                extra = collect(code, cls, sub, cats, lang)
+            except Exception:
+                continue
+            # Keep what the country lacks, and days that are a day off
+            # only here (Pongal: observance in India, holiday in Tamil Nadu).
+            extra = {k: v for k, v in extra.items() if k not in found or found[k][0] != v[0]}
+            key = f"{code}-{sub}"
+            lines.append(f"S\t{key}\t{names.get(sub, sub)}")
+            rows += rows_for(key, extra)
     zones = {}
     for tab in ("/usr/share/zoneinfo/zone.tab",):
         if not os.path.exists(tab):
@@ -133,7 +181,8 @@ def main():
     lines += rows
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"{out_path}: {len(codes)} countries, {len(rows)} holidays, {len(zones)} zones")
+    regions = sum(1 for l in lines if l.startswith("S\t"))
+    print(f"{out_path}: {len(codes)} countries, {regions} regions, {len(rows)} holiday rows, {len(zones)} zones")
 
 
 if __name__ == "__main__":

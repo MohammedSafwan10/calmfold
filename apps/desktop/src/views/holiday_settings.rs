@@ -1,5 +1,5 @@
 //! Settings → Calendar → Holidays: on/off, observances, "where you are",
-//! and a searchable multi-select of countries.
+//! and searchable multi-selects for countries and their states/regions.
 
 use gpui_kit::component::combobox::{Combobox, ComboboxEvent, ComboboxState};
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
@@ -36,6 +36,85 @@ impl SearchableListItem for CountryItem {
 }
 
 pub type CountryPicker = Entity<ComboboxState<SearchableVec<CountryItem>>>;
+
+/// The two pickers and the countries the region list was built for.
+pub struct HolidayPickers {
+    pub countries: CountryPicker,
+    pub regions: CountryPicker,
+    regions_for: Vec<&'static str>,
+    _subs: Vec<Subscription>,
+}
+
+/// Regions of the chosen countries: "Tamil Nadu" (with the country when
+/// several are chosen, "California · United States").
+fn region_items(countries: &[&'static str]) -> Vec<CountryItem> {
+    countries
+        .iter()
+        .flat_map(|c| {
+            let country = holidays::country_name(c).unwrap_or(c);
+            holidays::regions(c).into_iter().map(move |r| CountryItem {
+                code: r.code,
+                title: if countries.len() > 1 {
+                    format!("{} · {country}", r.name).into()
+                } else {
+                    r.name.into()
+                },
+            })
+        })
+        .collect()
+}
+
+pub fn pickers<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> HolidayPickers {
+    let (countries, sub) = country_picker(window, cx);
+    let chosen = crate::holidays::chosen(cx);
+    let selected = crate::holidays::chosen_regions(cx);
+    let regions = cx.new(|cx| {
+        let mut state = ComboboxState::new(
+            SearchableVec::new(region_items(&chosen)),
+            vec![],
+            window,
+            cx,
+        )
+        .multiple(true)
+        .searchable(true);
+        state.set_selected_values(&selected, window, cx);
+        state
+    });
+    let region_sub = cx.subscribe(
+        &regions,
+        |_, _, event: &ComboboxEvent<SearchableVec<CountryItem>>, cx| {
+            let (ComboboxEvent::Change(codes) | ComboboxEvent::Confirm(codes)) = event;
+            let codes: Vec<String> = codes.iter().map(|c| (*c).to_owned()).collect();
+            appearance::update(cx, |s| s.holiday_regions = codes);
+        },
+    );
+    HolidayPickers {
+        countries,
+        regions,
+        regions_for: chosen,
+        _subs: vec![sub, region_sub],
+    }
+}
+
+impl HolidayPickers {
+    /// Follows changes made elsewhere; rebuilds the region list when the
+    /// countries change.
+    pub fn sync(&mut self, window: &mut Window, cx: &mut App) {
+        sync_picker(&self.countries, window, cx);
+        let chosen = crate::holidays::chosen(cx);
+        if chosen != self.regions_for {
+            self.regions_for = chosen.clone();
+            self.regions.update(cx, |p, cx| {
+                p.set_items(SearchableVec::new(region_items(&chosen)), window, cx);
+            });
+        }
+        let selected = crate::holidays::chosen_regions(cx);
+        if self.regions.read(cx).selected_values() != selected {
+            self.regions
+                .update(cx, |p, cx| p.set_selected_values(&selected, window, cx));
+        }
+    }
+}
 
 /// The picker, kept in sync with the saved countries both ways.
 pub fn country_picker<V: 'static>(
@@ -76,7 +155,9 @@ pub fn sync_picker(picker: &CountryPicker, window: &mut Window, cx: &mut App) {
     }
 }
 
-pub fn holiday_group(picker: CountryPicker) -> SettingGroup {
+pub fn holiday_group(pickers: &HolidayPickers) -> SettingGroup {
+    let picker = pickers.countries.clone();
+    let region_picker = pickers.regions.clone();
     let show = SettingItem::new(
         "Show holidays",
         SettingField::switch(
@@ -110,6 +191,26 @@ pub fn holiday_group(picker: CountryPicker) -> SettingGroup {
         )
     })
     .keywords(["country", "countries", "india", "region", "holiday"]);
+    let regions = SettingItem::new(
+        "States and regions",
+        SettingField::render(move |_, _, _| {
+            Combobox::new(&region_picker)
+                .placeholder("Whole country only")
+                .search_placeholder("Search states")
+                .menu_width(px(300.))
+                .w(rems(16.))
+                .into_any_element()
+        }),
+    )
+    .description("Adds a state's own days, like Pongal in Tamil Nadu or Onam in Kerala.")
+    .keywords([
+        "state",
+        "province",
+        "region",
+        "tamil nadu",
+        "kerala",
+        "local holiday",
+    ]);
     let observances = SettingItem::new(
         "Festivals and observances",
         SettingField::switch(
@@ -138,5 +239,5 @@ pub fn holiday_group(picker: CountryPicker) -> SettingGroup {
     .keywords(["travel", "abroad", "location", "time zone", "holiday"]);
     SettingGroup::new()
         .title("Holidays")
-        .items(vec![show, countries, observances, here])
+        .items(vec![show, countries, regions, observances, here])
 }

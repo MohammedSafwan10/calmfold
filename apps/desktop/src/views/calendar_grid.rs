@@ -107,11 +107,25 @@ impl CalendarView {
         })
     }
 
-    fn title_of(&self, occ: &Occurrence) -> SharedString {
-        self.span
-            .events
-            .get(&occ.event)
-            .map_or_else(SharedString::default, |e| e.title().to_owned().into())
+    /// The title, with the years for a birthday or anniversary
+    /// ("Mom's birthday · 60").
+    pub(super) fn title_of(&self, occ: &Occurrence) -> SharedString {
+        let Some(e) = self.span.events.get(&occ.event) else {
+            return SharedString::default();
+        };
+        match e.occasion().and_then(|o| o.short(occ.start.date())) {
+            Some(n) => format!("{} · {n}", e.title()).into(),
+            None => e.title().to_owned().into(),
+        }
+    }
+
+    /// A cake or gift for birthdays and anniversaries.
+    pub(super) fn occasion_icon(&self, occ: &Occurrence) -> Option<Lucide> {
+        let o = self.span.events.get(&occ.event)?.occasion()?;
+        Some(match o.kind {
+            keepstone_core::OccasionKind::Birthday => Lucide::Cake,
+            keepstone_core::OccasionKind::Anniversary => Lucide::Gift,
+        })
     }
 
     /// Wraps `el` so dragging it carries `drag`.
@@ -156,6 +170,9 @@ impl CalendarView {
             .into()
         };
         let past = bar.occ.end <= self.now;
+        // Birthdays and anniversaries sit back like routines, with an icon.
+        let icon = self.occasion_icon(&bar.occ);
+        let fill = if icon.is_some() { 0.08 } else { 0.16 };
         let el = div()
             .id(SharedString::from(format!(
                 "bar-{id}-{key}-{}",
@@ -173,14 +190,21 @@ impl CalendarView {
                     .size_full()
                     .px_1p5()
                     .flex()
+                    .gap_1()
                     .items_center()
                     .rounded(theme.radius)
-                    .bg(theme.primary.opacity(0.16))
+                    .bg(theme.primary.opacity(fill))
                     .hover(|s| s.bg(theme.primary.opacity(0.24)))
                     .when(past, |s| s.opacity(0.6))
                     .text_xs()
                     .font_weight(FontWeight::MEDIUM)
-                    .child(div().truncate().child(label)),
+                    .children(icon.map(|i| {
+                        Icon::new(i)
+                            .xsmall()
+                            .flex_shrink_0()
+                            .text_color(theme.muted_foreground)
+                    }))
+                    .child(div().min_w_0().truncate().child(label)),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();

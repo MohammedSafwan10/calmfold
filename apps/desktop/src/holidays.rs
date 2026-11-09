@@ -66,6 +66,23 @@ pub fn chosen(cx: &App) -> Vec<&'static str> {
         .collect()
 }
 
+/// The chosen regions (`IN-TN`) of chosen countries.
+#[must_use]
+pub fn chosen_regions(cx: &App) -> Vec<&'static str> {
+    let countries = chosen(cx);
+    countries
+        .iter()
+        .flat_map(|c| holidays::regions(c))
+        .filter(|r| {
+            appearance::settings(cx)
+                .holiday_regions
+                .iter()
+                .any(|code| code.eq_ignore_ascii_case(r.code))
+        })
+        .map(|r| r.code)
+        .collect()
+}
+
 /// The country you're in when it isn't one of yours (and that's wanted).
 #[must_use]
 pub fn away_country(cx: &App) -> Option<&'static str> {
@@ -94,8 +111,10 @@ impl DayHolidays {
         }
         let mut countries = chosen(cx);
         countries.extend(away_country(cx));
+        let mut places = countries.clone();
+        places.extend(chosen_regions(cx));
         let mut by_day: BTreeMap<Date, Vec<Holiday>> = BTreeMap::new();
-        for h in holidays::between(&countries, days, prefs.holiday_observances) {
+        for h in holidays::between(&places, days, prefs.holiday_observances) {
             by_day.entry(h.date).or_default().push(h);
         }
         Self {
@@ -119,24 +138,28 @@ impl DayHolidays {
         self.by_day.keys().copied()
     }
 
-    /// "Diwali" or, with several countries shown, "Thanksgiving Day · US".
+    /// "Diwali", with several countries shown "Thanksgiving Day · US", and
+    /// a regional day names its region: "Pongal · Tamil Nadu".
     #[must_use]
     pub fn label(&self, h: &Holiday) -> String {
-        if self.labelled {
+        if let Some(region) = h.region.and_then(holidays::region_name) {
+            format!("{} · {region}", h.name)
+        } else if self.labelled {
             format!("{} · {}", h.name, h.countries.join(", "))
         } else {
             h.name.to_owned()
         }
     }
 
-    /// One line for a day: the first holiday, "+N" for the rest.
+    /// One short line for a day: the first holiday's short name, "+N" for
+    /// the rest (full names are in the tooltip and the day panel).
     #[must_use]
     pub fn summary(&self, day: Date) -> Option<String> {
         let list = self.on(day);
-        let first = list.first()?;
+        let first = holidays::short_name(list.first()?.name);
         Some(match list.len() {
-            1 => first.name.to_owned(),
-            n => format!("{} +{}", first.name, n - 1),
+            1 => first.to_owned(),
+            n => format!("{first} +{}", n - 1),
         })
     }
 
@@ -159,7 +182,11 @@ pub fn describe(h: &Holiday) -> String {
         .iter()
         .map(|c| holidays::country_name(c).unwrap_or(c))
         .collect();
-    let mut text = format!("{} · {kind} in {}", h.name, names.join(", "));
+    let place = match h.region.and_then(holidays::region_name) {
+        Some(region) => format!("{region}, {}", names.join(", ")),
+        None => names.join(", "),
+    };
+    let mut text = format!("{} · {kind} in {place}", h.name);
     if h.estimated {
         text.push_str(" · Date may shift by a day");
     }

@@ -9,7 +9,7 @@ use rusqlite::{OptionalExtension, Row, params};
 use crate::codec::{date_to_sql, opt_ts_from_sql, ts_from_sql, ts_to_sql, uuid_from_sql};
 use crate::{StorageError, StorageResult, Store};
 
-const COLUMNS: &str = "id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions, until";
+const COLUMNS: &str = "id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions, until, occasion";
 
 /// Fixed-width ISO text, so SQLite's string order is time order.
 fn dt_to_sql(dt: DateTime) -> String {
@@ -24,8 +24,8 @@ impl Store {
     pub fn save_event(&mut self, event: &Event) -> StorageResult<()> {
         let r = event.to_record();
         self.conn.execute(
-            "INSERT INTO events (id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions, until)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "INSERT INTO events (id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions, until, occasion)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT (id) DO UPDATE SET
                 title = excluded.title,
                 notes = excluded.notes,
@@ -37,7 +37,8 @@ impl Store {
                 updated_at = excluded.updated_at,
                 deleted_at = excluded.deleted_at,
                 exceptions = excluded.exceptions,
-                until = excluded.until",
+                until = excluded.until,
+                occasion = excluded.occasion",
             params![
                 r.id.to_string(),
                 r.title,
@@ -52,6 +53,7 @@ impl Store {
                 r.deleted_at.map(ts_to_sql),
                 exceptions_to_code(&r.exceptions),
                 r.until.map(date_to_sql),
+                r.occasion.map(keepstone_core::Occasion::to_code),
             ],
         )?;
         Ok(())
@@ -147,6 +149,7 @@ struct RawEvent {
     deleted_at: Option<i64>,
     exceptions: Option<String>,
     until: Option<String>,
+    occasion: Option<String>,
 }
 
 impl RawEvent {
@@ -171,6 +174,10 @@ impl RawEvent {
                 .unwrap_or_default(),
             // Like an unknown rule: an unreadable end repeats forever.
             until: self.until.as_deref().and_then(|d| d.parse().ok()),
+            occasion: self
+                .occasion
+                .as_deref()
+                .and_then(keepstone_core::Occasion::from_code),
         }))
     }
 }
@@ -190,6 +197,7 @@ fn raw_event(row: &Row<'_>) -> rusqlite::Result<RawEvent> {
         deleted_at: row.get(10)?,
         exceptions: row.get(11)?,
         until: row.get(12)?,
+        occasion: row.get(13)?,
     })
 }
 
@@ -245,6 +253,23 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn occasions_persist() {
+        let mut store = Store::open_in_memory().expect("store");
+        let mut e = Event::new_all_day("Mom's birthday", d("2026-11-20"), d("2026-11-20"), at(1))
+            .expect("event");
+        e.set_occasion(
+            Some(keepstone_core::Occasion {
+                kind: keepstone_core::OccasionKind::Birthday,
+                year: Some(1966),
+            }),
+            at(1),
+        )
+        .expect("occasion");
+        store.save_event(&e).expect("save");
+        assert_eq!(store.event(e.id()).expect("load"), Some(e));
     }
 
     #[test]

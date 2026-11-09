@@ -167,6 +167,15 @@ fn build(raw: &Raw, now: Timestamp) -> Option<(Event, bool)> {
                 for ex in &raw.exdates {
                     _ = event.skip_occurrence(stamp_date(*ex), now);
                 }
+                // Contacts' birthdays from Google/Apple: yearly all-day
+                // events named "… birthday".
+                if all_day && r.rule == Recurrence::Years(1) {
+                    let words: Vec<&str> = title.split_whitespace().collect();
+                    if let Some(kind) = crate::event_quick_add::occasion_kind(&words) {
+                        _ = event
+                            .set_occasion(Some(crate::event::Occasion { kind, year: None }), now);
+                    }
+                }
             }
             None => simplified = true,
         }
@@ -639,9 +648,15 @@ mod tests {
             "RRULE:FREQ=MONTHLY;COUNT=3\r\nEND:VEVENT\r\n",
             "BEGIN:VEVENT\r\nUID:b\r\nSUMMARY:Book club\r\nDTSTART:20261110T190000\r\n",
             "RRULE:FREQ=MONTHLY;BYDAY=2TU\r\nEND:VEVENT\r\n",
+            "BEGIN:VEVENT\r\nUID:k\r\nSUMMARY:Riya's birthday\r\nDTSTART;VALUE=DATE:20260303\r\n",
+            "RRULE:FREQ=YEARLY\r\nEND:VEVENT\r\n",
         ));
         let out = import(&text);
-        assert_eq!(out.events.len(), 3);
+        assert_eq!(out.events.len(), 4);
+        assert_eq!(
+            out.events[3].occasion().map(|o| o.kind),
+            Some(crate::event::OccasionKind::Birthday)
+        );
         assert_eq!(out.simplified, 1, "second Tuesday can't be expressed");
         let standup = &out.events[0];
         assert_eq!(standup.recurrence(), Some(Recurrence::WORKDAYS));

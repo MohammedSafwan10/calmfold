@@ -25,7 +25,7 @@ mod text;
 pub mod vault;
 
 pub use error::{DomainError, DomainResult};
-pub use event::{Event, EventRecord, Exception, Occurrence};
+pub use event::{Event, EventRecord, Exception, Occasion, OccasionKind, Occurrence};
 pub use event_quick_add::{EventDraft, parse_event};
 pub use habit::{Habit, HabitDraft, HabitRecord, Schedule, Stats, parse_habit};
 pub use id::{EventId, HabitId, NoteId, ProjectId, TaskId, VaultItemId};

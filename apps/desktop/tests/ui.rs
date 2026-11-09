@@ -2619,7 +2619,11 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
     cx.update(|cx| calendar.update(cx, |c, cx| c.select(diwali, cx)));
     for (mode, _) in CalendarMode::OPTIONS {
         cx.update(|cx| calendar.update(cx, |c, cx| c.set_mode(mode, cx)));
-        assert_eq!(names(cx, diwali), ["Diwali"], "{mode:?}");
+        assert_eq!(
+            names(cx, diwali)[0],
+            "Diwali",
+            "public holiday first, {mode:?}"
+        );
     }
     cx.update(|cx| calendar.update(cx, |c, cx| c.set_mode(CalendarMode::Month, cx)));
     assert!(names(cx, thanksgiving).is_empty(), "only India at home");
@@ -2631,22 +2635,92 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
         calendar.update(cx, |c, cx| c.reload(cx));
     });
     assert_eq!(names(cx, thanksgiving), ["Thanksgiving Day · US"]);
-    assert_eq!(names(cx, diwali), ["Diwali · IN"]);
+    assert_eq!(names(cx, diwali)[0], "Diwali · IN");
     cx.update(|cx| appearance::update(cx, |s| s.holidays_where_you_are = false));
     assert!(
         names(cx, thanksgiving).is_empty(),
         "travel labels can be turned off"
     );
 
-    // Observances (Holi in India) and the whole layer can be switched off.
-    let holi: keepstone_core::Date = "2026-03-04".parse().expect("date");
-    cx.update(|cx| calendar.update(cx, |c, cx| c.select(holi, cx)));
-    assert_eq!(names(cx, holi), ["Holi"]);
+    // A state adds its own days: Pongal is a day off in Tamil Nadu.
+    let pongal: keepstone_core::Date = "2026-01-14".parse().expect("date");
+    cx.update(|cx| {
+        appearance::update(cx, |s| s.holiday_observances = false);
+        calendar.update(cx, |c, cx| c.select(pongal, cx));
+    });
+    assert!(!names(cx, pongal).iter().any(|n| n.starts_with("Pongal")));
+    cx.update(|cx| appearance::update(cx, |s| s.holiday_regions = vec!["IN-TN".into()]));
+    assert!(
+        names(cx, pongal).contains(&"Pongal · Tamil Nadu".to_owned()),
+        "{:?}",
+        names(cx, pongal)
+    );
+    cx.update(|cx| appearance::update(cx, |s| s.holiday_observances = true));
+
+    // Observances (Raksha Bandhan in India) and the whole layer can be switched off.
+    let rakhi: keepstone_core::Date = "2026-08-28".parse().expect("date");
+    cx.update(|cx| calendar.update(cx, |c, cx| c.select(rakhi, cx)));
+    assert_eq!(names(cx, rakhi), ["Raksha Bandhan"]);
     cx.update(|cx| appearance::update(cx, |s| s.holiday_observances = false));
-    assert!(names(cx, holi).is_empty());
+    assert!(names(cx, rakhi).is_empty());
     cx.update(|cx| calendar.update(cx, |c, cx| c.select(diwali, cx)));
     cx.update(|cx| appearance::update(cx, |s| s.holidays = false));
     assert!(names(cx, diwali).is_empty());
+}
+
+#[gpui_kit::test]
+fn birthdays_come_from_quick_add_and_can_be_hidden(cx: &mut TestAppContext) {
+    use keepstone_core::OccasionKind;
+    use keepstone_desktop::actions::GoCalendar;
+    use keepstone_ui::appearance;
+
+    let app = launch(cx);
+    dispatch(&app, cx, GoCalendar);
+    let lib = library(&app, cx);
+    let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
+    let today = keepstone_core::clock::today();
+    let born = today.year() - 60;
+    let id = cx
+        .update(|cx| {
+            lib.update(cx, |l, cx| {
+                l.quick_add_event(&format!("Mom's birthday {born}"), today, cx)
+            })
+        })
+        .expect("add");
+    let event = cx.read(|cx| lib.read(cx).event(id)).expect("event");
+    let occasion = event.occasion().expect("occasion");
+    assert_eq!(
+        (occasion.kind, occasion.year),
+        (OccasionKind::Birthday, Some(born))
+    );
+    assert!(event.is_all_day());
+    assert_eq!(occasion.note(today).as_deref(), Some("turns 60"));
+
+    let shown = |cx: &mut TestAppContext| {
+        cx.update_window(app.window, |_, window, _| window.refresh())
+            .expect("window");
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let c = calendar.read(cx);
+            c.span()
+                .on_day(today)
+                .filter(|o| o.event == id)
+                .any(|o| c.shows_for_test(o, cx))
+        })
+    };
+    assert!(shown(cx));
+    cx.update(|cx| appearance::update(cx, |s| s.calendar_occasions = false));
+    assert!(!shown(cx), "View options can hide birthdays");
+    cx.update(|cx| appearance::update(cx, |s| s.calendar_occasions = true));
+
+    // Back to a plain event from the panel's Type control.
+    cx.update(|cx| lib.update(cx, |l, cx| l.set_event_occasion(id, None, cx)))
+        .expect("plain");
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).event(id))
+            .and_then(|e| e.occasion()),
+        None
+    );
 }
 
 #[gpui_kit::test]

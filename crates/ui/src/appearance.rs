@@ -133,6 +133,8 @@ pub struct AppearanceSettings {
     pub clock: ClockFormat,
     /// Show routines (events repeating 3+ times a week) in the calendar.
     pub calendar_routines: bool,
+    /// Show birthdays and anniversaries in the calendar.
+    pub calendar_occasions: bool,
     /// Show public holidays in the calendar and on Today.
     pub holidays: bool,
     /// Also show festivals and observances (days that aren't days off).
@@ -140,6 +142,9 @@ pub struct AppearanceSettings {
     /// Countries whose holidays are shown (ISO codes). `None` until first
     /// launch fills in the country of the Mac's time zone.
     pub holiday_countries: Option<Vec<String>>,
+    /// States or provinces whose own holidays are added (`IN-TN`). Only
+    /// those of chosen countries count.
+    pub holiday_regions: Vec<String>,
     /// Also show the holidays of the country you're in (from the time
     /// zone) when it isn't one of `holiday_countries`.
     pub holidays_where_you_are: bool,
@@ -230,9 +235,11 @@ impl Default for AppearanceSettings {
             week_start: WeekStart::default(),
             clock: ClockFormat::default(),
             calendar_routines: true,
+            calendar_occasions: true,
             holidays: true,
             holiday_observances: true,
             holiday_countries: None,
+            holiday_regions: Vec::new(),
             holidays_where_you_are: true,
             today_order: Vec::new(),
             today_hidden: Vec::new(),
@@ -360,9 +367,11 @@ mod tests {
             week_start: WeekStart::Sunday,
             clock: ClockFormat::TwentyFourHour,
             calendar_routines: false,
+            calendar_occasions: false,
             holidays: false,
             holiday_observances: false,
             holiday_countries: Some(vec!["IN".into(), "US".into()]),
+            holiday_regions: vec!["IN-TN".into()],
             holidays_where_you_are: false,
             today_order: vec!["habits".into(), "agenda".into()],
             today_hidden: vec!["notes".into()],

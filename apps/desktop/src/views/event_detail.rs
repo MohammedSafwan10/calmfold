@@ -27,7 +27,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Subscription, Task as GpuiTask, Window, div, px,
+    SharedString, Styled as _, Subscription, Task as GpuiTask, Window, div, px, rems,
 };
 use keepstone_core::{Date, DateTime, Event, EventId, Occurrence, Recurrence, Time};
 use keepstone_ui::appearance::{self, ClockFormat};
@@ -80,6 +80,8 @@ pub struct EventDetail {
     last_day: Entity<DatePickerState>,
     /// Repeating events: the last day a repeat may start (empty = never ends).
     ends_on: Entity<DatePickerState>,
+    /// Birthdays and anniversaries: the year it began (optional).
+    occasion_year: Entity<InputState>,
     dirty: bool,
     pending_save: Option<GpuiTask<()>>,
     _subscriptions: Vec<Subscription>,
@@ -104,6 +106,11 @@ impl EventDetail {
                 .validate(|text, _| text.chars().count() <= keepstone_core::MAX_TITLE_CHARS)
         });
         let location = cx.new(|cx| InputState::new(window, cx).placeholder("Add a place"));
+        let occasion_year = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Year, optional")
+                .validate(|text, _| text.len() <= 4 && text.chars().all(|c| c.is_ascii_digit()))
+        });
         let notes = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(4, 14)
@@ -142,6 +149,7 @@ impl EventDetail {
             first_day: first_day.clone(),
             last_day: last_day.clone(),
             ends_on: ends_on.clone(),
+            occasion_year: occasion_year.clone(),
             dirty: false,
             pending_save: None,
             _subscriptions: Vec::new(),
@@ -156,6 +164,9 @@ impl EventDetail {
             notes.update(cx, |n, cx| {
                 n.set_value(event.notes().to_owned(), window, cx)
             });
+            if let Some(year) = event.occasion().and_then(|o| o.year) {
+                occasion_year.update(cx, |i, cx| i.set_value(year.to_string(), window, cx));
+            }
             this.sync_pickers(&event, window, cx);
         }
 
@@ -173,6 +184,11 @@ impl EventDetail {
             }),
             cx.subscribe_in(&location, window, move |this, _, e, window, cx| {
                 text_events(this, e, window, cx)
+            }),
+            cx.subscribe_in(&occasion_year, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                    this.save_occasion_year(window, cx);
+                }
             }),
             cx.subscribe_in(&notes, window, |this, _, event, window, cx| match event {
                 InputEvent::Change => this.schedule_save(window, cx),
@@ -497,6 +513,63 @@ impl EventDetail {
         notify_err(result, window, cx);
     }
 
+    fn set_occasion(
+        &mut self,
+        kind: Option<keepstone_core::OccasionKind>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(event) = self.event.clone() else {
+            return;
+        };
+        if event.occasion().map(|o| o.kind) == kind {
+            return;
+        }
+        let year = event
+            .occasion()
+            .and_then(|o| o.year)
+            .or_else(|| self.typed_year(cx));
+        let occasion = kind.map(|kind| keepstone_core::Occasion { kind, year });
+        let id = self.id;
+        notify_err(
+            self.library
+                .update(cx, |lib, cx| lib.set_event_occasion(id, occasion, cx)),
+            window,
+            cx,
+        );
+    }
+
+    fn typed_year(&self, cx: &App) -> Option<i16> {
+        self.occasion_year.read(cx).value().trim().parse().ok()
+    }
+
+    fn save_occasion_year(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut occasion) = self.event.as_ref().and_then(Event::occasion) else {
+            return;
+        };
+        let year = self.typed_year(cx);
+        if year == occasion.year {
+            return;
+        }
+        occasion.year = year;
+        let id = self.id;
+        let result = self
+            .library
+            .update(cx, |lib, cx| lib.set_event_occasion(id, Some(occasion), cx));
+        if result.is_err() {
+            feedback::error_toast("Use a year from 1800 up to the event's year.", window, cx);
+            let old = self
+                .event
+                .as_ref()
+                .and_then(Event::occasion)
+                .and_then(|o| o.year)
+                .map(|y| y.to_string())
+                .unwrap_or_default();
+            self.occasion_year
+                .update(cx, |i, cx| i.set_value(old, window, cx));
+        }
+    }
+
     fn change_until(&mut self, until: Option<Date>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(event) = self.event.clone().filter(|e| e.recurrence().is_some()) else {
             return;
@@ -694,16 +767,56 @@ impl Render for EventDetail {
                         self.repeat_menu(event.recurrence(), cx).into_any_element(),
                         cx,
                     ))
-                    .when(event.recurrence().is_some(), |s| {
+                    .child(field_row(
+                        "Type",
+                        keepstone_ui::components::segmented(
+                            "event-occasion",
+                            &[
+                                (None, "Event"),
+                                (Some(keepstone_core::OccasionKind::Birthday), "Birthday"),
+                                (
+                                    Some(keepstone_core::OccasionKind::Anniversary),
+                                    "Anniversary",
+                                ),
+                            ],
+                            event.occasion().map(|o| o.kind),
+                            {
+                                let view = cx.entity().downgrade();
+                                move |kind, window, cx| {
+                                    _ = view
+                                        .update(cx, |this, cx| this.set_occasion(kind, window, cx));
+                                }
+                            },
+                        )
+                        .into_any_element(),
+                        cx,
+                    ))
+                    .when_some(event.occasion(), |s, o| {
                         s.child(field_row(
-                            "Ends",
-                            DatePicker::new(&self.ends_on)
-                                .placeholder("Never")
-                                .cleanable(true)
+                            match o.kind {
+                                keepstone_core::OccasionKind::Birthday => "Born",
+                                keepstone_core::OccasionKind::Anniversary => "Since",
+                            },
+                            Input::new(&self.occasion_year)
+                                .id("event-occasion-year")
+                                .w(rems(8.))
                                 .into_any_element(),
                             cx,
                         ))
-                    }),
+                    })
+                    .when(
+                        event.recurrence().is_some() && event.occasion().is_none(),
+                        |s| {
+                            s.child(field_row(
+                                "Ends",
+                                DatePicker::new(&self.ends_on)
+                                    .placeholder("Never")
+                                    .cleanable(true)
+                                    .into_any_element(),
+                                cx,
+                            ))
+                        },
+                    ),
             )
             .child(
                 v_flex().gap_2().child(section_label("Location", cx)).child(
@@ -772,6 +885,9 @@ pub fn summary(event: &Event, occurrence: Option<&Occurrence>, clock: ClockForma
             Some(until) => format!("{rule} until {}", until.strftime("%b %-d, %Y")),
             None => rule.to_string(),
         });
+    }
+    if let Some(note) = event.occasion().and_then(|o| o.note(start.date())) {
+        parts.push(note);
     }
     if occurrence.is_some_and(|o| o.moved) {
         parts.push("Changed for this day".into());

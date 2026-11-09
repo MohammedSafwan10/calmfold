@@ -661,6 +661,7 @@ impl Library {
             Event::new_timed(&draft.title, draft.start, draft.end, now)?
         };
         event.set_recurrence(draft.recurrence, now)?;
+        event.set_occasion(draft.occasion, now)?;
         self.save_new_event(&event, cx)
     }
 
@@ -786,6 +787,17 @@ impl Library {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.update_event(id, cx, |e| e.set_recurrence(rule, clock::now()))
+    }
+
+    /// Makes the event a birthday or anniversary (all-day, yearly), or a
+    /// plain event again.
+    pub fn set_event_occasion(
+        &mut self,
+        id: EventId,
+        occasion: Option<keepstone_core::Occasion>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_event(id, cx, |e| e.set_occasion(occasion, clock::now()))
     }
 
     /// Ends a repeating event after `until` (`None` = repeat forever).

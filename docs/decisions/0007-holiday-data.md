@@ -36,9 +36,11 @@ network requests.
 - The table has to be regenerated about once a year to roll the window
   forward. `core::holidays::years()` reports the range, and Settings shows
   it.
-- State and regional holidays (for example Pongal in Tamil Nadu) aren't
-  included yet. The package supports subdivisions, so adding them later
-  means a format change: a subdivision column.
+- State and regional holidays are included as `S`/`H <code>-<sub>` rows
+  (added 2026-11-09, python-holidays 0.108).
+- Upkeep is automatic: a monthly GitHub Action regenerates the table from
+  the latest release and opens a pull request; a unit test fails three
+  years before the table runs out.
 - Rejected:
   - Fetching a holiday feed at runtime, because it would add the app's first
     network dependency and a privacy question.

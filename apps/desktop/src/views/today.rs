@@ -182,12 +182,24 @@ impl TodayView {
         self.span.on_day(self.today).copied().collect()
     }
 
+    /// The title; a birthday or anniversary adds its years ("Mom's
+    /// birthday · turns 60").
     fn title_of(&self, occ: &Occurrence) -> String {
-        self.span
-            .events
-            .get(&occ.event)
-            .map(|e| e.title().to_owned())
-            .unwrap_or_default()
+        let Some(e) = self.span.events.get(&occ.event) else {
+            return String::new();
+        };
+        match e.occasion().and_then(|o| o.note(occ.start.date())) {
+            Some(note) => format!("{} · {note}", e.title()),
+            None => e.title().to_owned(),
+        }
+    }
+
+    fn occasion_icon(&self, occ: &Occurrence) -> Option<Lucide> {
+        let o = self.span.events.get(&occ.event)?.occasion()?;
+        Some(match o.kind {
+            keepstone_core::OccasionKind::Birthday => Lucide::Cake,
+            keepstone_core::OccasionKind::Anniversary => Lucide::Gift,
+        })
     }
 
     fn is_routine(&self, occ: &Occurrence) -> bool {
@@ -921,7 +933,7 @@ impl TodayView {
                         let library = self.library.clone();
                         (
                             format!("upcoming-event-{id}-{day}"),
-                            Lucide::CalendarDays,
+                            self.occasion_icon(o).unwrap_or(Lucide::CalendarDays),
                             if o.all_day {
                                 "All day".into()
                             } else {

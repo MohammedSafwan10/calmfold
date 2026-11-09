@@ -493,7 +493,14 @@ impl CalendarView {
 
     /// Whether `occ` is shown (routines can be hidden from View options).
     pub(super) fn shows(&self, occ: &keepstone_core::Occurrence, cx: &gpui_kit::App) -> bool {
-        appearance::settings(cx).calendar_routines || !self.is_routine(occ)
+        let prefs = appearance::settings(cx);
+        let occasion = self
+            .span
+            .events
+            .get(&occ.event)
+            .is_some_and(|e| e.occasion().is_some());
+        (prefs.calendar_routines || !self.is_routine(occ))
+            && (prefs.calendar_occasions || !occasion)
     }
 
     #[doc(hidden)]
@@ -514,32 +521,38 @@ impl CalendarView {
                     .gap_3()
                     .px_2()
                     .py_1()
-                    .items_center()
+                    .items_start()
                     .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(
-                        h_flex().w(rems(3.75)).flex_shrink_0().child(
-                            Icon::new(if public {
-                                Lucide::Flag
-                            } else {
-                                Lucide::Sparkles
-                            })
-                            .xsmall()
-                            .text_color(theme.muted_foreground),
-                        ),
+                        h_flex()
+                            .w(rems(3.75))
+                            .flex_shrink_0()
+                            .pt(rems(0.1875))
+                            .child(
+                                Icon::new(if public {
+                                    Lucide::Flag
+                                } else {
+                                    Lucide::Sparkles
+                                })
+                                .xsmall()
+                                .text_color(theme.muted_foreground),
+                            ),
                     )
                     .child(
                         v_flex()
                             .flex_1()
                             .min_w_0()
+                            // Full names wrap (some are long: "Pratihar
+                            // Shashthi or Surya Shashthi (Chhath Puja)").
                             .child(
                                 div()
-                                    .truncate()
+                                    .whitespace_normal()
                                     .when(public, |s| s.text_color(theme.foreground))
                                     .child(self.holidays.label(h)),
                             )
                             .child(
-                                div().text_xs().truncate().child(
+                                div().text_xs().whitespace_normal().child(
                                     note.split_once(" · ")
                                         .map_or(note.clone(), |(_, rest)| rest.to_owned()),
                                 ),
@@ -603,6 +616,7 @@ pub fn import_ics_file(
 fn view_options(cx: &gpui_kit::App) -> impl IntoElement {
     let prefs = appearance::settings(cx);
     let routines = prefs.calendar_routines;
+    let occasions = prefs.calendar_occasions;
     let holidays = prefs.holidays;
     let observances = prefs.holiday_observances;
     let where_you_are = prefs.holidays_where_you_are;
@@ -629,6 +643,13 @@ fn view_options(cx: &gpui_kit::App) -> impl IntoElement {
                     }),
             )
             .label("Events repeating 3+ times a week")
+            .item(
+                PopupMenuItem::new("Birthdays and anniversaries")
+                    .checked(occasions)
+                    .on_click(move |_, _, cx| {
+                        appearance::update(cx, |s| s.calendar_occasions = !occasions)
+                    }),
+            )
             .separator()
             .item(
                 PopupMenuItem::new("Show holidays")
@@ -701,6 +722,13 @@ fn quick_add_hint(text: &str, day: Date, cx: &gpui_kit::App) -> Option<SharedStr
     }
     if let Some(rule) = draft.recurrence {
         parts.push(rule.to_string());
+    }
+    if let Some(o) = draft.occasion {
+        parts.push(match o.kind {
+            keepstone_core::OccasionKind::Birthday => "Birthday".to_owned(),
+            keepstone_core::OccasionKind::Anniversary => "Anniversary".to_owned(),
+        });
+        parts.extend(o.note(first));
     }
     Some(format!("{} — {}", draft.title, parts.join(" · ")).into())
 }
@@ -871,11 +899,11 @@ impl CalendarView {
                                         .flex_1()
                                         .min_w_0()
                                         .gap_2()
+                                        .children(self.occasion_icon(&occ).map(|i| {
+                                            Icon::new(i).xsmall().text_color(theme.muted_foreground)
+                                        }))
                                         .child(
-                                            div()
-                                                .truncate()
-                                                .text_sm()
-                                                .child(event.title().to_owned()),
+                                            div().truncate().text_sm().child(self.title_of(&occ)),
                                         )
                                         .when(!event.location().is_empty(), |this| {
                                             this.child(

@@ -13,10 +13,16 @@
 //!
 //! No time means an all-day event. A start without an end lasts one hour
 //! (or the given length). No date means today.
+//!
+//! A title with "birthday" or "anniversary" (no time) makes an occasion:
+//! all-day, every year. A year at the end ("Mom's birthday nov 20 1966",
+//! "since 2019", "born 1966") is the year it began, for "turns 60". An
+//! undated occasion lands on its next date, never in the past.
 
 use jiff::Span;
 use jiff::civil::{Date, DateTime, Time};
 
+use crate::event::{Occasion, OccasionKind};
 use crate::quick_add::{month_day, trailing_date, trailing_recurrence};
 use crate::recurrence::Recurrence;
 
@@ -29,6 +35,24 @@ pub struct EventDraft {
     pub recurrence: Option<Recurrence>,
     /// Whether the text named a day (or a repeat that picked one).
     pub dated: bool,
+    /// Birthday or anniversary, when the title says so.
+    pub occasion: Option<Occasion>,
+}
+
+/// "birthday", "bday", "b'day", "anniversary" anywhere in the title.
+pub(crate) fn occasion_kind(words: &[&str]) -> Option<OccasionKind> {
+    words.iter().find_map(|w| {
+        let w: String = w
+            .to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect();
+        match w.as_str() {
+            "birthday" | "bday" | "birthdays" => Some(OccasionKind::Birthday),
+            "anniversary" | "anniv" => Some(OccasionKind::Anniversary),
+            _ => None,
+        }
+    })
 }
 
 impl EventDraft {
@@ -61,6 +85,8 @@ pub fn parse_event(input: &str, today: Date) -> EventDraft {
     let mut length: Option<Span> = None;
     let mut day_range: Option<(Date, Date)> = None;
     let mut recurrence = None;
+    let kind = occasion_kind(&words);
+    let mut since: Option<i16> = None;
 
     loop {
         let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
@@ -83,6 +109,23 @@ pub fn parse_event(input: &str, today: Date) -> EventDraft {
             times = Some(t);
             words.truncate(n - 1);
             if words.last().is_some_and(|w| w.eq_ignore_ascii_case("at")) {
+                words.pop();
+            }
+            continue;
+        }
+        // "1966", "born 1966", "since 2019" ends an occasion's text.
+        if kind.is_some()
+            && since.is_none()
+            && n > 1
+            && let Ok(year) = lower[n - 1].parse::<i16>()
+            && (1800..=today.year()).contains(&year)
+        {
+            since = Some(year);
+            words.truncate(n - 1);
+            if words
+                .last()
+                .is_some_and(|w| matches!(w.to_lowercase().as_str(), "born" | "since" | "in"))
+            {
                 words.pop();
             }
             continue;
@@ -111,6 +154,20 @@ pub fn parse_event(input: &str, today: Date) -> EventDraft {
         break;
     }
 
+    let occasion = kind
+        .filter(|_| times.is_none())
+        .map(|kind| Occasion { kind, year: since });
+    if occasion.is_some() {
+        recurrence = Some(Recurrence::YEARLY);
+        // "Mom's birthday nov 3" in December means next year's Nov 3.
+        if let Some((first, last)) = day_range
+            && first < today
+            && first == last
+            && let Ok(next) = first.checked_add(Span::new().years(1))
+        {
+            day_range = Some((next, next));
+        }
+    }
     let dated = day_range.is_some() || recurrence.is_some();
     let (first, last) = day_range.unwrap_or_else(|| {
         let d = recurrence.map_or(today, |r| r.first_on_or_after(today));
@@ -140,6 +197,7 @@ pub fn parse_event(input: &str, today: Date) -> EventDraft {
                 end,
                 recurrence,
                 dated,
+                occasion: None,
             }
         }
         None => EventDraft {
@@ -152,6 +210,7 @@ pub fn parse_event(input: &str, today: Date) -> EventDraft {
                 .to_datetime(Time::midnight()),
             recurrence,
             dated,
+            occasion,
         },
     }
 }
@@ -323,6 +382,38 @@ mod tests {
         assert!(e.all_day);
         assert_eq!(e.recurrence, Some(Recurrence::YEARLY));
         assert_eq!(e.start, dt("2026-12-03T00:00"));
+    }
+
+    #[test]
+    fn birthdays_and_anniversaries_become_yearly_occasions() {
+        let e = parse("Mom's birthday nov 20 1966");
+        assert_eq!(e.title, "Mom's birthday");
+        assert!(e.all_day);
+        assert_eq!(e.recurrence, Some(Recurrence::YEARLY));
+        assert_eq!(e.start, dt("2026-11-20T00:00"));
+        assert_eq!(
+            e.occasion,
+            Some(Occasion {
+                kind: OccasionKind::Birthday,
+                year: Some(1966)
+            })
+        );
+        let e = parse("Wedding anniversary feb 14 since 2019");
+        assert_eq!(e.title, "Wedding anniversary");
+        assert_eq!(
+            e.start,
+            dt("2027-02-14T00:00"),
+            "passed this year: next one"
+        );
+        assert_eq!(
+            e.occasion.map(|o| (o.kind, o.year)),
+            Some((OccasionKind::Anniversary, Some(2019)))
+        );
+        let e = parse("Riya's bday mar 3");
+        assert_eq!(e.occasion.map(|o| o.year), Some(None));
+        let e = parse("Birthday party sat 7pm");
+        assert_eq!(e.occasion, None, "a timed party is an event");
+        assert_eq!(parse("Budget 2026").occasion, None);
     }
 
     #[test]

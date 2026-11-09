@@ -16,6 +16,9 @@
 //! because their series dates no longer line up; title, notes and place
 //! changes keep them.
 //!
+//! An all-day yearly event can be an [`Occasion`] (birthday, anniversary),
+//! optionally with the year it began, so the calendar can say "turns 60".
+//!
 //! A series repeats forever unless it has an end (`until`, the last date an
 //! occurrence may start on, inclusive).
 //!
@@ -40,6 +43,90 @@ pub const MAX_EVENT_NOTES_BYTES: usize = 64 * 1024;
 pub const MAX_LOCATION_CHARS: usize = 200;
 /// Most per-occurrence changes one series keeps (bounds storage and expansion).
 pub const MAX_EXCEPTIONS: usize = 1000;
+
+/// What kind of important date an event is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OccasionKind {
+    Birthday,
+    Anniversary,
+}
+
+/// A birthday or anniversary: always all-day and yearly. `year` is the year
+/// of birth or of the wedding/start, when known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Occasion {
+    pub kind: OccasionKind,
+    pub year: Option<i16>,
+}
+
+impl Occasion {
+    /// Storage code: `birthday`, `birthday:1966`, `anniversary:2019`.
+    #[must_use]
+    pub fn to_code(self) -> String {
+        let kind = match self.kind {
+            OccasionKind::Birthday => "birthday",
+            OccasionKind::Anniversary => "anniversary",
+        };
+        match self.year {
+            Some(y) => format!("{kind}:{y}"),
+            None => kind.to_owned(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        let (kind, year) = match code.split_once(':') {
+            Some((k, y)) => (k, Some(y.parse().ok()?)),
+            None => (code, None),
+        };
+        let kind = match kind {
+            "birthday" => OccasionKind::Birthday,
+            "anniversary" => OccasionKind::Anniversary,
+            _ => return None,
+        };
+        Some(Self { kind, year })
+    }
+
+    /// How many years on `on`'s year: 60 for someone born in 1966, in 2026.
+    #[must_use]
+    pub fn years_on(self, on: Date) -> Option<i16> {
+        let n = on.year() - self.year?;
+        (n > 0).then_some(n)
+    }
+
+    /// "turns 60", "5th anniversary"; `None` without a year.
+    #[must_use]
+    pub fn note(self, on: Date) -> Option<String> {
+        let n = self.years_on(on)?;
+        Some(match self.kind {
+            OccasionKind::Birthday => format!("turns {n}"),
+            OccasionKind::Anniversary => format!("{} anniversary", ordinal(n)),
+        })
+    }
+
+    /// Short form for tight spaces: "60", "5th".
+    #[must_use]
+    pub fn short(self, on: Date) -> Option<String> {
+        let n = self.years_on(on)?;
+        Some(match self.kind {
+            OccasionKind::Birthday => n.to_string(),
+            OccasionKind::Anniversary => ordinal(n),
+        })
+    }
+}
+
+/// 1st, 2nd, 3rd, 4th, 11th, 12th, 13th, 21st…
+#[must_use]
+pub fn ordinal(n: i16) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
 
 /// How one occurrence of a repeating event differs from the series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +196,7 @@ pub struct Event {
     end: DateTime,
     recurrence: Option<Recurrence>,
     until: Option<Date>,
+    occasion: Option<Occasion>,
     exceptions: BTreeMap<Date, Exception>,
     created_at: Timestamp,
     updated_at: Timestamp,
@@ -128,6 +216,8 @@ pub struct EventRecord {
     pub recurrence: Option<Recurrence>,
     /// Last date an occurrence may start on (inclusive); `None` = forever.
     pub until: Option<Date>,
+    /// Birthday or anniversary (only on all-day yearly events).
+    pub occasion: Option<Occasion>,
     pub exceptions: BTreeMap<Date, Exception>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -194,6 +284,7 @@ impl Event {
             end: start,
             recurrence: None,
             until: None,
+            occasion: None,
             exceptions: BTreeMap::new(),
             created_at: now,
             updated_at: now,
@@ -213,6 +304,9 @@ impl Event {
             end: r.end,
             recurrence: r.recurrence,
             until: r.recurrence.and(r.until),
+            occasion: r
+                .occasion
+                .filter(|_| r.all_day && matches!(r.recurrence, Some(Recurrence::Years(1)))),
             // Exceptions only mean something on a repeating event.
             exceptions: if r.recurrence.is_some() {
                 r.exceptions
@@ -237,6 +331,7 @@ impl Event {
             end: self.end,
             recurrence: self.recurrence,
             until: self.until,
+            occasion: self.occasion,
             exceptions: self.exceptions.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -297,6 +392,11 @@ impl Event {
     #[must_use]
     pub fn recurrence(&self) -> Option<Recurrence> {
         self.recurrence
+    }
+    /// Birthday or anniversary, if it is one.
+    #[must_use]
+    pub fn occasion(&self) -> Option<Occasion> {
+        self.occasion
     }
     /// Last date a repeat may start on (inclusive), if the series ends.
     #[must_use]
@@ -391,6 +491,7 @@ impl Event {
             return Err(DomainError::InvalidTimeRange);
         }
         self.all_day = false;
+        self.occasion = None;
         self.start = start;
         self.end = end;
         self.exceptions.clear();
@@ -443,6 +544,30 @@ impl Event {
         Ok(())
     }
 
+    /// Makes it a birthday or anniversary (all-day, every year), or a plain
+    /// event again. The year can't be after the event's first date.
+    pub fn set_occasion(&mut self, occasion: Option<Occasion>, now: Timestamp) -> DomainResult<()> {
+        self.editable()?;
+        if let Some(o) = occasion {
+            if o.year
+                .is_some_and(|y| y < 1800 || y > self.start.date().year())
+            {
+                return Err(DomainError::InvalidTimeRange);
+            }
+            if !self.all_day {
+                let day = self.start.date();
+                self.set_all_day_dates(day, day, now)?;
+            }
+            if self.recurrence != Some(Recurrence::Years(1)) {
+                self.exceptions.clear();
+                self.recurrence = Some(Recurrence::Years(1));
+            }
+        }
+        self.occasion = occasion;
+        self.touch(now);
+        Ok(())
+    }
+
     /// An end before the (moved) start would hide the whole series: drop it.
     fn keep_until_valid(&mut self) {
         if self.until.is_some_and(|u| u < self.start.date()) {
@@ -475,6 +600,9 @@ impl Event {
         }
         if rule.is_none() {
             self.until = None;
+        }
+        if rule != Some(Recurrence::Years(1)) {
+            self.occasion = None;
         }
         self.recurrence = rule;
         self.touch(now);
@@ -1072,6 +1200,64 @@ mod tests {
             Err(DomainError::NoSuchOccurrence),
             "a one-off can't end"
         );
+    }
+
+    #[test]
+    fn occasions_are_yearly_all_day_and_count_years() {
+        let mut e = Event::new_timed(
+            "Mom's birthday",
+            dt("2026-11-20T09:00"),
+            dt("2026-11-20T10:00"),
+            now(),
+        )
+        .expect("event");
+        let bday = Occasion {
+            kind: OccasionKind::Birthday,
+            year: Some(1966),
+        };
+        e.set_occasion(Some(bday), now()).expect("occasion");
+        assert!(e.is_all_day());
+        assert_eq!(e.recurrence(), Some(Recurrence::Years(1)));
+        assert_eq!(bday.note(d("2026-11-20")).as_deref(), Some("turns 60"));
+        assert_eq!(bday.short(d("2027-11-20")).as_deref(), Some("61"));
+        let wedding = Occasion {
+            kind: OccasionKind::Anniversary,
+            year: Some(2021),
+        };
+        assert_eq!(
+            wedding.note(d("2026-02-01")).as_deref(),
+            Some("5th anniversary")
+        );
+        assert_eq!(Occasion::from_code(&wedding.to_code()), Some(wedding));
+        assert_eq!(Occasion::from_code("birthday").map(|o| o.year), Some(None));
+        assert_eq!(Occasion::from_code("party"), None);
+        assert_eq!(Event::from_record(e.to_record()), e);
+        assert_eq!(
+            e.set_occasion(
+                Some(Occasion {
+                    kind: OccasionKind::Birthday,
+                    year: Some(2030)
+                }),
+                now()
+            ),
+            Err(DomainError::InvalidTimeRange),
+            "born after the date"
+        );
+        // Not yearly any more, or timed: a plain event again.
+        e.set_recurrence(Some(Recurrence::MONTHLY), now())
+            .expect("rule");
+        assert_eq!(e.occasion(), None);
+        for (n, s) in [
+            (1, "1st"),
+            (2, "2nd"),
+            (3, "3rd"),
+            (11, "11th"),
+            (12, "12th"),
+            (22, "22nd"),
+            (113, "113th"),
+        ] {
+            assert_eq!(ordinal(n), s);
+        }
     }
 
     #[test]
