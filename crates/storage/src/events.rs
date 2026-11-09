@@ -2,8 +2,8 @@
 
 use std::ops::Range;
 
-use keepstone_core::event::{exceptions_from_code, exceptions_to_code};
-use keepstone_core::{Date, DateTime, Event, EventId, EventRecord, Recurrence, Task, Time};
+use calmfold_core::event::{exceptions_from_code, exceptions_to_code};
+use calmfold_core::{Date, DateTime, Event, EventId, EventRecord, Recurrence, Task, Time};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::codec::{date_to_sql, opt_ts_from_sql, ts_from_sql, ts_to_sql, uuid_from_sql};
@@ -53,7 +53,7 @@ impl Store {
                 r.deleted_at.map(ts_to_sql),
                 exceptions_to_code(&r.exceptions),
                 r.until.map(date_to_sql),
-                r.occasion.map(keepstone_core::Occasion::to_code),
+                r.occasion.map(calmfold_core::Occasion::to_code),
             ],
         )?;
         Ok(())
@@ -126,7 +126,7 @@ impl Store {
         };
         let mut tasks = Vec::with_capacity(ids.len());
         for id in ids {
-            let id = keepstone_core::TaskId::from_uuid(uuid_from_sql(&id, "tasks.id")?);
+            let id = calmfold_core::TaskId::from_uuid(uuid_from_sql(&id, "tasks.id")?);
             if let Some(task) = self.task(id)? {
                 tasks.push(task);
             }
@@ -177,7 +177,7 @@ impl RawEvent {
             occasion: self
                 .occasion
                 .as_deref()
-                .and_then(keepstone_core::Occasion::from_code),
+                .and_then(calmfold_core::Occasion::from_code),
         }))
     }
 }
@@ -204,7 +204,7 @@ fn raw_event(row: &Row<'_>) -> rusqlite::Result<RawEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use keepstone_core::Timestamp;
+    use calmfold_core::Timestamp;
 
     fn at(secs: i64) -> Timestamp {
         Timestamp::from_second(secs).expect("ts")
@@ -261,8 +261,8 @@ mod tests {
         let mut e = Event::new_all_day("Mom's birthday", d("2026-11-20"), d("2026-11-20"), at(1))
             .expect("event");
         e.set_occasion(
-            Some(keepstone_core::Occasion {
-                kind: keepstone_core::OccasionKind::Birthday,
+            Some(calmfold_core::Occasion {
+                kind: calmfold_core::OccasionKind::Birthday,
                 year: Some(1966),
             }),
             at(1),

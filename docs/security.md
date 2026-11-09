@@ -51,19 +51,19 @@ compromised OS, physical attacks on unlocked RAM.
   stops while macOS sleeps. A 10 s tick that arrives ≥ 60 s late means the
   Mac slept: the vault locks on wake.
 - **Not detected:** the macOS lock screen without sleep. GPUI exposes no
-  hook and `unsafe` FFI is forbidden, so use "Lock when Keepstone is in the
+  hook and `unsafe` FFI is forbidden, so use "Lock when Calmfold is in the
   background" for that.
 - **Randomness** never falls back: if the OS RNG fails, nothing is generated
   (the generator shows an error; a stuck source stops after 1,000 tries).
 - **Clipboard:** copied secrets are cleared after 15/30/90 s, only if the
   clipboard still holds them. macOS clipboard history apps may still keep a copy.
 - **Memory:** decrypted items zero on drop. Text in input fields lives in
-  GPUI's input state and its undo history, which Keepstone clears but can't
+  GPUI's input state and its undo history, which Calmfold clears but can't
   zero; that's within "malware while unlocked" (out of scope).
 - **Health** (weak/reused/old) is computed locally with zxcvbn; no breach
   lookups, nothing leaves the device.
 - **Encrypted backup** (Settings → Passwords, File menu, ⌘K) writes the
-  header and sealed items to a `.ksvault` file (the archive format, ADR 0006)
+  header and sealed items to a `.cfvault` file (`.ksvault` before the Calmfold rename) (the archive format, ADR 0006)
   atomically and reads it back. Nothing is decrypted to write it; it opens
   with the master password at the time of export (not the recovery key).
   Restore needs an unlocked vault, adds copies with new IDs, and skips items

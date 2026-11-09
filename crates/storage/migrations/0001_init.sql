@@ -1,4 +1,4 @@
--- Keepstone schema v1.
+-- Calmfold schema v1.
 -- Timestamps are INTEGER milliseconds since the Unix epoch (UTC).
 -- Dates are TEXT 'YYYY-MM-DD'. IDs are UUID v7 strings.
 -- Never edit a shipped migration; add a new file instead.

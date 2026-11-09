@@ -1,6 +1,6 @@
-//! The themes Keepstone ships and how a light/dark pair is installed.
+//! The themes Calmfold ships and how a light/dark pair is installed.
 //!
-//! `keepstone.json` holds the house themes (Keepstone Light/Dark). The
+//! `calmfold.json` holds the house themes (Calmfold Light/Dark). The
 //! community sets under `themes/community/` are upstream GPUI Kit themes,
 //! copied unchanged. The user picks one light and one dark theme; the mode
 //! (System/Light/Dark) chooses which of the two is shown.
@@ -10,12 +10,12 @@ use std::rc::Rc;
 use gpui_kit::component::{Theme, ThemeConfig, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, SharedString};
 
-pub const LIGHT: &str = "Keepstone Light";
-pub const DARK: &str = "Keepstone Dark";
+pub const LIGHT: &str = "Calmfold Light";
+pub const DARK: &str = "Calmfold Dark";
 
 /// Every bundled theme file, house themes first.
 const THEME_FILES: &[&str] = &[
-    include_str!("../themes/keepstone.json"),
+    include_str!("../themes/calmfold.json"),
     include_str!("../themes/community/catppuccin.json"),
     include_str!("../themes/community/tokyonight.json"),
     include_str!("../themes/community/gruvbox.json"),
@@ -37,7 +37,7 @@ pub struct ThemeChoice {
 pub fn register(cx: &mut App) {
     for file in THEME_FILES {
         if let Err(err) = ThemeRegistry::global_mut(cx).load_themes_from_str(file) {
-            eprintln!("keepstone: failed to parse a bundled theme file: {err}");
+            eprintln!("calmfold: failed to parse a bundled theme file: {err}");
         }
     }
 }
@@ -57,7 +57,7 @@ pub fn choices(mode: ThemeMode, cx: &App) -> Vec<ThemeChoice> {
             config: c.clone(),
         })
         .collect();
-    out.sort_by_key(|c| (!c.name.starts_with("Keepstone"), c.name.to_string()));
+    out.sort_by_key(|c| (!c.name.starts_with("Calmfold"), c.name.to_string()));
     out
 }
 
@@ -70,10 +70,10 @@ fn find(name: &str, fallback: &str, cx: &App) -> Option<Rc<ThemeConfig>> {
 }
 
 /// Installs the chosen light and dark themes (unknown names fall back to the
-/// Keepstone pair) and shows `mode`.
+/// Calmfold pair) and shows `mode`.
 pub fn install(light: &str, dark: &str, mode: ThemeMode, cx: &mut App) {
     let (Some(light), Some(dark)) = (find(light, LIGHT, cx), find(dark, DARK, cx)) else {
-        eprintln!("keepstone: bundled themes are missing");
+        eprintln!("calmfold: bundled themes are missing");
         return;
     };
     let current = Theme::global(cx);

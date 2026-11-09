@@ -4,8 +4,13 @@
 //! days, best running streak) → completion per day for 30 days → which
 //! weekdays work → one row per habit (30-day rate, strength and its 4-week
 //! trend, best streak). Rows open the habit. Math lives in
-//! `keepstone_core::habit_insights`; this file only lays it out.
+//! `calmfold_core::habit_insights`; this file only lays it out.
 
+use calmfold_core::habit::StreakUnit;
+use calmfold_core::habit_insights::{
+    HabitHistory, day_rate, period_rate, weekday_rates, weekday_takeaway,
+};
+use calmfold_ui::components::{empty_state, section_label};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::chart::BarChart;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
@@ -15,11 +20,6 @@ use gpui_kit::{
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
     TestSupportExt as _, div, px, relative, rems,
 };
-use keepstone_core::habit::StreakUnit;
-use keepstone_core::habit_insights::{
-    HabitHistory, day_rate, period_rate, weekday_rates, weekday_takeaway,
-};
-use keepstone_ui::components::{empty_state, section_label};
 
 use crate::views::habit_detail::open_habit_detail;
 use crate::views::habit_widgets::add_days;

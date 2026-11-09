@@ -56,7 +56,7 @@ use element::*;
 
 /// Hasher for per-line cache keys, computed for every line on every frame.
 /// Deterministic (fixed seed) so keys stay valid across frames; foldhash is
-/// several times faster than SipHash on short strings (Keepstone patch P4).
+/// several times faster than SipHash on short strings (Calmfold patch P4).
 pub(crate) fn fast_hasher() -> impl std::hash::Hasher {
     use std::hash::BuildHasher as _;
     foldhash::quality::FixedState::with_seed(0x6b65_6570_7374_6f6e).build_hasher()
@@ -221,7 +221,7 @@ thread_local! {
 }
 
 /// Row height as a multiple of the font size, as currently configured
-/// (Keepstone patch P8: line spacing is a user setting).
+/// (Calmfold patch P8: line spacing is a user setting).
 pub fn line_height_ratio() -> f32 {
     LINE_HEIGHT.with(std::cell::Cell::get)
 }
@@ -1021,7 +1021,7 @@ pub struct EditorState {
     /// Bumped on every content mutation — cheap staleness key for caches
     /// (the UTF-16 conversion anchor below; a shape cache later).
     content_gen: u64,
-    /// `line_starts()` for `content_gen` (Keepstone patch P1).
+    /// `line_starts()` for `content_gen` (Calmfold patch P1).
     line_starts_cache: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<usize>>)>>,
     /// Resume point for UTF-8↔UTF-16 conversion: `(generation, utf8, utf16)`
     /// of the last converted offset. IME composition fires conversions many
@@ -1268,7 +1268,7 @@ impl EditorState {
     }
 
     /// The current diagnostics (underlined spans), for hosts and tests
-    /// (Keepstone addition).
+    /// (Calmfold addition).
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
@@ -4546,7 +4546,7 @@ impl EditorState {
     /// Byte offset where each visual line starts (line 0 starts at 0; each line
     /// after a `\n`). Always has at least one entry.
     ///
-    /// Cached per `content_gen` (Keepstone patch P1): callers ask for this per
+    /// Cached per `content_gen` (Calmfold patch P1): callers ask for this per
     /// row, per caret move and per frame, and rebuilding it scans the whole
     /// document, which made typing O(lines²) in long notes. Every content
     /// mutation bumps `content_gen` (`record_edit`, `restore`, `set_text`,
@@ -6681,7 +6681,7 @@ impl ShapedDoc {
     }
 
     /// A windowed-out text line (outside the shaping band, cached height):
-    /// nothing is shaped (Keepstone patch P3). Paint culls the same band and
+    /// nothing is shaped (Calmfold patch P3). Paint culls the same band and
     /// geometry reads `heights`/`wrap_rows`, so the empty layout is never drawn;
     /// shaping an empty string here for every off-screen line cost ~1 ms per
     /// 1,000 lines per frame.
@@ -7013,7 +7013,7 @@ struct ShapeCaches {
     line_heights: std::cell::RefCell<std::collections::HashMap<u64, (Pixels, usize)>>,
     /// Per code line (wrap rows, shaped width), keyed by line ⊕ font size ⊕
     /// wrap width ⊕ epoch, so off-screen code lines skip shaping
-    /// (Keepstone patch P7).
+    /// (Calmfold patch P7).
     code_rows: std::cell::RefCell<std::collections::HashMap<u64, (usize, Pixels)>>,
     /// Per-row CONTENT-part run keys (line bytes + line_base + diags + epoch),
     /// valid for one (scan generation, epoch) pair — so a steady-state frame

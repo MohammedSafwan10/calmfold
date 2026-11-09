@@ -1,10 +1,10 @@
 // Prints the CGWindowID of the first on-screen window owned by a process name.
-// Used by scripts/screenshot.sh to capture only Keepstone's window.
-// Usage: swift scripts/window-id.swift keepstone
+// Used by scripts/screenshot.sh to capture only Calmfold's window.
+// Usage: swift scripts/window-id.swift calmfold
 import CoreGraphics
 import Foundation
 
-let owner = CommandLine.arguments.dropFirst().first ?? "keepstone"
+let owner = CommandLine.arguments.dropFirst().first ?? "calmfold"
 // Prefer on-screen windows; fall back to any window (e.g. on another Space).
 let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 let all = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []

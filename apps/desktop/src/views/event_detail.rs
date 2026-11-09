@@ -13,6 +13,10 @@
 
 use std::time::Duration;
 
+use calmfold_core::{Date, DateTime, Event, EventId, Occurrence, Recurrence, Time};
+use calmfold_ui::appearance::{self, ClockFormat};
+use calmfold_ui::components::section_label;
+use calmfold_ui::feedback;
 use chrono::{Datelike as _, Timelike as _};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -29,10 +33,6 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Subscription, Task as GpuiTask, Window, div, px, rems,
 };
-use keepstone_core::{Date, DateTime, Event, EventId, Occurrence, Recurrence, Time};
-use keepstone_ui::appearance::{self, ClockFormat};
-use keepstone_ui::components::section_label;
-use keepstone_ui::feedback;
 
 use crate::library::{Library, LibraryEvent};
 use crate::views::calendar_layout::format_span;
@@ -103,7 +103,7 @@ impl EventDetail {
         let title = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Event title")
-                .validate(|text, _| text.chars().count() <= keepstone_core::MAX_TITLE_CHARS)
+                .validate(|text, _| text.chars().count() <= calmfold_core::MAX_TITLE_CHARS)
         });
         let location = cx.new(|cx| InputState::new(window, cx).placeholder("Add a place"));
         let occasion_year = cx.new(|cx| {
@@ -515,7 +515,7 @@ impl EventDetail {
 
     fn set_occasion(
         &mut self,
-        kind: Option<keepstone_core::OccasionKind>,
+        kind: Option<calmfold_core::OccasionKind>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -529,7 +529,7 @@ impl EventDetail {
             .occasion()
             .and_then(|o| o.year)
             .or_else(|| self.typed_year(cx));
-        let occasion = kind.map(|kind| keepstone_core::Occasion { kind, year });
+        let occasion = kind.map(|kind| calmfold_core::Occasion { kind, year });
         let id = self.id;
         notify_err(
             self.library
@@ -769,13 +769,13 @@ impl Render for EventDetail {
                     ))
                     .child(field_row(
                         "Type",
-                        keepstone_ui::components::segmented(
+                        calmfold_ui::components::segmented(
                             "event-occasion",
                             &[
                                 (None, "Event"),
-                                (Some(keepstone_core::OccasionKind::Birthday), "Birthday"),
+                                (Some(calmfold_core::OccasionKind::Birthday), "Birthday"),
                                 (
-                                    Some(keepstone_core::OccasionKind::Anniversary),
+                                    Some(calmfold_core::OccasionKind::Anniversary),
                                     "Anniversary",
                                 ),
                             ],
@@ -794,8 +794,8 @@ impl Render for EventDetail {
                     .when_some(event.occasion(), |s, o| {
                         s.child(field_row(
                             match o.kind {
-                                keepstone_core::OccasionKind::Birthday => "Born",
-                                keepstone_core::OccasionKind::Anniversary => "Since",
+                                calmfold_core::OccasionKind::Birthday => "Born",
+                                calmfold_core::OccasionKind::Anniversary => "Since",
                             },
                             Input::new(&self.occasion_year)
                                 .id("event-occasion-year")
@@ -946,7 +946,7 @@ mod tests {
 
     #[test]
     fn summaries_read_naturally() {
-        let now = keepstone_core::Timestamp::from_second(1).expect("ts");
+        let now = calmfold_core::Timestamp::from_second(1).expect("ts");
         let d = |s: &str| s.parse::<Date>().expect("date");
         let dt = |s: &str| s.parse::<DateTime>().expect("datetime");
         let mut e = Event::new_timed("Call", dt("2026-11-09T09:00"), dt("2026-11-09T10:30"), now)

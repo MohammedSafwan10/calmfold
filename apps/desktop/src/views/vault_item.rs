@@ -13,6 +13,15 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use calmfold_core::VaultItemId;
+use calmfold_core::vault::health::estimate;
+use calmfold_core::vault::template::Template;
+use calmfold_core::vault::{
+    CustomField, FieldKind, ItemFields, ItemKind, VaultItem, host, openable_url, totp,
+};
+use calmfold_crypto::Zeroizing;
+use calmfold_ui::components::{empty_state, section_label};
+use calmfold_ui::feedback::{self, Confirm};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
@@ -28,15 +37,6 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, Task as GpuiTask, Window, div,
     rems,
 };
-use keepstone_core::VaultItemId;
-use keepstone_core::vault::health::estimate;
-use keepstone_core::vault::template::Template;
-use keepstone_core::vault::{
-    CustomField, FieldKind, ItemFields, ItemKind, VaultItem, host, openable_url, totp,
-};
-use keepstone_crypto::Zeroizing;
-use keepstone_ui::components::{empty_state, section_label};
-use keepstone_ui::feedback::{self, Confirm};
 
 use crate::library::Library;
 use crate::vault_prefs;
@@ -46,7 +46,7 @@ use crate::views::task_row::notify_err;
 /// Uniform random `0..n` from the OS CSPRNG, `None` if it failed (the
 /// generator then refuses to produce anything).
 pub fn random_below(n: u32) -> Option<u32> {
-    keepstone_crypto::random_below(n).ok()
+    calmfold_crypto::random_below(n).ok()
 }
 
 /// Shown when the OS random source fails.
@@ -519,14 +519,14 @@ impl VaultItemPane {
                     .library
                     .update(cx, |lib, cx| {
                         lib.update_vault_item(id, cx, |item| {
-                            item.update(&fields, keepstone_core::clock::now())
+                            item.update(&fields, calmfold_core::clock::now())
                         })
                     })
                     .map(|()| None),
                 None => Ok(None),
             },
         };
-        keepstone_crypto::Zeroize::zeroize(&mut fields);
+        calmfold_crypto::Zeroize::zeroize(&mut fields);
         match result {
             Ok(created) => {
                 self.form.clear(window, cx);
@@ -548,7 +548,7 @@ impl VaultItemPane {
     pub fn trash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.id else { return };
         let library = self.library.clone();
-        let now = keepstone_core::clock::now();
+        let now = calmfold_core::clock::now();
         let result = library.update(cx, |lib, cx| {
             lib.update_vault_item(id, cx, |i| i.trash(now).map(|()| true))
         });
@@ -558,7 +558,7 @@ impl VaultItemPane {
                 notify_err(
                     library.update(cx, |lib, cx| {
                         lib.update_vault_item(id, cx, |i| {
-                            i.restore(keepstone_core::clock::now());
+                            i.restore(calmfold_core::clock::now());
                             Ok(true)
                         })
                     }),
@@ -574,7 +574,7 @@ impl VaultItemPane {
         notify_err(
             self.library.update(cx, |lib, cx| {
                 lib.update_vault_item(id, cx, |i| {
-                    i.restore(keepstone_core::clock::now());
+                    i.restore(calmfold_core::clock::now());
                     Ok(true)
                 })
             }),
@@ -618,7 +618,7 @@ impl VaultItemPane {
         notify_err(
             self.library.update(cx, |lib, cx| {
                 lib.update_vault_item(id, cx, |i| {
-                    i.set_favorite(fav, keepstone_core::clock::now())
+                    i.set_favorite(fav, calmfold_core::clock::now())
                         .map(|()| true)
                 })
             }),

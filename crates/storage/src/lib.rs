@@ -1,4 +1,4 @@
-//! SQLite persistence for Keepstone.
+//! SQLite persistence for Calmfold.
 //!
 //! One [`Store`] owns one connection. It is `Send`, so the app can move it to a
 //! background thread later without API changes. All writes that touch more

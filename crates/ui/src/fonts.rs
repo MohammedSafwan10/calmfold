@@ -33,7 +33,7 @@ pub fn register(cx: &mut App) {
         .map(|bytes| Cow::Borrowed(*bytes))
         .collect();
     if let Err(err) = cx.text_system().add_fonts(fonts) {
-        eprintln!("keepstone: failed to load bundled fonts: {err}");
+        eprintln!("calmfold: failed to load bundled fonts: {err}");
     }
 }
 

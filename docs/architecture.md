@@ -29,10 +29,10 @@ user input → View (Entity) → Library method → core rule → Store (SQLite)
   feature needs slow work (Argon2, indexing, sync), run it with
   `cx.background_spawn` and apply the result on the foreground.
 
-## Startup (`keepstone_desktop::start`)
+## Startup (`calmfold_desktop::start`)
 
 1. Resolve data folder (`paths.rs`) and open/migrate SQLite (fails fast, before the window).
-2. `gpui_kit::init`, then `keepstone_ui::init` (fonts → themes → saved appearance).
+2. `gpui_kit::init`, then `calmfold_ui::init` (fonts → themes → saved appearance).
 3. Bind keys, set menus, register app-level command handlers.
 4. Open the window with `AppShell`; register it as the command target.
 
@@ -59,11 +59,11 @@ and the command palette therefore run identical code.
 
 Data folder (`Settings → General → Data folder`):
 
-- `keepstone.sqlite3` (+ `-wal`, `-shm`): all notes and tasks.
+- `calmfold.sqlite3` (+ `-wal`, `-shm`): all notes and tasks.
 - `appearance.json`: appearance settings.
 - `layout.json`: sidebar width/collapsed.
 
-Debug builds use a separate `Keepstone Dev` folder; `KEEPSTONE_DATA_DIR` overrides.
+Debug builds use a separate `Calmfold Dev` folder; `CALMFOLD_DATA_DIR` overrides.
 
 ## Sync (planned, not built)
 

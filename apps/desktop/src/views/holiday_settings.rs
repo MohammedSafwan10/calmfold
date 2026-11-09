@@ -1,6 +1,8 @@
 //! Settings → Calendar → Holidays: on/off, observances, "where you are",
 //! and searchable multi-selects for countries and their states/regions.
 
+use calmfold_core::holidays;
+use calmfold_ui::appearance;
 use gpui_kit::component::combobox::{Combobox, ComboboxEvent, ComboboxState};
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::setting::{SettingField, SettingGroup, SettingItem};
@@ -8,8 +10,6 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, SharedString, Styled as _, Subscription,
     Window, px, rems,
 };
-use keepstone_core::holidays;
-use keepstone_ui::appearance;
 
 /// A country in the picker; searchable by name or code ("in", "India").
 #[derive(Debug, Clone)]

@@ -1,28 +1,30 @@
 //! The unlocked vault in memory, and the crypto glue between the domain
-//! (`keepstone_core::vault`), the crypto crate and storage.
+//! (`calmfold_core::vault`), the crypto crate and storage.
 //!
 //! Key hierarchy (ADR 0005): master password → Argon2id → KEK → unwraps the
 //! random vault key → seals each item (AAD = item id). The slow step,
 //! [`derive`], is a free function so callers run it on a background thread;
 //! everything else here is fast and runs on the main thread.
 //!
-//! State follows `keepstone_core::vault::lock::next`. Locking drops the vault
+//! State follows `calmfold_core::vault::lock::next`. Locking drops the vault
 //! key and every decrypted item (both zero their memory on drop).
 
 use std::collections::HashMap;
 
 use anyhow::{Context as _, Result, bail};
-use keepstone_core::vault::health::{self, Report, Strength};
-use keepstone_core::vault::lock::{LockEvent, LockState, next};
-use keepstone_core::vault::search::Query;
-use keepstone_core::vault::{ItemFields, ItemKind, VaultItem};
-use keepstone_core::{DomainError, Timestamp, VaultItemId};
-use keepstone_crypto::{
+use calmfold_core::vault::health::{self, Report, Strength};
+use calmfold_core::vault::lock::{LockEvent, LockState, next};
+use calmfold_core::vault::search::Query;
+use calmfold_core::vault::{ItemFields, ItemKind, VaultItem};
+use calmfold_core::{DomainError, Timestamp, VaultItemId};
+use calmfold_crypto::{
     CryptoError, KdfParams, Salt, SecretKey, SecretString, Zeroizing, derive_key, open, seal,
 };
-use keepstone_storage::{SealedItem, Store, VaultMeta};
+use calmfold_storage::{SealedItem, Store, VaultMeta};
 
 /// Associated data binding the wrapped vault key to its purpose.
+// Format identifiers from before the Calmfold rename. Never change them:
+// existing vaults and archives are bound to these exact bytes.
 const KEY_AAD: &[u8] = b"keepstone-vault-key-v1";
 /// The same vault key wrapped by the recovery key (ADR 0006).
 const RECOVERY_AAD: &[u8] = b"keepstone-vault-recovery-v1";
@@ -516,7 +518,7 @@ impl VaultSession {
         &mut self,
         store: &mut Store,
         id: VaultItemId,
-        change: impl FnOnce(&mut VaultItem) -> keepstone_core::DomainResult<bool>,
+        change: impl FnOnce(&mut VaultItem) -> calmfold_core::DomainResult<bool>,
     ) -> Result<()> {
         let mut item = self.item(id).context("That item no longer exists")?.clone();
         if change(&mut item)? {
@@ -696,7 +698,8 @@ impl VaultSession {
     }
 }
 
-/// An archived vault on disk (`vault-archives/*.ksvault`): the header and
+/// An archived vault on disk (`vault-archives/*.cfvault`, older ones
+/// `*.ksvault`): the header and
 /// sealed items exactly as they were, as hex. Opening it needs the master
 /// password the vault had then.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -732,7 +735,7 @@ fn write_archive(store: &Store, path: &std::path::Path, now: Timestamp) -> Resul
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).context("Couldn't create the archive folder")?;
     }
-    let tmp = path.with_extension("ksvault-tmp");
+    let tmp = path.with_extension("cfvault-tmp");
     {
         use std::io::Write as _;
         let mut f = std::fs::File::create(&tmp).context("Couldn't write the archive")?;
@@ -772,9 +775,9 @@ impl ArchiveFile {
     pub fn read(path: &std::path::Path) -> Result<Self> {
         let text = std::fs::read(path).context("Couldn't read the archive")?;
         let file: Self =
-            serde_json::from_slice(&text).context("That isn't a Keepstone vault archive")?;
+            serde_json::from_slice(&text).context("That isn't a Calmfold vault archive")?;
         if file.format != ARCHIVE_FORMAT || file.version != 1 {
-            bail!("That isn't a Keepstone vault archive");
+            bail!("That isn't a Calmfold vault archive");
         }
         Ok(file)
     }
@@ -880,7 +883,7 @@ fn fingerprint(s: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use keepstone_crypto::SecretString;
+    use calmfold_crypto::SecretString;
 
     fn now() -> Timestamp {
         Timestamp::from_second(1_800_000_000).expect("ts")
@@ -1097,7 +1100,7 @@ mod tests {
             .expect("a");
         v.lock();
         let dir = tempfile::tempdir().expect("dir");
-        let path = dir.path().join("vault-archives/old.ksvault");
+        let path = dir.path().join("vault-archives/old.cfvault");
         v.archive_and_reset(&mut store, &path, now())
             .expect("reset");
         assert_eq!(v.state(), LockState::Uninitialized);

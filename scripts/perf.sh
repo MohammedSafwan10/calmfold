@@ -4,7 +4,7 @@
 #   scripts/perf.sh [perf|release|debug] [scenario-filter]   # default: perf
 #   PERF_SAMPLE=1 scripts/perf.sh perf 50-kb-typing         # + call-stack samples
 #
-# For each note size (1.5 KB … 2 MB) it launches Keepstone on that note with
+# For each note size (1.5 KB … 2 MB) it launches Calmfold on that note with
 # the caret at the end, types 200 characters at 40 ms (fast typing, autosave
 # runs during pauses), then scrolls, and writes one JSON report per run to
 # target/perf-reports/<profile>-<scenario>.json. Needs Accessibility permission and an
@@ -15,16 +15,16 @@ cd "$(dirname "$0")/.."
 profile="${1:-perf}"   # perf = release speed + symbols (Cargo.toml [profile.perf])
 flag="--profile $profile"
 [ "$profile" = debug ] && flag="" && profile_dir=debug || profile_dir="$profile"
-bin="target/$profile_dir/keepstone"
+bin="target/$profile_dir/calmfold"
 only="${2:-}"          # optional: run only scenarios whose name contains this
 data=/tmp/ks-perf
 out=target/perf-reports
 mkdir -p "$out"
 
-cargo build -q -p keepstone-desktop --features perf $flag
+cargo build -q -p calmfold-desktop --features perf $flag
 rm -rf "$data"
 pkill -f "$bin" 2>/dev/null || true       # nothing may hold the database
-seeded=$(cargo run -q -p keepstone-storage --example perf_seed -- "$data/keepstone.sqlite3" | wc -l)
+seeded=$(cargo run -q -p calmfold-storage --example perf_seed -- "$data/calmfold.sqlite3" | wc -l)
 [ "$seeded" -eq 4 ] || { echo "perf seed failed ($seeded notes)" >&2; exit 1; }
 
 run() { # name, note title, then a driver command
@@ -32,8 +32,8 @@ run() { # name, note title, then a driver command
   if [ -n "$only" ] && [[ "$name" != *"$only"* ]]; then return; fi
   local report="$out/$profile-$name.json"
   rm -f "$report"
-  KEEPSTONE_DATA_DIR="$data" KEEPSTONE_DEV_ROUTE=notes KEEPSTONE_DEV_NOTE="$title" \
-    KEEPSTONE_PERF_OUT="$report" "$bin" >/dev/null 2>&1 &
+  CALMFOLD_DATA_DIR="$data" CALMFOLD_DEV_ROUTE=notes CALMFOLD_DEV_NOTE="$title" \
+    CALMFOLD_PERF_OUT="$report" "$bin" >/dev/null 2>&1 &
   local pid=$!
   # Window up and the note laid out; big notes take longer to open.
   case "$title" in *"500 KB"*) sleep 7 ;; *"2 MB"*) sleep 30 ;; *) sleep 4 ;; esac

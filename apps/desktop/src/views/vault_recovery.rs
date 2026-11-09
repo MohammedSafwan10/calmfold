@@ -13,6 +13,9 @@
 //! Also here: the recovery key box (copy, save Emergency Kit) used by setup
 //! and by "Create new recovery key", and opening an archived vault.
 
+use calmfold_core::vault::health::{Strength, estimate};
+use calmfold_core::vault::recovery;
+use calmfold_crypto::{SecretString, Zeroizing};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -24,9 +27,6 @@ use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _,
     Render, SharedString, Styled as _, Subscription, Window, div, px, rems,
 };
-use keepstone_core::vault::health::{Strength, estimate};
-use keepstone_core::vault::recovery;
-use keepstone_crypto::{SecretString, Zeroizing};
 
 use crate::library::Library;
 use crate::views::passwords::{MIN_MASTER_CHARS, strength_meter};
@@ -81,13 +81,13 @@ fn save_kit(key: String, window: &mut Window, cx: &mut App) {
     let dir = directories::UserDirs::new()
         .and_then(|d| d.document_dir().map(std::path::Path::to_path_buf))
         .unwrap_or_else(std::env::temp_dir);
-    let path = cx.prompt_for_new_path(&dir, Some("Keepstone Emergency Kit.txt"));
+    let path = cx.prompt_for_new_path(&dir, Some("Calmfold Emergency Kit.txt"));
     window
         .spawn(cx, async move |cx| {
             let Ok(Ok(Some(path))) = path.await else {
                 return;
             };
-            let created = keepstone_core::clock::today()
+            let created = calmfold_core::clock::today()
                 .strftime("%B %-d, %Y")
                 .to_string();
             let kit = recovery::emergency_kit(&key, &created);
@@ -97,7 +97,7 @@ fn save_kit(key: String, window: &mut Window, cx: &mut App) {
                     "Emergency Kit saved. Print it or move it off this computer.",
                     cx,
                 ),
-                Err(_) => keepstone_ui::feedback::error_toast(
+                Err(_) => calmfold_ui::feedback::error_toast(
                     "Couldn't save the Emergency Kit.",
                     window,
                     cx,
@@ -310,7 +310,7 @@ impl Render for Forgot {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("Keepstone never sees your master password, so it can't reset it. Choose what to do:"),
+                        .child("Calmfold never sees your master password, so it can't reset it. Choose what to do:"),
                 )
                 .child(Self::option(
                     "forgot-recover",
@@ -468,15 +468,15 @@ fn open_vault_file(
 /// Saves an encrypted backup of the unlocked vault where the user picks.
 pub fn export_backup(library: Entity<Library>, window: &mut Window, cx: &mut App) {
     if !library.read(cx).vault_is_unlocked() {
-        keepstone_ui::feedback::error_toast("Unlock the vault first.", window, cx);
+        calmfold_ui::feedback::error_toast("Unlock the vault first.", window, cx);
         return;
     }
     let dir = directories::UserDirs::new()
         .and_then(|d| d.document_dir().map(std::path::Path::to_path_buf))
         .unwrap_or_else(std::env::temp_dir);
     let name = format!(
-        "Keepstone Vault {}.ksvault",
-        keepstone_core::clock::today().strftime("%Y-%m-%d")
+        "Calmfold Vault {}.cfvault",
+        calmfold_core::clock::today().strftime("%Y-%m-%d")
     );
     let path = cx.prompt_for_new_path(&dir, Some(&name));
     window
@@ -491,7 +491,7 @@ pub fn export_backup(library: Entity<Library>, window: &mut Window, cx: &mut App
                         cx,
                     ),
                     Err(err) => {
-                        keepstone_ui::feedback::error_toast(format!("{err:#}"), window, cx);
+                        calmfold_ui::feedback::error_toast(format!("{err:#}"), window, cx);
                     }
                 }
             });
@@ -499,10 +499,10 @@ pub fn export_backup(library: Entity<Library>, window: &mut Window, cx: &mut App
         .detach();
 }
 
-/// Picks a `.ksvault` backup (or archive) and opens it to add its items.
+/// Picks a `.cfvault` (or older `.ksvault`) backup or archive and opens it to add its items.
 pub fn restore_backup(library: Entity<Library>, window: &mut Window, cx: &mut App) {
     if !library.read(cx).vault_is_unlocked() {
-        keepstone_ui::feedback::error_toast("Unlock the vault first.", window, cx);
+        calmfold_ui::feedback::error_toast("Unlock the vault first.", window, cx);
         return;
     }
     let paths = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
@@ -523,7 +523,7 @@ pub fn restore_backup(library: Entity<Library>, window: &mut Window, cx: &mut Ap
                 // Check the format before asking for a password.
                 match crate::vault::ArchiveFile::read(&path) {
                     Ok(_) => open_vault_file(path, true, library, window, cx),
-                    Err(err) => keepstone_ui::feedback::error_toast(format!("{err:#}"), window, cx),
+                    Err(err) => calmfold_ui::feedback::error_toast(format!("{err:#}"), window, cx),
                 }
             });
         })
@@ -665,7 +665,7 @@ impl Render for OpenArchive {
 pub fn open_archives(library: Entity<Library>, window: &mut Window, cx: &mut App) {
     let archives = library.read(cx).vault_archives();
     let unlocked =
-        library.read(cx).vault_state() == keepstone_core::vault::lock::LockState::Unlocked;
+        library.read(cx).vault_state() == calmfold_core::vault::lock::LockState::Unlocked;
     window.open_dialog(cx, move |dialog, _, cx| {
         let theme = cx.theme().clone();
         let rows = archives.iter().enumerate().map(|(i, (path, at, n))| {

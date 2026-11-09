@@ -1,6 +1,6 @@
-# Keepstone
+# Calmfold
 
-Keepstone is a personal notes and tasks app for the desktop. Everything is
+Calmfold is a personal notes and tasks app for the desktop. Everything is
 stored in one SQLite file on your own machine. There is no account, no server,
 and no sync unless you set one up yourself.
 
@@ -36,13 +36,13 @@ the Visual Studio 2022 C++ build tools, the MSVC Rust toolchain, and CMake.
 
 ```bash
 cargo run                               # first build takes about 3 minutes
-KEEPSTONE_DATA_DIR=/tmp/ks cargo run    # use a throwaway data folder
-cargo run -p keepstone-storage --example seed -- /tmp/ks/keepstone.sqlite3   # fill it with sample data
+CALMFOLD_DATA_DIR=/tmp/ks cargo run    # use a throwaway data folder
+cargo run -p calmfold-storage --example seed -- /tmp/ks/calmfold.sqlite3   # fill it with sample data
 scripts/dev.sh                          # run, and rebuild + relaunch on every save
 scripts/check.sh                        # formatting, clippy, and all tests
 ```
 
-Debug builds keep their data in a separate "Keepstone Dev" folder, so running
+Debug builds keep their data in a separate "Calmfold Dev" folder, so running
 from source never touches the data of an installed copy.
 
 ## Where to read next

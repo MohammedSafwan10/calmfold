@@ -169,6 +169,12 @@ impl AppearanceSettings {
         self.mono_font_size = self
             .mono_font_size
             .clamp(*Self::MONO_FONT_SIZES.start(), *Self::MONO_FONT_SIZES.end());
+        // The house themes were called "Keepstone Light/Dark" before the rename.
+        for name in [&mut self.light_theme, &mut self.dark_theme] {
+            if let Some(rest) = name.strip_prefix("Keepstone ") {
+                *name = format!("Calmfold {rest}");
+            }
+        }
         self
     }
 
@@ -179,7 +185,7 @@ impl AppearanceSettings {
             Ok(text) => serde_json::from_str::<Self>(&text)
                 .map(Self::sanitized)
                 .unwrap_or_else(|err| {
-                    eprintln!("keepstone: ignoring invalid {}: {err}", path.display());
+                    eprintln!("calmfold: ignoring invalid {}: {err}", path.display());
                     Self::default()
                 }),
             Err(_) => Self::default(),
@@ -284,7 +290,7 @@ pub fn update(cx: &mut App, edit: impl FnOnce(&mut AppearanceSettings)) {
     }
     state.settings = next;
     if let Err(err) = state.settings.save(&state.file) {
-        eprintln!("keepstone: failed to save appearance: {err}");
+        eprintln!("calmfold: failed to save appearance: {err}");
     }
     apply(None, cx);
 }
@@ -338,6 +344,20 @@ fn apply(appearance: Option<WindowAppearance>, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_house_theme_names_are_renamed() {
+        let s = AppearanceSettings {
+            light_theme: "Keepstone Light".into(),
+            dark_theme: "Keepstone Dark".into(),
+            ..AppearanceSettings::default()
+        }
+        .sanitized();
+        assert_eq!(
+            (s.light_theme.as_str(), s.dark_theme.as_str()),
+            ("Calmfold Light", "Calmfold Dark")
+        );
+    }
 
     #[test]
     fn missing_file_gives_defaults() {

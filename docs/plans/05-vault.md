@@ -4,7 +4,7 @@ Read `docs/security.md` and `crates/crypto/AGENTS.md` first.
 
 ## Done
 
-- [x] `keepstone-crypto`: Argon2id KDF with bounded params, XChaCha20-Poly1305
+- [x] `calmfold-crypto`: Argon2id KDF with bounded params, XChaCha20-Poly1305
       versioned envelope, zeroizing keys, 14 tests (tamper, wrong key/AAD...)
 
 ## Plan

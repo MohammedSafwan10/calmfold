@@ -1,6 +1,6 @@
 [package]
-name = "keepstone-ui"
-description = "Keepstone design system: themes, tokens, appearance settings and reusable components."
+name = "calmfold-ui"
+description = "Calmfold design system: themes, tokens, appearance settings and reusable components."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

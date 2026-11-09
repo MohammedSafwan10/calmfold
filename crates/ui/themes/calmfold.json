@@ -1,11 +1,11 @@
 {
   "$schema": "https://github.com/longbridge/gpui-kit/raw/refs/heads/main/.theme-schema.json",
-  "name": "Keepstone",
-  "author": "Keepstone",
+  "name": "Calmfold",
+  "author": "Calmfold",
   "themes": [
     {
       "is_default": true,
-      "name": "Keepstone Dark",
+      "name": "Calmfold Dark",
       "mode": "dark",
       "radius": 8,
       "radius.lg": 12,
@@ -159,7 +159,7 @@
     },
     {
       "is_default": true,
-      "name": "Keepstone Light",
+      "name": "Calmfold Light",
       "mode": "light",
       "radius": 8,
       "radius.lg": 12,

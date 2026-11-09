@@ -1,7 +1,7 @@
 # Design system
 
 Normative guides: `.kiro/skills/gpui-kit-design-guides` (read before UI work).
-This file records Keepstone's choices on top of them.
+This file records Calmfold's choices on top of them.
 
 ## Principles
 
@@ -13,15 +13,15 @@ This file records Keepstone's choices on top of them.
 
 ## Theme
 
-Themes: Keepstone Light/Dark (house) plus community GPUI Kit sets in
+Themes: Calmfold Light/Dark (house) plus community GPUI Kit sets in
 `crates/ui/themes/community/` (unchanged copies, Apache-2.0). Users pick one
 light and one dark theme on cards that preview each theme in its own colors;
 the Mode (System/Light/Dark) decides which one shows. Every theme must define
 `highlight.syntax` (a test enforces it).
 
 
-- `crates/ui/themes/keepstone.json`: **Keepstone Dark** (default via System on
-  dark Macs) and **Keepstone Light**. Radius 8 / 12 (large), shadows off.
+- `crates/ui/themes/calmfold.json`: **Calmfold Dark** (default via System on
+  dark Macs) and **Calmfold Light**. Radius 8 / 12 (large), shadows off.
 - Feature code uses tokens only: `background`, `foreground`, `muted_foreground`,
   `border`, `list_hover`, `list_active`, `group_box`, `sidebar_*`, `danger`...
 - Adding a theme: add an entry to the JSON (or a new JSON in a user themes
@@ -65,7 +65,7 @@ Lucide (1,800+ icons, one consistent stroke style, ISC). Use
   Width and collapsed state persist.
 - Settings lives in the footer.
 
-## Feedback rules (`keepstone_ui::feedback`)
+## Feedback rules (`calmfold_ui::feedback`)
 
 | Situation | Pattern |
 | --- | --- |
@@ -80,7 +80,7 @@ Never confirm reversible actions. Never use "OK" or "Yes" as the confirm label.
 
 One layout grammar for every screen: **Sidebar (app nav) → List panel → Content → optional Inspector**.
 
-- List panels and inspectors use `keepstone_ui::panel::SidePanel`: drag the
+- List panels and inspectors use `calmfold_ui::panel::SidePanel`: drag the
   inner edge to resize (follows the pointer exactly, clamped by its `PanelSpec`),
   double-click the edge to reset, collapse/expand animates ~180 ms (snaps with reduced motion).
 - Width and collapsed state live in the shared `LayoutStore` (`layout.json`), one entry per panel id.
@@ -148,7 +148,7 @@ Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`)
 - ```` ```mermaid ```` renders as a diagram in theme colors on a transparent
   background; the caret inside shows the source.
 - Fenced code is colored by language (`views/code_highlight.rs`); colors live in
-  `keepstone.json` under `highlight.syntax`, so every theme defines its own.
+  `calmfold.json` under `highlight.syntax`, so every theme defines its own.
 - The writing column is centered with a max width (Settings → Content width).
 - The editor is as tall as its text; the page is the only scroll area.
   Clicking below the text continues writing at the end.

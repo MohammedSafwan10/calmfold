@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for coding agents (and humans) working on **Keepstone**, a local-first,
+Guidance for coding agents (and humans) working on **Calmfold**, a local-first,
 all-in-one personal app (notes, tasks, later a password vault, calendar,
 habits, finance) written in Rust with a GPUI desktop UI.
 
@@ -12,11 +12,11 @@ Read this file, then [`HANDOFF.md`](HANDOFF.md) for the current state, then the
 ```bash
 source "$HOME/.cargo/env"          # if cargo is not on PATH
 scripts/check.sh                   # fmt --check + clippy -D warnings + all tests (run before every commit)
-cargo run                          # run the desktop app (debug data: "Keepstone Dev" folder)
+cargo run                          # run the desktop app (debug data: "Calmfold Dev" folder)
 scripts/dev.sh [--sample]          # run + auto-rebuild/relaunch on save (needs watchexec)
-KEEPSTONE_DATA_DIR=/tmp/ks cargo run   # run against a throwaway data folder
-cargo test -p keepstone-desktop --test ui   # headless UI integration tests only
-scripts/screenshot.sh /tmp/k.png   # capture ONLY the Keepstone window (never the full screen)
+CALMFOLD_DATA_DIR=/tmp/ks cargo run   # run against a throwaway data folder
+cargo test -p calmfold-desktop --test ui   # headless UI integration tests only
+scripts/screenshot.sh /tmp/k.png   # capture ONLY the Calmfold window (never the full screen)
 swift scripts/click.swift X Y      # real click in the window (points = screenshot px / 2 on Retina)
 ```
 
@@ -28,11 +28,11 @@ takes ~3 minutes; GPUI dependencies are optimised even in debug (see
 
 | Path | Crate | Responsibility | May depend on |
 | --- | --- | --- | --- |
-| `crates/core` | `keepstone-core` | Domain models and rules (Note, Task, IDs, wiki links, state machines). No IO, no clock except `clock.rs`. | nothing internal |
-| `crates/storage` | `keepstone-storage` | SQLite schema, migrations, FTS5 search, repositories. | core |
-| `crates/crypto` | `keepstone-crypto` | Argon2id KDF, XChaCha20-Poly1305 envelope, zeroizing keys. For the vault. | nothing internal |
-| `crates/ui` | `keepstone-ui` | Design system: themes, fonts, appearance settings, icon assets, reusable components, feedback (confirm/undo/error). | gpui-kit |
-| `apps/desktop` | `keepstone-desktop` | The GPUI app: shell, sidebar, screens, actions, command palette. | all of the above |
+| `crates/core` | `calmfold-core` | Domain models and rules (Note, Task, IDs, wiki links, state machines). No IO, no clock except `clock.rs`. | nothing internal |
+| `crates/storage` | `calmfold-storage` | SQLite schema, migrations, FTS5 search, repositories. | core |
+| `crates/crypto` | `calmfold-crypto` | Argon2id KDF, XChaCha20-Poly1305 envelope, zeroizing keys. For the vault. | nothing internal |
+| `crates/ui` | `calmfold-ui` | Design system: themes, fonts, appearance settings, icon assets, reusable components, feedback (confirm/undo/error). | gpui-kit |
+| `apps/desktop` | `calmfold-desktop` | The GPUI app: shell, sidebar, screens, actions, command palette. | all of the above |
 
 Dependency direction is one-way: `desktop → ui/storage/crypto → core`. Never
 import the UI from core/storage/crypto. Mobile and web shells will reuse
@@ -72,13 +72,13 @@ Do the best version, not the quick one. The owner reviews the running app.
    note editor (`zorite-editor`, `ratex-gpui`, ADR 0004), pinned with `=` and
    only while it resolves to the same `gpui-pre` (`cargo tree -d -i gpui-pre`).
 3. **No hard-coded colors** in feature code. Use `cx.theme()` tokens. Raw hex
-   lives only in `crates/ui/themes/keepstone.json`.
+   lives only in `crates/ui/themes/calmfold.json`.
 4. **Views never touch SQLite.** They call `Library` methods
    (`apps/desktop/src/library.rs`), which apply domain rules, persist, and emit
    `LibraryEvent`.
 5. **Domain rules live in core** and take `now` as a parameter. Use
-   `keepstone_core::clock::now()` at the call site.
-6. **Destructive actions** follow `keepstone_ui::feedback`: reversible → run
+   `calmfold_core::clock::now()` at the call site.
+6. **Destructive actions** follow `calmfold_ui::feedback`: reversible → run
    and offer Undo; permanent → `confirm_destructive`; errors → `error_toast`.
 7. **Every command is an action** (`apps/desktop/src/actions.rs`), handled at
    app level in `shell::register_commands`. Add it to the palette list and
@@ -92,7 +92,7 @@ Do the best version, not the quick one. The owner reviews the running app.
     tests and must follow `crates/crypto/AGENTS.md`.
 11. **Do not code-sign** with any identity found on the machine. Development
     builds must not touch the system keychain (see `docs/security.md`).
-12. **Screenshots** only via `scripts/screenshot.sh` (Keepstone window only).
+12. **Screenshots** only via `scripts/screenshot.sh` (Calmfold window only).
 
 ## Definition of done
 

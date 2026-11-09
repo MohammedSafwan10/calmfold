@@ -1,4 +1,4 @@
-//! Cryptographic primitives for the Keepstone vault.
+//! Cryptographic primitives for the Calmfold vault.
 //!
 //! This crate wraps audited RustCrypto implementations. It does not invent
 //! algorithms. Read `crates/crypto/AGENTS.md` before changing anything here.

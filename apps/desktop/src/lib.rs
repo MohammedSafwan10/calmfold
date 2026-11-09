@@ -1,4 +1,4 @@
-//! Keepstone desktop app.
+//! Calmfold desktop app.
 //!
 //! Startup order matters: GPUI Kit init → design system (fonts, themes,
 //! appearance) → key bindings and commands → open the database → open the
@@ -20,11 +20,11 @@ pub mod vault_prefs;
 pub mod views;
 
 use anyhow::{Context as _, Result};
+use calmfold_storage::Store;
 use gpui_kit::component::TitleBar;
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Bounds, Entity, WindowBounds, WindowOptions, px, size,
 };
-use keepstone_storage::Store;
 
 use crate::library::Library;
 use crate::paths::AppPaths;
@@ -38,11 +38,11 @@ pub fn run() -> Result<()> {
         .with_context(|| format!("could not open {}", paths.database.display()))?;
 
     gpui_kit::application()
-        .with_assets(keepstone_ui::assets::KeepstoneAssets)
+        .with_assets(calmfold_ui::assets::CalmfoldAssets)
         .run(move |cx| match start(&paths, store, cx) {
             Ok(_) => cx.activate(true),
             Err(err) => {
-                eprintln!("keepstone: failed to open window: {err:#}");
+                eprintln!("calmfold: failed to open window: {err:#}");
                 cx.quit();
             }
         });
@@ -56,7 +56,7 @@ pub fn start(
     cx: &mut App,
 ) -> Result<(AnyWindowHandle, Entity<AppShell>)> {
     gpui_kit::init(cx);
-    keepstone_ui::init(paths.appearance.clone(), cx);
+    calmfold_ui::init(paths.appearance.clone(), cx);
     vault_prefs::init(&paths.data_dir, cx);
     // The note editor's own keys first: ours are bound after, so they win on a tie.
     zorite_editor::bind_keys(cx);
@@ -77,7 +77,7 @@ pub fn start(
             cx,
         ))),
         window_min_size: Some(size(px(720.), px(480.))),
-        app_id: Some("app.keepstone.Keepstone".into()),
+        app_id: Some("com.nexdark.calmfold".into()),
         ..TitleBar::window_options()
     };
     let (window, shell) = gpui_kit::open_window(options, cx, |window, cx| {
@@ -99,15 +99,15 @@ pub fn start(
 
     // Debug and perf builds only: start on a given screen, for screenshot and perf scripts.
     #[cfg(any(debug_assertions, feature = "perf"))]
-    if let Some(route) = std::env::var("KEEPSTONE_DEV_ROUTE")
+    if let Some(route) = std::env::var("CALMFOLD_DEV_ROUTE")
         .ok()
         .and_then(|r| views::Route::parse(&r))
     {
         window.update(cx, |_, window, cx| {
             shell.update(cx, |s, cx| s.navigate(route, window, cx))
         })?;
-        // KEEPSTONE_DEV_SOURCE=1 with route=notes: open the first note as Markdown source.
-        if route == views::Route::Notes && std::env::var_os("KEEPSTONE_DEV_SOURCE").is_some() {
+        // CALMFOLD_DEV_SOURCE=1 with route=notes: open the first note as Markdown source.
+        if route == views::Route::Notes && std::env::var_os("CALMFOLD_DEV_SOURCE").is_some() {
             window.update(cx, |_, window, cx| {
                 let notes = shell.read(cx).notes().clone();
                 notes.update(cx, |n, cx| {
@@ -116,8 +116,8 @@ pub fn start(
                 });
             })?;
         }
-        // KEEPSTONE_DEV_CALENDAR=month|week|day|agenda: open the calendar in that view.
-        if let Ok(name) = std::env::var("KEEPSTONE_DEV_CALENDAR") {
+        // CALMFOLD_DEV_CALENDAR=month|week|day|agenda: open the calendar in that view.
+        if let Ok(name) = std::env::var("CALMFOLD_DEV_CALENDAR") {
             let mode = views::calendar_layout::CalendarMode::OPTIONS
                 .into_iter()
                 .find(|(_, label)| label.eq_ignore_ascii_case(name.trim()))
@@ -127,8 +127,8 @@ pub fn start(
                 calendar.update(cx, |c, cx| c.set_mode(mode, cx));
             }
         }
-        // KEEPSTONE_DEV_HABITS=insights|archived: open that Habits tab.
-        if let Ok(name) = std::env::var("KEEPSTONE_DEV_HABITS") {
+        // CALMFOLD_DEV_HABITS=insights|archived: open that Habits tab.
+        if let Ok(name) = std::env::var("CALMFOLD_DEV_HABITS") {
             use views::habits::HabitTab;
             let tab = match name.trim() {
                 "insights" => Some(HabitTab::Insights),
@@ -140,14 +140,14 @@ pub fn start(
                 habits.update(cx, |h, cx| h.set_tab(tab, cx));
             }
         }
-        // KEEPSTONE_DEV_VAULT=<password> (debug builds only): set up or unlock
+        // CALMFOLD_DEV_VAULT=<password> (debug builds only): set up or unlock
         // the vault with that password and add sample items to an empty one.
         #[cfg(debug_assertions)]
-        if let Ok(password) = std::env::var("KEEPSTONE_DEV_VAULT") {
+        if let Ok(password) = std::env::var("CALMFOLD_DEV_VAULT") {
             dev_vault(window, shell.clone(), password, cx);
         }
-        // KEEPSTONE_DEV_NOTE=<title>: open that note with the caret at the end of its body.
-        if let Ok(title) = std::env::var("KEEPSTONE_DEV_NOTE") {
+        // CALMFOLD_DEV_NOTE=<title>: open that note with the caret at the end of its body.
+        if let Ok(title) = std::env::var("CALMFOLD_DEV_NOTE") {
             window.update(cx, |_, window, cx| {
                 let notes = shell.read(cx).notes().clone();
                 notes.update(cx, |n, cx| n.open_note_titled_at_end(&title, window, cx));
@@ -162,9 +162,9 @@ pub fn start(
 #[cfg(debug_assertions)]
 fn dev_vault(window: AnyWindowHandle, shell: Entity<AppShell>, password: String, cx: &mut App) {
     let library = shell.read(cx).library().clone();
-    use keepstone_core::vault::lock::LockState;
-    use keepstone_core::vault::{ItemFields, ItemKind};
-    use keepstone_crypto::SecretString;
+    use calmfold_core::vault::lock::LockState;
+    use calmfold_core::vault::{ItemFields, ItemKind};
+    use calmfold_crypto::SecretString;
     let fresh = library.read(cx).vault_state() == LockState::Uninitialized;
     let (setup, unlock) = library.update(cx, |lib, cx| {
         if fresh {
@@ -186,7 +186,7 @@ fn dev_vault(window: AnyWindowHandle, shell: Entity<AppShell>, password: String,
             _ => false,
         };
         if !opened {
-            eprintln!("keepstone: KEEPSTONE_DEV_VAULT couldn't open the vault");
+            eprintln!("calmfold: CALMFOLD_DEV_VAULT couldn't open the vault");
             return;
         }
         library.update(cx, |lib, cx| {
@@ -293,11 +293,11 @@ fn dev_vault(window: AnyWindowHandle, shell: Entity<AppShell>, password: String,
                 ),
             ];
             if let Err(err) = lib.import_vault_items(rows, cx) {
-                eprintln!("keepstone: sample vault items failed: {err:#}");
+                eprintln!("calmfold: sample vault items failed: {err:#}");
             }
         });
-        // KEEPSTONE_DEV_VAULT_ITEM=<title>: open that item.
-        if let Ok(title) = std::env::var("KEEPSTONE_DEV_VAULT_ITEM") {
+        // CALMFOLD_DEV_VAULT_ITEM=<title>: open that item.
+        if let Ok(title) = std::env::var("CALMFOLD_DEV_VAULT_ITEM") {
             // After the list has refreshed from the import above.
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(300))

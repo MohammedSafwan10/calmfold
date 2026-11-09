@@ -73,7 +73,7 @@ pub enum AutoLock {
     FiveMinutes,
     FifteenMinutes,
     OneHour,
-    /// Only when Keepstone quits (or the user locks it).
+    /// Only when Calmfold quits (or the user locks it).
     Never,
 }
 

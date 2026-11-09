@@ -1,5 +1,5 @@
 [package]
-name = "keepstone-core"
+name = "calmfold-core"
 description = "Domain models and business rules. No IO, no UI."
 version.workspace = true
 edition.workspace = true

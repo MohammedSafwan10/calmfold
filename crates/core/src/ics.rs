@@ -5,10 +5,10 @@
 //! names, so this module does no IO. Times become local wall-clock times,
 //! the calendar's model (see [`crate::event`]).
 //!
-//! Kept: title, notes, place, all-day, times, repeat rules Keepstone can
+//! Kept: title, notes, place, all-day, times, repeat rules Calmfold can
 //! express (daily/weekly on days/monthly/yearly with an interval, ending on
 //! a date or after a count), `EXDATE` (skipped repeats) and changed single
-//! repeats (`RECURRENCE-ID`). A rule Keepstone can't express (for example
+//! repeats (`RECURRENCE-ID`). A rule Calmfold can't express (for example
 //! "second Tuesday of the month") imports as its first date only, and is
 //! counted so the user is told.
 
@@ -33,7 +33,7 @@ pub struct IcsImport {
     pub events: Vec<Event>,
     /// Events that couldn't be read (no start, bad dates, too long).
     pub skipped: usize,
-    /// Repeating events whose rule Keepstone can't express yet; only their
+    /// Repeating events whose rule Calmfold can't express yet; only their
     /// first date was imported.
     pub simplified: usize,
 }
@@ -244,7 +244,7 @@ struct Rule {
 }
 
 /// `FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;UNTIL=20261231T235959Z`, or `None`
-/// for rules Keepstone can't express.
+/// for rules Calmfold can't express.
 fn parse_rrule(text: &str, first: Date) -> Option<Rule> {
     let mut freq = None;
     let mut interval = 1_u16;

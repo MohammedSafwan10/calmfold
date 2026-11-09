@@ -1,6 +1,6 @@
 [package]
-name = "keepstone-crypto"
-description = "Key derivation and authenticated encryption for the Keepstone vault."
+name = "calmfold-crypto"
+description = "Key derivation and authenticated encryption for the Calmfold vault."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

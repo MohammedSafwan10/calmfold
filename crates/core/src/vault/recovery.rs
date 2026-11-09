@@ -2,7 +2,7 @@
 //!
 //! A recovery key is 160 random bits written as 32 base32 characters in
 //! eight groups (`ABCD-EFGH-…`), shown once at setup and saved by the user
-//! in an Emergency Kit outside Keepstone. The app derives a second key from
+//! in an Emergency Kit outside Calmfold. The app derives a second key from
 //! it that also wraps the vault key, so either the master password or the
 //! recovery key opens the vault (ADR 0006). Only the user ever holds it.
 
@@ -63,12 +63,12 @@ pub fn normalize(input: &str) -> Option<Zeroizing<String>> {
 #[must_use]
 pub fn emergency_kit(key: &str, created: &str) -> Zeroizing<String> {
     Zeroizing::new(format!(
-        "KEEPSTONE EMERGENCY KIT\n\
+        "CALMFOLD EMERGENCY KIT\n\
          Created {created}\n\n\
          Recovery key\n\
          {key}\n\n\
          What this is\n\
-         If you forget your master password, open Keepstone → Passwords →\n\
+         If you forget your master password, open Calmfold → Passwords →\n\
          \"Forgot master password?\" → Use recovery key, and type this key.\n\
          You'll then choose a new master password.\n\n\
          Keep it safe\n\

@@ -1,6 +1,6 @@
 //! Conversions between domain values and SQLite columns.
 
-use keepstone_core::{Date, Timestamp};
+use calmfold_core::{Date, Timestamp};
 
 use crate::{StorageError, StorageResult};
 

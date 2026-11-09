@@ -5,6 +5,11 @@
 
 use std::path::PathBuf;
 
+use calmfold_ui::appearance::{
+    self, AppearanceSettings, ClockFormat, ContentWidth, LineSpacing, MonoFont, MotionPreference,
+    ThemePreference, UiFont, WeekStart,
+};
+use calmfold_ui::components::segmented;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::ThemeMode;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -20,11 +25,6 @@ use gpui_kit::{
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
     TestSupportExt as _, Window, div,
 };
-use keepstone_ui::appearance::{
-    self, AppearanceSettings, ClockFormat, ContentWidth, LineSpacing, MonoFont, MotionPreference,
-    ThemePreference, UiFont, WeekStart,
-};
-use keepstone_ui::components::segmented;
 
 use crate::actions::{
     CALENDAR_SHORTCUTS, EDITING_SHORTCUTS, HABIT_SHORTCUTS, SHORTCUTS, ShortcutGroup,
@@ -428,7 +428,7 @@ impl SettingsView {
     }
 
     fn passwords_page() -> SettingPage {
-        use keepstone_core::vault::lock::{AutoLock, ClipboardClear};
+        use calmfold_core::vault::lock::{AutoLock, ClipboardClear};
         let auto: &'static [(AutoLock, &'static str)] = &[
             (AutoLock::OneMinute, "1 min"),
             (AutoLock::FiveMinutes, "5 min"),
@@ -452,10 +452,10 @@ impl SettingsView {
                 )
             }),
         )
-        .description("Lock the vault when you haven't used Keepstone for this long.")
+        .description("Lock the vault when you haven't used Calmfold for this long.")
         .keywords(["vault", "auto-lock", "timeout", "security", "passwords"]);
         let hide = SettingItem::new(
-            "Lock when Keepstone is in the background",
+            "Lock when Calmfold is in the background",
             SettingField::switch(
                 |cx| crate::vault_prefs::get(cx).lock_on_hide,
                 |on, cx| crate::vault_prefs::update(cx, |p| p.lock_on_hide = on),
@@ -474,7 +474,7 @@ impl SettingsView {
                 )
             }),
         )
-        .description("Only if the clipboard still holds what Keepstone copied.")
+        .description("Only if the clipboard still holds what Calmfold copied.")
         .keywords(["clipboard", "copy", "vault", "security"]);
         let master = SettingItem::new(
             "Master password",
@@ -714,10 +714,15 @@ impl SettingsView {
             "Icons",
             SettingField::render(|_, _, _| div().text_sm().child("Lucide · ISC")),
         );
+        let maker = SettingItem::new(
+            "Made by",
+            SettingField::render(|_, _, _| div().text_sm().child("Nexdark Labs")),
+        )
+        .description("calmfold.nexdark.com");
         SettingPage::new("About").icon(Lucide::Info).group(
             SettingGroup::new()
-                .title("Keepstone")
-                .items(vec![version, fonts, icons]),
+                .title("Calmfold")
+                .items(vec![version, maker, fonts, icons]),
         )
     }
 }
@@ -736,7 +741,7 @@ fn theme_cards(mode: ThemeMode, cx: &App) -> impl IntoElement {
     } else {
         settings.light_theme.clone()
     };
-    let cards = keepstone_ui::theme::choices(mode, cx)
+    let cards = calmfold_ui::theme::choices(mode, cx)
         .into_iter()
         .map(|choice| {
             let c = &choice.config.colors;
@@ -886,7 +891,7 @@ impl Render for SettingsView {
             return div();
         };
         div().track_focus(&self.focus).size_full().child(
-            Settings::new("keepstone-settings")
+            Settings::new("calmfold-settings")
                 .with_group_variant(GroupBoxVariant::Outline)
                 .pages(vec![
                     Self::appearance_page(),

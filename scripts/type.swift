@@ -5,7 +5,7 @@
 //   swift scripts/type.swift text  <count> <interval-ms>   # types "word " patterns
 //   swift scripts/type.swift keys  <count> <interval-ms> <keycode>
 //   swift scripts/type.swift scroll <count> <interval-ms> <pixels>
-// With KEEPSTONE_PID set, events go straight to that process (works even when
+// With CALMFOLD_PID set, events go straight to that process (works even when
 // its window is on another Space); otherwise to the HID tap.
 import CoreGraphics
 import Foundation
@@ -17,7 +17,7 @@ guard args.count >= 4, let count = Int(args[2]), let interval = Double(args[3]) 
 }
 let source = CGEventSource(stateID: .hidSystemState)
 let delay = useconds_t(interval * 1000)
-let pid = ProcessInfo.processInfo.environment["KEEPSTONE_PID"].flatMap { pid_t($0) }
+let pid = ProcessInfo.processInfo.environment["CALMFOLD_PID"].flatMap { pid_t($0) }
 
 func send(_ e: CGEvent?) {
     guard let e else { return }
@@ -54,7 +54,7 @@ case "scroll":
     // Wheel events go to the window under the pointer: park it over the note.
     let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     if let w = windows.first(where: {
-        ($0[kCGWindowOwnerName as String] as? String)?.lowercased() == "keepstone" && ($0[kCGWindowLayer as String] as? Int) == 0
+        ($0[kCGWindowOwnerName as String] as? String)?.lowercased() == "calmfold" && ($0[kCGWindowLayer as String] as? Int) == 0
     }), let b = w[kCGWindowBounds as String] as? [String: Double] {
         CGWarpMouseCursorPosition(CGPoint(x: (b["X"] ?? 0) + (b["Width"] ?? 0) * 0.7, y: (b["Y"] ?? 0) + (b["Height"] ?? 0) * 0.5))
         usleep(200_000)

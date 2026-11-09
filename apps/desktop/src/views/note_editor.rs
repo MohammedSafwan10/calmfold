@@ -11,7 +11,7 @@
 //! - theme colors and fonts (`SyntaxStyle` from `cx.theme()`), rebuilt on theme change;
 //! - `[[` note-link suggestions (a small menu at the caret, keyboard first);
 //! - a selection toolbar (bold, italic, strikethrough, highlight, code, link);
-//! - Markdown block formats (headings, lists, quote) via `keepstone_core::format`;
+//! - Markdown block formats (headings, lists, quote) via `calmfold_core::format`;
 //! - `$$…$$` math rendered by `ratex-gpui`;
 //! - spell-check through the OS checker (prose only: code, links, tags, URLs
 //!   and math are skipped), right-click a flagged word for suggestions;
@@ -32,6 +32,9 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use calmfold_core::NoteId;
+use calmfold_core::format::{self, Block, Inline};
+use calmfold_core::links::open_link_query;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::tooltip::Tooltip;
@@ -44,9 +47,6 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, WeakEntity,
     Window, anchored, deferred, div, font, point, px, rems,
 };
-use keepstone_core::NoteId;
-use keepstone_core::format::{self, Block, Inline};
-use keepstone_core::links::open_link_query;
 use zorite_editor::{EditorEvent, EditorState, SyntaxStyle};
 
 use crate::actions::{
@@ -152,7 +152,7 @@ impl NoteEditor {
             ),
             spell: Rc::new(os_spellcheck::SpellChecker::new()),
             spell_task: None,
-            spell_on: keepstone_ui::appearance::settings(cx).spell_check,
+            spell_on: calmfold_ui::appearance::settings(cx).spell_check,
             diagrams: crate::views::diagram::Diagrams::new(
                 cx.svg_renderer(),
                 crate::views::diagram::DiagramColors::from_theme(cx.theme()),
@@ -394,11 +394,11 @@ impl NoteEditor {
             if text.len() > MAX_BYTES {
                 Vec::new()
             } else {
-                let skip = keepstone_core::format::non_prose_ranges(text);
+                let skip = calmfold_core::format::non_prose_ranges(text);
                 self.spell
                     .check(text)
                     .into_iter()
-                    .filter(|r| !keepstone_core::format::overlaps_any(r, &skip))
+                    .filter(|r| !calmfold_core::format::overlaps_any(r, &skip))
                     .map(|range| zorite_editor::Diagnostic { range })
                     .collect()
             }
@@ -423,9 +423,9 @@ impl NoteEditor {
 
     fn apply_style(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         zorite_editor::set_line_height_ratio(
-            keepstone_ui::appearance::settings(cx).line_spacing.ratio(),
+            calmfold_ui::appearance::settings(cx).line_spacing.ratio(),
         );
-        let spell_on = keepstone_ui::appearance::settings(cx).spell_check;
+        let spell_on = calmfold_ui::appearance::settings(cx).spell_check;
         if spell_on != self.spell_on {
             self.spell_on = spell_on;
             self.check_spelling(cx);
@@ -1032,12 +1032,12 @@ fn route_wiki_click(text: &str, target: &str) -> Option<NoteEditorEvent> {
     }
     let page = target.split("#^").next().unwrap_or(target);
     let page = page.split('#').next().unwrap_or(page).trim();
-    let wanted = keepstone_core::links::normalize_target(page);
-    let is_link = keepstone_core::links::extract_wiki_links(text)
+    let wanted = calmfold_core::links::normalize_target(page);
+    let is_link = calmfold_core::links::extract_wiki_links(text)
         .iter()
-        .any(|l| keepstone_core::links::normalize_target(&l.target) == wanted);
-    let tag = keepstone_core::tags::normalize_tag(target);
-    let is_tag = keepstone_core::tags::extract_tags(text).contains(&tag);
+        .any(|l| calmfold_core::links::normalize_target(&l.target) == wanted);
+    let tag = calmfold_core::tags::normalize_tag(target);
+    let is_tag = calmfold_core::tags::extract_tags(text).contains(&tag);
     match (is_link, is_tag) {
         (false, true) => Some(NoteEditorEvent::OpenTag(tag)),
         _ if page.is_empty() => None,

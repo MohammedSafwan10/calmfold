@@ -26,7 +26,7 @@ pub mod vault_generator;
 pub mod vault_item;
 pub mod vault_recovery;
 
-use keepstone_core::NoteId;
+use calmfold_core::NoteId;
 
 /// Top-level destinations shown in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,7 +83,7 @@ pub enum Navigate {
 /// Formats a due date relative to `today`: "Today", "Tomorrow", "Yesterday",
 /// a weekday within the next week, otherwise "Nov 20" (or "Nov 20, 2027").
 #[must_use]
-pub fn relative_day(day: keepstone_core::Date, today: keepstone_core::Date) -> String {
+pub fn relative_day(day: calmfold_core::Date, today: calmfold_core::Date) -> String {
     let diff = (day - today).get_days();
     match diff {
         0 => "Today".into(),
@@ -99,7 +99,7 @@ pub fn relative_day(day: keepstone_core::Date, today: keepstone_core::Date) -> S
 mod tests {
     use super::*;
 
-    fn d(s: &str) -> keepstone_core::Date {
+    fn d(s: &str) -> calmfold_core::Date {
         s.parse().expect("date")
     }
 

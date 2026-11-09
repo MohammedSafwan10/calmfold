@@ -1,4 +1,4 @@
-//! Keepstone domain layer.
+//! Calmfold domain layer.
 //!
 //! Pure data types and business rules. This crate performs no IO, owns no
 //! clock, and knows nothing about SQLite or the UI. Callers pass the current

@@ -6,7 +6,7 @@
 
 use gpui_kit::assets::IconName as Lucide;
 
-use keepstone_core::vault::ItemKind;
+use calmfold_core::vault::ItemKind;
 
 use crate::vault::VaultFilter;
 use crate::views::Route;
@@ -20,7 +20,7 @@ pub enum NavTarget {
     NotesAll,
     NotesTrash,
     DailyNote,
-    Project(keepstone_core::ProjectId),
+    Project(calmfold_core::ProjectId),
     Vault(crate::vault::VaultFilter),
 }
 

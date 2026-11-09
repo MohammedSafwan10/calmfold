@@ -1,28 +1,28 @@
 #![allow(clippy::expect_used)] // Test helpers outside #[test] fns.
 
-//! UI integration tests: the real Keepstone shell in a headless window.
+//! UI integration tests: the real Calmfold shell in a headless window.
 //!
-//! Each test starts the app exactly like `main` does (`keepstone_desktop::start`)
+//! Each test starts the app exactly like `main` does (`calmfold_desktop::start`)
 //! with a temporary data folder and an in-memory database, then drives it with
 //! actions, typing and key presses, and checks the stored result.
 //!
-//! Run: `cargo test -p keepstone-desktop --test ui`
+//! Run: `cargo test -p calmfold-desktop --test ui`
 
 use std::time::Duration;
 
-use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext};
-use keepstone_core::TaskStatus;
-use keepstone_desktop::actions::{
+use calmfold_core::TaskStatus;
+use calmfold_desktop::actions::{
     GoNotes, GoSettings, GoTasks, GoToday, NewNote, NewTask, OpenCommandPalette, ToggleSidebar,
     UseDarkTheme, UseLightTheme,
 };
-use keepstone_desktop::paths::AppPaths;
-use keepstone_desktop::shell::AppShell;
-use keepstone_desktop::views::Route;
-use keepstone_desktop::views::tasks::TaskTab;
-use keepstone_storage::{Store, TaskFilter};
+use calmfold_desktop::paths::AppPaths;
+use calmfold_desktop::shell::AppShell;
+use calmfold_desktop::views::Route;
+use calmfold_desktop::views::tasks::TaskTab;
+use calmfold_storage::{Store, TaskFilter};
+use gpui_kit::component::{Theme, ThemeMode};
+use gpui_kit::test::TestWindowExt;
+use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext};
 
 struct App {
     window: AnyWindowHandle,
@@ -36,7 +36,7 @@ fn launch(cx: &mut TestAppContext) -> App {
     let paths = AppPaths::in_dir(dir.path().to_path_buf());
     let store = Store::open_in_memory().expect("store");
     let (window, shell) =
-        cx.update(|cx| keepstone_desktop::start(&paths, store, cx).expect("start"));
+        cx.update(|cx| calmfold_desktop::start(&paths, store, cx).expect("start"));
     cx.run_until_parked();
     App {
         window,
@@ -188,7 +188,7 @@ fn quick_add_creates_task_due_today_and_clears_input(cx: &mut TestAppContext) {
     // Blank input does nothing.
     press(&app, cx, "enter");
 
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     let tasks = cx.read(|cx| {
         app.shell
             .read(cx)
@@ -235,8 +235,8 @@ fn sidebar_toggle_persists_layout(cx: &mut TestAppContext) {
 
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
-    let saved = keepstone_desktop::ui_state::LayoutState::load(
-        &keepstone_desktop::ui_state::layout_file(&app.paths.data_dir),
+    let saved = calmfold_desktop::ui_state::LayoutState::load(
+        &calmfold_desktop::ui_state::layout_file(&app.paths.data_dir),
     );
     assert!(saved.sidebar_collapsed, "collapsed state written to disk");
 }
@@ -248,16 +248,13 @@ fn theme_commands_switch_mode_and_save(cx: &mut TestAppContext) {
     assert_eq!(cx.read(|cx| Theme::global(cx).mode), ThemeMode::Dark);
     assert_eq!(
         cx.read(|cx| Theme::global(cx).theme_name().to_string()),
-        keepstone_ui::theme::DARK
+        calmfold_ui::theme::DARK
     );
     dispatch(&app, cx, UseLightTheme);
     assert_eq!(cx.read(|cx| Theme::global(cx).mode), ThemeMode::Light);
 
-    let saved = keepstone_ui::appearance::AppearanceSettings::load(&app.paths.appearance);
-    assert_eq!(
-        saved.theme,
-        keepstone_ui::appearance::ThemePreference::Light
-    );
+    let saved = calmfold_ui::appearance::AppearanceSettings::load(&app.paths.appearance);
+    assert_eq!(saved.theme, calmfold_ui::appearance::ThemePreference::Light);
 }
 
 #[gpui_kit::test]
@@ -289,7 +286,7 @@ fn dialog_open(app: &App, cx: &mut TestAppContext) -> bool {
     .expect("window")
 }
 
-fn create_and_open_note(app: &App, cx: &mut TestAppContext, title: &str) -> keepstone_core::NoteId {
+fn create_and_open_note(app: &App, cx: &mut TestAppContext, title: &str) -> calmfold_core::NoteId {
     let id = cx.update(|cx| {
         app.shell.read(cx).library().clone().update(cx, |lib, cx| {
             let id = lib.create_note(title, cx).expect("create");
@@ -306,7 +303,7 @@ fn create_and_open_note(app: &App, cx: &mut TestAppContext, title: &str) -> keep
     id
 }
 
-fn note_state(app: &App, cx: &mut TestAppContext, id: keepstone_core::NoteId) -> Option<bool> {
+fn note_state(app: &App, cx: &mut TestAppContext, id: calmfold_core::NoteId) -> Option<bool> {
     cx.read(|cx| {
         app.shell
             .read(cx)
@@ -414,14 +411,14 @@ fn all_note_titles(app: &App, cx: &mut TestAppContext) -> Vec<String> {
 fn title_input_stops_at_the_length_limit(cx: &mut TestAppContext) {
     let app = launch(cx);
     dispatch(&app, cx, NewNote);
-    type_text(&app, cx, &"x".repeat(keepstone_core::MAX_TITLE_CHARS + 20));
+    type_text(&app, cx, &"x".repeat(calmfold_core::MAX_TITLE_CHARS + 20));
     cx.executor().advance_clock(Duration::from_millis(600));
     cx.run_until_parked();
     let titles = all_note_titles(&app, cx);
     assert!(
         titles
             .iter()
-            .any(|t| t.chars().count() == keepstone_core::MAX_TITLE_CHARS),
+            .any(|t| t.chars().count() == calmfold_core::MAX_TITLE_CHARS),
         "long title is capped and saved: {:?}",
         titles.iter().map(|t| t.len()).collect::<Vec<_>>()
     );
@@ -621,7 +618,7 @@ fn task_detail_edits_status_due_notes_and_title(cx: &mut TestAppContext) {
     click(&app, cx, "due-tomorrow");
     assert_eq!(
         task(cx).due(),
-        keepstone_core::clock::today().tomorrow().ok()
+        calmfold_core::clock::today().tomorrow().ok()
     );
     click(&app, cx, "due-none");
     assert_eq!(task(cx).due(), None);
@@ -698,7 +695,7 @@ fn task_menu_sets_priority_and_due_through_submenus(cx: &mut TestAppContext) {
     click(&app, cx, menu);
     click_label(&app, cx, "Priority");
     click_label(&app, cx, "High");
-    assert_eq!(task(cx).priority(), keepstone_core::Priority::High);
+    assert_eq!(task(cx).priority(), calmfold_core::Priority::High);
 
     // The submenu label now shows the current value.
     click(&app, cx, menu);
@@ -706,7 +703,7 @@ fn task_menu_sets_priority_and_due_through_submenus(cx: &mut TestAppContext) {
     click_label(&app, cx, "Tomorrow");
     assert_eq!(
         task(cx).due(),
-        keepstone_core::clock::today().tomorrow().ok()
+        calmfold_core::clock::today().tomorrow().ok()
     );
 
     click(&app, cx, menu);
@@ -716,8 +713,8 @@ fn task_menu_sets_priority_and_due_through_submenus(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn note_list_panel_collapses_resizes_and_persists(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::ToggleListPanel;
-    use keepstone_desktop::ui_state::{LayoutState, NOTES_LIST, layout_file};
+    use calmfold_desktop::actions::ToggleListPanel;
+    use calmfold_desktop::ui_state::{LayoutState, NOTES_LIST, layout_file};
     let app = launch(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let panel =
@@ -808,15 +805,15 @@ fn leak(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
 }
 
-fn library(app: &App, cx: &mut TestAppContext) -> Entity<keepstone_desktop::library::Library> {
+fn library(app: &App, cx: &mut TestAppContext) -> Entity<calmfold_desktop::library::Library> {
     cx.read(|cx| app.shell.read(cx).library().clone())
 }
 
 fn task_by_id(
     app: &App,
     cx: &mut TestAppContext,
-    id: keepstone_core::TaskId,
-) -> keepstone_core::Task {
+    id: calmfold_core::TaskId,
+) -> calmfold_core::Task {
     cx.read(|cx| {
         app.shell
             .read(cx)
@@ -827,7 +824,7 @@ fn task_by_id(
     })
 }
 
-fn open_tasks(app: &App, cx: &mut TestAppContext) -> Vec<keepstone_core::Task> {
+fn open_tasks(app: &App, cx: &mut TestAppContext) -> Vec<calmfold_core::Task> {
     cx.read(|cx| {
         app.shell
             .read(cx)
@@ -859,8 +856,8 @@ fn quick_add_reads_date_priority_and_project_from_the_text(cx: &mut TestAppConte
         .iter()
         .find(|t| t.title() == "Plan Monday standup")
         .expect("dates are read only from the end of the text");
-    assert_eq!(plan.due(), keepstone_core::clock::today().tomorrow().ok());
-    assert_eq!(plan.priority(), keepstone_core::Priority::High);
+    assert_eq!(plan.due(), calmfold_core::clock::today().tomorrow().ok());
+    assert_eq!(plan.priority(), calmfold_core::Priority::High);
     assert_eq!(plan.project(), Some(home));
 
     let paint = tasks
@@ -871,7 +868,7 @@ fn quick_add_reads_date_priority_and_project_from_the_text(cx: &mut TestAppConte
     assert_eq!(paint.project(), None);
     assert_eq!(
         paint.due(),
-        Some(keepstone_core::clock::today()),
+        Some(calmfold_core::clock::today()),
         "no date in the text: the Today tab's default applies"
     );
 }
@@ -883,13 +880,13 @@ fn completing_a_repeating_task_schedules_the_next_one(cx: &mut TestAppContext) {
     type_text(&app, cx, "Water plants every day");
     press(&app, cx, "enter");
 
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     let first = open_tasks(&app, cx);
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].title(), "Water plants");
     assert_eq!(
         first[0].recurrence(),
-        Some(keepstone_core::Recurrence::Days(1))
+        Some(calmfold_core::Recurrence::Days(1))
     );
     assert_eq!(first[0].due(), Some(today));
 
@@ -908,7 +905,7 @@ fn completing_a_repeating_task_schedules_the_next_one(cx: &mut TestAppContext) {
     assert_eq!(next[0].due(), today.tomorrow().ok());
     assert_eq!(
         next[0].recurrence(),
-        Some(keepstone_core::Recurrence::Days(1))
+        Some(calmfold_core::Recurrence::Days(1))
     );
 }
 
@@ -965,7 +962,7 @@ fn task_detail_adds_checks_and_removes_steps(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn projects_are_created_shown_renamed_and_deleted_without_losing_tasks(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::NewProject;
+    use calmfold_desktop::actions::NewProject;
     let app = launch(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
 
@@ -1026,11 +1023,11 @@ fn projects_are_created_shown_renamed_and_deleted_without_losing_tasks(cx: &mut 
 
 #[gpui_kit::test]
 fn daily_note_opens_todays_note_and_never_duplicates_it(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::OpenDailyNote;
+    use calmfold_desktop::actions::OpenDailyNote;
     let app = launch(cx);
     dispatch(&app, cx, OpenDailyNote);
     assert_eq!(route(&app, cx), Route::Notes);
-    let title = keepstone_desktop::library::daily_note_title(keepstone_core::clock::today());
+    let title = calmfold_desktop::library::daily_note_title(calmfold_core::clock::today());
     let first = cx.read(|cx| app.shell.read(cx).notes().read(cx).open_note_id());
     assert!(first.is_some());
     assert_eq!(
@@ -1079,7 +1076,7 @@ fn tag_filter_shows_only_tagged_notes(cx: &mut TestAppContext) {
     );
 
     dispatch(&app, cx, GoNotes);
-    let shown = |id: keepstone_core::NoteId, cx: &mut TestAppContext| {
+    let shown = |id: calmfold_core::NoteId, cx: &mut TestAppContext| {
         cx.update_window(app.window, |_, window, cx| {
             window.render_frame(cx);
             window.try_find(leak(format!("note-{id}"))).is_some()
@@ -1256,7 +1253,7 @@ fn long_notes_scroll_the_page_not_the_editor(cx: &mut TestAppContext) {
 fn today_shows_the_week_and_the_next_seven_days(cx: &mut TestAppContext) {
     let app = launch(cx);
     let lib = library(&app, cx);
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     let in_three = today.checked_add(jiff::Span::new().days(3)).expect("date");
     let in_twenty = today.checked_add(jiff::Span::new().days(20)).expect("date");
     let (soon, later) = cx.update(|cx| {
@@ -1305,7 +1302,7 @@ fn today_shows_the_week_and_the_next_seven_days(cx: &mut TestAppContext) {
 fn note_editor(
     app: &App,
     cx: &mut TestAppContext,
-) -> Entity<keepstone_desktop::views::note_editor::NoteEditor> {
+) -> Entity<calmfold_desktop::views::note_editor::NoteEditor> {
     cx.read(|cx| app.shell.read(cx).notes().read(cx).note_editor().clone())
 }
 
@@ -1314,7 +1311,7 @@ fn open_note_with(
     cx: &mut TestAppContext,
     title: &str,
     body: &str,
-) -> keepstone_core::NoteId {
+) -> calmfold_core::NoteId {
     let lib = library(app, cx);
     let id = cx.update(|cx| {
         lib.update(cx, |l, cx| {
@@ -1431,7 +1428,7 @@ fn selecting_text_shows_a_format_bar_that_keeps_focus(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn markdown_source_mode_toggles_without_changing_text(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::ToggleMarkdownSource;
+    use calmfold_desktop::actions::ToggleMarkdownSource;
     let app = launch(cx);
     open_note_with(&app, cx, "Source", "# Heading\n**bold**");
     let notes = cx.read(|cx| app.shell.read(cx).notes().clone());
@@ -1511,7 +1508,7 @@ fn arrow_keys_move_through_math_blocks(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn find_in_note_counts_steps_wraps_and_closes(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::{FindInNote, FindNext, FindPrevious};
+    use calmfold_desktop::actions::{FindInNote, FindNext, FindPrevious};
     let app = launch(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     dispatch(&app, cx, GoNotes);
@@ -1599,7 +1596,7 @@ fn spelling_flags_prose_skips_code_and_can_be_turned_off(cx: &mut TestAppContext
         "code, links and tags are not prose: {words:?}"
     );
 
-    cx.update(|cx| keepstone_ui::appearance::update(cx, |s| s.spell_check = false));
+    cx.update(|cx| calmfold_ui::appearance::update(cx, |s| s.spell_check = false));
     cx.run_until_parked();
     assert!(flagged(cx).is_empty(), "the setting turns underlines off");
 }
@@ -1611,7 +1608,7 @@ fn picking_a_theme_card_applies_and_saves_it(cx: &mut TestAppContext) {
     dispatch(&app, cx, UseDarkTheme);
     dispatch(&app, cx, GoSettings);
     let name = |cx: &mut TestAppContext| cx.read(|cx| Theme::global(cx).theme_name().to_string());
-    assert_eq!(name(cx), keepstone_ui::theme::DARK);
+    assert_eq!(name(cx), calmfold_ui::theme::DARK);
 
     click(&app, cx, "theme-catppuccin-mocha");
     assert_eq!(name(cx), "Catppuccin Mocha");
@@ -1626,7 +1623,7 @@ fn picking_a_theme_card_applies_and_saves_it(cx: &mut TestAppContext) {
     assert_eq!(cx.read(|cx| Theme::global(cx).mode), ThemeMode::Light);
     assert_eq!(name(cx), "Solarized Light");
 
-    let saved = keepstone_ui::appearance::AppearanceSettings::load(&app.paths.appearance);
+    let saved = calmfold_ui::appearance::AppearanceSettings::load(&app.paths.appearance);
     assert_eq!(saved.dark_theme, "Catppuccin Mocha");
     assert_eq!(saved.light_theme, "Solarized Light");
 
@@ -1637,14 +1634,14 @@ fn picking_a_theme_card_applies_and_saves_it(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn calendar_quick_add_keyboard_views_and_moves(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::{GoCalendar, NewEvent};
-    use keepstone_desktop::views::calendar_layout::CalendarMode;
+    use calmfold_desktop::actions::{GoCalendar, NewEvent};
+    use calmfold_desktop::views::calendar_layout::CalendarMode;
 
     let app = launch(cx);
     dispatch(&app, cx, GoCalendar);
     assert_eq!(route(&app, cx), Route::Calendar);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
 
     // Quick add from the "New event" command.
     dispatch(&app, cx, NewEvent);
@@ -1663,7 +1660,7 @@ fn calendar_quick_add_keyboard_views_and_moves(cx: &mut TestAppContext) {
     assert_eq!(event.title(), "Lunch with Sam");
     assert_eq!(
         event.start(),
-        tomorrow.to_datetime(keepstone_core::Time::constant(13, 0, 0, 0))
+        tomorrow.to_datetime(calmfold_core::Time::constant(13, 0, 0, 0))
     );
     assert_eq!(
         cx.read(|cx| calendar.read(cx).anchor()),
@@ -1702,11 +1699,11 @@ fn calendar_quick_add_keyboard_views_and_moves(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn every_calendar_view_renders_events_and_tasks(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::GoCalendar;
-    use keepstone_desktop::views::calendar_layout::CalendarMode;
+    use calmfold_desktop::actions::GoCalendar;
+    use calmfold_desktop::views::calendar_layout::CalendarMode;
 
     let app = launch(cx);
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     cx.update(|cx| {
         app.shell.read(cx).library().clone().update(cx, |lib, cx| {
             for text in [
@@ -1740,8 +1737,8 @@ fn every_calendar_view_renders_events_and_tasks(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn habits_quick_add_check_in_keyboard_and_archive(cx: &mut TestAppContext) {
-    use keepstone_core::habit::Schedule;
-    use keepstone_desktop::actions::{GoHabits, NewHabit};
+    use calmfold_core::habit::Schedule;
+    use calmfold_desktop::actions::{GoHabits, NewHabit};
 
     let app = launch(cx);
     dispatch(&app, cx, NewHabit);
@@ -1784,7 +1781,7 @@ fn habits_quick_add_check_in_keyboard_and_archive(cx: &mut TestAppContext) {
     assert_eq!(archived[0].today_count, 3, "history kept");
 
     // Future check-ins are refused.
-    let tomorrow = keepstone_core::clock::today().tomorrow().expect("date");
+    let tomorrow = calmfold_core::clock::today().tomorrow().expect("date");
     let other = list[1].habit.id();
     let err = cx.update(|cx| {
         app.shell
@@ -1798,11 +1795,11 @@ fn habits_quick_add_check_in_keyboard_and_archive(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn habit_insights_render_with_history(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::GoHabits;
-    use keepstone_desktop::views::habits::HabitTab;
+    use calmfold_desktop::actions::GoHabits;
+    use calmfold_desktop::views::habits::HabitTab;
 
     let app = launch(cx);
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     cx.update(|cx| {
         app.shell.read(cx).library().clone().update(cx, |lib, cx| {
             let read = lib.quick_add_habit("Read daily", cx).expect("habit");
@@ -1829,10 +1826,10 @@ fn habit_insights_render_with_history(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn calendar_routines_can_be_hidden(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::GoCalendar;
+    use calmfold_desktop::actions::GoCalendar;
 
     let app = launch(cx);
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     cx.update(|cx| {
         app.shell.read(cx).library().clone().update(cx, |lib, cx| {
             lib.quick_add_event("Gym 7am every day", today, cx)
@@ -1853,7 +1850,7 @@ fn calendar_routines_can_be_hidden(cx: &mut TestAppContext) {
         })
     };
     assert_eq!(shown(cx), 2);
-    cx.update(|cx| keepstone_ui::appearance::update(cx, |s| s.calendar_routines = false));
+    cx.update(|cx| calmfold_ui::appearance::update(cx, |s| s.calendar_routines = false));
     cx.update_window(app.window, |_, window, _| window.refresh())
         .expect("window");
     cx.run_until_parked();
@@ -1862,12 +1859,12 @@ fn calendar_routines_can_be_hidden(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn today_dashboard_shows_schedule_habits_and_respects_layout(cx: &mut TestAppContext) {
-    use keepstone_desktop::views::today::set_shown;
-    use keepstone_desktop::views::today_layout::TodaySection;
+    use calmfold_desktop::views::today::set_shown;
+    use calmfold_desktop::views::today_layout::TodaySection;
 
     let app = launch(cx);
     let lib = library(&app, cx);
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     let (event, habit) = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             let e = l
@@ -1917,15 +1914,15 @@ fn today_dashboard_shows_schedule_habits_and_respects_layout(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn vault_setup_items_lock_unlock_and_copy(cx: &mut TestAppContext) {
-    use keepstone_core::vault::lock::LockState;
-    use keepstone_core::vault::{ItemFields, ItemKind};
-    use keepstone_desktop::actions::{GoPasswords, LockVault};
+    use calmfold_core::vault::lock::LockState;
+    use calmfold_core::vault::{ItemFields, ItemKind};
+    use calmfold_desktop::actions::{GoPasswords, LockVault};
 
     let app = launch(cx);
     let lib = library(&app, cx);
     cx.update(|cx| {
         lib.update(cx, |l, _| {
-            l.set_kdf_params_for_tests(keepstone_crypto::KdfParams::MINIMUM)
+            l.set_kdf_params_for_tests(calmfold_crypto::KdfParams::MINIMUM)
         })
     });
     dispatch(&app, cx, GoPasswords);
@@ -2016,14 +2013,14 @@ fn vault_setup_items_lock_unlock_and_copy(cx: &mut TestAppContext) {
 
     // The right one does, and the item is back.
     cx.update_window(app.window, |_, window, cx| {
-        window.dispatch_action(Box::new(keepstone_desktop::actions::GoPasswords), cx)
+        window.dispatch_action(Box::new(calmfold_desktop::actions::GoPasswords), cx)
     })
     .expect("window");
     cx.run_until_parked();
     let unlock_task = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             l.unlock_vault(
-                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -2043,22 +2040,22 @@ fn vault_setup_items_lock_unlock_and_copy(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn vault_auto_locks_after_idle(cx: &mut TestAppContext) {
-    use keepstone_core::vault::lock::{AutoLock, LockState};
-    use keepstone_desktop::actions::GoPasswords;
+    use calmfold_core::vault::lock::{AutoLock, LockState};
+    use calmfold_desktop::actions::GoPasswords;
 
     let app = launch(cx);
     let lib = library(&app, cx);
     cx.update(|cx| {
         lib.update(cx, |l, _| {
-            l.set_kdf_params_for_tests(keepstone_crypto::KdfParams::MINIMUM)
+            l.set_kdf_params_for_tests(calmfold_crypto::KdfParams::MINIMUM)
         });
-        keepstone_desktop::vault_prefs::update(cx, |p| p.auto_lock = AutoLock::OneMinute);
+        calmfold_desktop::vault_prefs::update(cx, |p| p.auto_lock = AutoLock::OneMinute);
     });
     dispatch(&app, cx, GoPasswords);
     let setup = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             l.set_up_vault(
-                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -2082,19 +2079,19 @@ fn vault_auto_locks_after_idle(cx: &mut TestAppContext) {
 
 /// An unlocked vault on the Passwords screen (fast KDF).
 fn unlocked_vault(cx: &mut TestAppContext) -> App {
-    use keepstone_desktop::actions::GoPasswords;
+    use calmfold_desktop::actions::GoPasswords;
     let app = launch(cx);
     let lib = library(&app, cx);
     cx.update(|cx| {
         lib.update(cx, |l, _| {
-            l.set_kdf_params_for_tests(keepstone_crypto::KdfParams::MINIMUM)
+            l.set_kdf_params_for_tests(calmfold_crypto::KdfParams::MINIMUM)
         })
     });
     dispatch(&app, cx, GoPasswords);
     let setup = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             l.set_up_vault(
-                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -2106,10 +2103,10 @@ fn unlocked_vault(cx: &mut TestAppContext) -> App {
 
 #[gpui_kit::test]
 fn locking_wipes_unsaved_drafts_and_closes_the_generator(cx: &mut TestAppContext) {
+    use calmfold_core::vault::ItemKind;
+    use calmfold_core::vault::lock::LockState;
+    use calmfold_desktop::actions::{GeneratePassword, LockVault};
     use gpui_kit::component::WindowExt as _;
-    use keepstone_core::vault::ItemKind;
-    use keepstone_core::vault::lock::LockState;
-    use keepstone_desktop::actions::{GeneratePassword, LockVault};
 
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
@@ -2146,7 +2143,7 @@ fn locking_wipes_unsaved_drafts_and_closes_the_generator(cx: &mut TestAppContext
 
 #[gpui_kit::test]
 fn waking_from_sleep_locks_the_vault(cx: &mut TestAppContext) {
-    use keepstone_core::vault::lock::LockState;
+    use calmfold_core::vault::lock::LockState;
 
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
@@ -2158,18 +2155,18 @@ fn waking_from_sleep_locks_the_vault(cx: &mut TestAppContext) {
 }
 
 fn set_up_with_key(app: &App, cx: &mut TestAppContext) -> String {
-    use keepstone_desktop::actions::GoPasswords;
+    use calmfold_desktop::actions::GoPasswords;
     let lib = library(app, cx);
     cx.update(|cx| {
         lib.update(cx, |l, _| {
-            l.set_kdf_params_for_tests(keepstone_crypto::KdfParams::MINIMUM)
+            l.set_kdf_params_for_tests(calmfold_crypto::KdfParams::MINIMUM)
         })
     });
     dispatch(app, cx, GoPasswords);
     let setup = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             l.set_up_vault(
-                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -2191,9 +2188,9 @@ fn set_up_with_key(app: &App, cx: &mut TestAppContext) -> String {
 
 #[gpui_kit::test]
 fn a_forgotten_password_is_recovered_with_the_recovery_key(cx: &mut TestAppContext) {
-    use keepstone_core::vault::lock::LockState;
-    use keepstone_core::vault::{ItemFields, ItemKind};
-    use keepstone_desktop::actions::LockVault;
+    use calmfold_core::vault::lock::LockState;
+    use calmfold_core::vault::{ItemFields, ItemKind};
+    use calmfold_desktop::actions::LockVault;
 
     let app = launch(cx);
     let lib = library(&app, cx);
@@ -2213,7 +2210,7 @@ fn a_forgotten_password_is_recovered_with_the_recovery_key(cx: &mut TestAppConte
         lib.update(cx, |l, cx| {
             l.recover_vault(
                 "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
-                keepstone_crypto::SecretString::from("a whole new master 7".to_owned()),
+                calmfold_crypto::SecretString::from("a whole new master 7".to_owned()),
                 cx,
             )
         })
@@ -2227,7 +2224,7 @@ fn a_forgotten_password_is_recovered_with_the_recovery_key(cx: &mut TestAppConte
         lib.update(cx, |l, cx| {
             l.recover_vault(
                 &typed,
-                keepstone_crypto::SecretString::from("a whole new master 7".to_owned()),
+                calmfold_crypto::SecretString::from("a whole new master 7".to_owned()),
                 cx,
             )
         })
@@ -2246,9 +2243,9 @@ fn a_forgotten_password_is_recovered_with_the_recovery_key(cx: &mut TestAppConte
 
 #[gpui_kit::test]
 fn starting_over_archives_the_old_vault_and_it_can_be_reopened(cx: &mut TestAppContext) {
-    use keepstone_core::vault::lock::LockState;
-    use keepstone_core::vault::{ItemFields, ItemKind};
-    use keepstone_desktop::actions::LockVault;
+    use calmfold_core::vault::lock::LockState;
+    use calmfold_core::vault::{ItemFields, ItemKind};
+    use calmfold_desktop::actions::LockVault;
 
     let app = launch(cx);
     let lib = library(&app, cx);
@@ -2282,7 +2279,7 @@ fn starting_over_archives_the_old_vault_and_it_can_be_reopened(cx: &mut TestAppC
         lib.update(cx, |l, cx| {
             l.import_vault_archive(
                 path.clone(),
-                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -2302,8 +2299,8 @@ fn starting_over_archives_the_old_vault_and_it_can_be_reopened(cx: &mut TestAppC
 
 #[gpui_kit::test]
 fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppContext) {
-    use keepstone_core::vault::{ItemFields, ItemKind};
-    use keepstone_desktop::actions::LockVault;
+    use calmfold_core::vault::{ItemFields, ItemKind};
+    use calmfold_desktop::actions::LockVault;
 
     let app = launch(cx);
     let lib = library(&app, cx);
@@ -2320,7 +2317,7 @@ fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppCont
             l.create_vault_item(&bank, cx).expect("bank")
         })
     });
-    let path = app.paths.data_dir.join("backups/Keepstone Vault.ksvault");
+    let path = app.paths.data_dir.join("backups/Calmfold Vault.cfvault");
     cx.read(|cx| lib.read(cx).export_vault(&path))
         .expect("export");
     let text = std::fs::read_to_string(&path).expect("file");
@@ -2337,7 +2334,7 @@ fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppCont
             lib.update(cx, |l, cx| {
                 l.import_vault_archive(
                     path.clone(),
-                    keepstone_crypto::SecretString::from(password.to_owned()),
+                    calmfold_crypto::SecretString::from(password.to_owned()),
                     cx,
                 )
             })
@@ -2372,15 +2369,15 @@ fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppCont
 
 #[gpui_kit::test]
 fn one_occurrence_of_a_repeating_event_can_change_on_its_own(cx: &mut TestAppContext) {
-    use keepstone_core::{Recurrence, Time};
-    use keepstone_desktop::actions::GoCalendar;
-    use keepstone_desktop::views::event_detail::open_event_detail;
+    use calmfold_core::{Recurrence, Time};
+    use calmfold_desktop::actions::GoCalendar;
+    use calmfold_desktop::views::event_detail::open_event_detail;
 
     let app = launch(cx);
     dispatch(&app, cx, GoCalendar);
     let lib = library(&app, cx);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     let tomorrow = today.tomorrow().expect("date");
     let id = cx.update(|cx| {
         lib.update(cx, |l, cx| {
@@ -2475,14 +2472,14 @@ fn one_occurrence_of_a_repeating_event_can_change_on_its_own(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn deleted_events_can_be_restored_or_removed_for_good(cx: &mut TestAppContext) {
-    use keepstone_core::Time;
-    use keepstone_desktop::actions::{GoCalendar, ShowDeletedEvents};
+    use calmfold_core::Time;
+    use calmfold_desktop::actions::{GoCalendar, ShowDeletedEvents};
 
     let app = launch(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     dispatch(&app, cx, GoCalendar);
     let lib = library(&app, cx);
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     let make = |cx: &mut TestAppContext, title: &str| {
         cx.update(|cx| {
             lib.update(cx, |l, cx| {
@@ -2503,7 +2500,7 @@ fn deleted_events_can_be_restored_or_removed_for_good(cx: &mut TestAppContext) {
     let party = make(cx, "Party");
     let trashed = |cx: &mut TestAppContext, id| {
         cx.read(|cx| lib.read(cx).event(id))
-            .map(|e: keepstone_core::Event| e.is_trashed())
+            .map(|e: calmfold_core::Event| e.is_trashed())
     };
 
     dispatch(&app, cx, ShowDeletedEvents);
@@ -2533,13 +2530,13 @@ fn deleted_events_can_be_restored_or_removed_for_good(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn ics_files_import_once(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::GoCalendar;
+    use calmfold_desktop::actions::GoCalendar;
 
     let app = launch(cx);
     dispatch(&app, cx, GoCalendar);
     let lib = library(&app, cx);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     let day = today.strftime("%Y%m%d").to_string();
     let text = format!(
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:a\r\nSUMMARY:Imported lunch\r\n\
@@ -2585,13 +2582,13 @@ fn ics_files_import_once(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
-    use keepstone_desktop::actions::GoCalendar;
-    use keepstone_desktop::views::calendar_layout::CalendarMode;
-    use keepstone_ui::appearance;
+    use calmfold_desktop::actions::GoCalendar;
+    use calmfold_desktop::views::calendar_layout::CalendarMode;
+    use calmfold_ui::appearance;
 
     let app = launch(cx);
     cx.update(|cx| {
-        keepstone_desktop::holidays::set_detected_country_for_tests(Some("IN"), cx);
+        calmfold_desktop::holidays::set_detected_country_for_tests(Some("IN"), cx);
         appearance::update(cx, |s| {
             s.holidays = true;
             s.holiday_observances = true;
@@ -2601,8 +2598,8 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
     });
     dispatch(&app, cx, GoCalendar);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let diwali: keepstone_core::Date = "2026-11-08".parse().expect("date");
-    let thanksgiving: keepstone_core::Date = "2026-11-26".parse().expect("date");
+    let diwali: calmfold_core::Date = "2026-11-08".parse().expect("date");
+    let thanksgiving: calmfold_core::Date = "2026-11-26".parse().expect("date");
     let names = |cx: &mut TestAppContext, day| -> Vec<String> {
         cx.update_window(app.window, |_, window, _| window.refresh())
             .expect("window");
@@ -2630,7 +2627,7 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
 
     // Travelling to the US: its holidays join, labelled with the country.
     cx.update(|cx| {
-        keepstone_desktop::holidays::set_detected_country_for_tests(Some("US"), cx);
+        calmfold_desktop::holidays::set_detected_country_for_tests(Some("US"), cx);
         appearance::update(cx, |s| s.holidays_where_you_are = true);
         calendar.update(cx, |c, cx| c.reload(cx));
     });
@@ -2643,7 +2640,7 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
     );
 
     // A state adds its own days: Pongal is a day off in Tamil Nadu.
-    let pongal: keepstone_core::Date = "2026-01-14".parse().expect("date");
+    let pongal: calmfold_core::Date = "2026-01-14".parse().expect("date");
     cx.update(|cx| {
         appearance::update(cx, |s| s.holiday_observances = false);
         calendar.update(cx, |c, cx| c.select(pongal, cx));
@@ -2658,7 +2655,7 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
     cx.update(|cx| appearance::update(cx, |s| s.holiday_observances = true));
 
     // Observances (Raksha Bandhan in India) and the whole layer can be switched off.
-    let rakhi: keepstone_core::Date = "2026-08-28".parse().expect("date");
+    let rakhi: calmfold_core::Date = "2026-08-28".parse().expect("date");
     cx.update(|cx| calendar.update(cx, |c, cx| c.select(rakhi, cx)));
     assert_eq!(names(cx, rakhi), ["Raksha Bandhan"]);
     cx.update(|cx| appearance::update(cx, |s| s.holiday_observances = false));
@@ -2670,15 +2667,15 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn birthdays_come_from_quick_add_and_can_be_hidden(cx: &mut TestAppContext) {
-    use keepstone_core::OccasionKind;
-    use keepstone_desktop::actions::GoCalendar;
-    use keepstone_ui::appearance;
+    use calmfold_core::OccasionKind;
+    use calmfold_desktop::actions::GoCalendar;
+    use calmfold_ui::appearance;
 
     let app = launch(cx);
     dispatch(&app, cx, GoCalendar);
     let lib = library(&app, cx);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let today = keepstone_core::clock::today();
+    let today = calmfold_core::clock::today();
     let born = today.year() - 60;
     let id = cx
         .update(|cx| {
@@ -2725,8 +2722,8 @@ fn birthdays_come_from_quick_add_and_can_be_hidden(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
-    use keepstone_core::vault::template::Template;
-    use keepstone_core::vault::{FieldKind, ItemFields, ItemKind};
+    use calmfold_core::vault::template::Template;
+    use calmfold_core::vault::{FieldKind, ItemFields, ItemKind};
 
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
@@ -2764,7 +2761,7 @@ fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
             let f = ItemFields {
                 title: "GitHub".into(),
                 tags: vec!["work".into()],
-                custom: vec![keepstone_core::vault::CustomField {
+                custom: vec![calmfold_core::vault::CustomField {
                     kind: FieldKind::Text,
                     label: "Account ID".into(),
                     value: "acme-42".into(),

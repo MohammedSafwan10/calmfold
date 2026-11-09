@@ -1,6 +1,6 @@
 [package]
-name = "keepstone-storage"
-description = "SQLite persistence and migrations for Keepstone."
+name = "calmfold-storage"
+description = "SQLite persistence and migrations for Calmfold."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-keepstone-core.workspace = true
+calmfold-core.workspace = true
 rusqlite.workspace = true
 rusqlite_migration.workspace = true
 jiff.workspace = true

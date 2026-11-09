@@ -897,6 +897,81 @@ dependencies = [
 ]
 
 [[package]]
+name = "calmfold-core"
+version = "0.1.0"
+dependencies = [
+ "csv",
+ "jiff",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "totp-rs",
+ "uuid",
+ "zeroize",
+ "zxcvbn",
+]
+
+[[package]]
+name = "calmfold-crypto"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "chacha20poly1305",
+ "getrandom 0.4.3",
+ "secrecy",
+ "thiserror 2.0.21",
+ "zeroize",
+]
+
+[[package]]
+name = "calmfold-desktop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "calmfold-core",
+ "calmfold-crypto",
+ "calmfold-storage",
+ "calmfold-ui",
+ "chrono",
+ "directories",
+ "gpui-kit",
+ "jiff",
+ "mermaid-rs-renderer",
+ "os-spellcheck",
+ "ratex-gpui",
+ "serde",
+ "serde_json",
+ "syntect",
+ "tempfile",
+ "two-face",
+ "zorite-editor",
+]
+
+[[package]]
+name = "calmfold-storage"
+version = "0.1.0"
+dependencies = [
+ "calmfold-core",
+ "jiff",
+ "rusqlite",
+ "rusqlite_migration",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "calmfold-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4149,81 +4224,6 @@ checksum = "0348cde6df2b507ba3c3753beba226baba8567af588d6568cdb9877f02c75b60"
 dependencies = [
  "serde",
  "ucd-trie",
-]
-
-[[package]]
-name = "keepstone-core"
-version = "0.1.0"
-dependencies = [
- "csv",
- "jiff",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "totp-rs",
- "uuid",
- "zeroize",
- "zxcvbn",
-]
-
-[[package]]
-name = "keepstone-crypto"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "chacha20poly1305",
- "getrandom 0.4.3",
- "secrecy",
- "thiserror 2.0.21",
- "zeroize",
-]
-
-[[package]]
-name = "keepstone-desktop"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "directories",
- "gpui-kit",
- "jiff",
- "keepstone-core",
- "keepstone-crypto",
- "keepstone-storage",
- "keepstone-ui",
- "mermaid-rs-renderer",
- "os-spellcheck",
- "ratex-gpui",
- "serde",
- "serde_json",
- "syntect",
- "tempfile",
- "two-face",
- "zorite-editor",
-]
-
-[[package]]
-name = "keepstone-storage"
-version = "0.1.0"
-dependencies = [
- "jiff",
- "keepstone-core",
- "rusqlite",
- "rusqlite_migration",
- "tempfile",
- "thiserror 2.0.21",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "keepstone-ui"
-version = "0.1.0"
-dependencies = [
- "gpui-kit",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]

@@ -1,9 +1,9 @@
-# Keepstone patches to zorite-editor 0.11.3
+# Calmfold patches to zorite-editor 0.11.3
 
 Upstream: https://github.com/packetThrower/zorite (MIT, see `LICENSE`).
 Vendored because profiling (`scripts/perf.sh`, `docs/perf.md`) found
 per-frame work that grows with document length. Each patch is marked in the
-source with `Keepstone patch Pn`. Keep this list current; offer the patches
+source with `Calmfold patch Pn`. Keep this list current; offer the patches
 upstream.
 
 | # | Where | Problem | Fix |

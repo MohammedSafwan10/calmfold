@@ -1,5 +1,5 @@
 //! Asset source: GPUI Kit's default component icons plus the Lucide icons
-//! Keepstone uses.
+//! Calmfold uses.
 //!
 //! GPUI Kit embeds only ~100 component icons by default. Any other
 //! `gpui_kit::assets::IconName` renders blank unless it is listed in
@@ -118,9 +118,9 @@ icon_assets!(
 );
 
 /// Pass to `gpui_kit::application().with_assets(...)`.
-pub struct KeepstoneAssets;
+pub struct CalmfoldAssets;
 
-impl AssetSource for KeepstoneAssets {
+impl AssetSource for CalmfoldAssets {
     fn load(&self, path: &str) -> gpui_kit::Result<Option<Cow<'static, [u8]>>> {
         if let Some(bytes) = AppIcons.load(path)? {
             return Ok(Some(bytes));
@@ -184,7 +184,7 @@ mod tests {
                 let icon = IconName::ALL.iter().find(|i| format!("{i:?}") == **name);
                 let Some(icon) = icon else { return true };
                 !matches!(
-                    KeepstoneAssets.load(&gpui_kit::assets::IconNamed::path(*icon)),
+                    CalmfoldAssets.load(&gpui_kit::assets::IconNamed::path(*icon)),
                     Ok(Some(_))
                 )
             })

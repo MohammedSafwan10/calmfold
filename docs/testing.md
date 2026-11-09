@@ -32,5 +32,5 @@ fn my_flow(cx: &mut TestAppContext) {
 
 ## Manual check
 
-`KEEPSTONE_DATA_DIR=/tmp/ks cargo run`, then `scripts/screenshot.sh /tmp/k.png`
-captures only the Keepstone window. Check light and dark mode.
+`CALMFOLD_DATA_DIR=/tmp/ks cargo run`, then `scripts/screenshot.sh /tmp/k.png`
+captures only the Calmfold window. Check light and dark mode.

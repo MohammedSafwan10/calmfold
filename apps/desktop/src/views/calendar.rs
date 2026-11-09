@@ -11,6 +11,9 @@
 
 use std::time::Duration;
 
+use calmfold_core::{Date, DateTime, EventId, TaskId, clock};
+use calmfold_ui::appearance;
+use calmfold_ui::components::{empty_state, page_header, segmented};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -23,9 +26,6 @@ use gpui_kit::{
     Styled as _, Subscription, Task as GpuiTask, Window, div, rems,
 };
 use jiff::Span;
-use keepstone_core::{Date, DateTime, EventId, TaskId, clock};
-use keepstone_ui::appearance;
-use keepstone_ui::components::{empty_state, page_header, segmented};
 
 use crate::actions::{
     CALENDAR_CONTEXT, CalendarAgendaView, CalendarDayView, CalendarMonthView, CalendarNextDay,
@@ -223,7 +223,7 @@ impl CalendarView {
                 self.load_error = false;
             }
             Err(err) => {
-                eprintln!("keepstone: failed to load the calendar: {err:#}");
+                eprintln!("calmfold: failed to load the calendar: {err:#}");
                 self.span = CalendarSpan::default();
                 self.load_error = true;
             }
@@ -332,7 +332,7 @@ impl CalendarView {
         let result = self.library.update(cx, |lib, cx| {
             lib.create_timed_event("New event", start, end, cx)
         });
-        if let Some(id) = keepstone_ui::feedback::report(result, window, cx) {
+        if let Some(id) = calmfold_ui::feedback::report(result, window, cx) {
             open_event_detail(id, None, true, self.library.clone(), window, cx);
         }
     }
@@ -347,7 +347,7 @@ impl CalendarView {
         let result = self
             .library
             .update(cx, |lib, cx| lib.create_all_day_event("New event", day, cx));
-        if let Some(id) = keepstone_ui::feedback::report(result, window, cx) {
+        if let Some(id) = calmfold_ui::feedback::report(result, window, cx) {
             open_event_detail(id, None, true, self.library.clone(), window, cx);
         }
     }
@@ -371,7 +371,7 @@ impl CalendarView {
         } = drag
         {
             if make_all_day && !all_day {
-                keepstone_ui::feedback::error_toast(
+                calmfold_ui::feedback::error_toast(
                     "One repeat can't become all-day on its own. Open the event to change them all.",
                     window,
                     cx,
@@ -419,7 +419,7 @@ impl CalendarView {
         } = drag
         {
             if *all_day {
-                keepstone_ui::feedback::error_toast(
+                calmfold_ui::feedback::error_toast(
                     "One repeat can't get times on its own. Open the event to change them all.",
                     window,
                     cx,
@@ -459,15 +459,15 @@ impl CalendarView {
         &self,
         id: EventId,
         series_date: Date,
-        result: anyhow::Result<Option<keepstone_core::Exception>>,
+        result: anyhow::Result<Option<calmfold_core::Exception>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(previous) = keepstone_ui::feedback::report(result, window, cx) else {
+        let Some(previous) = calmfold_ui::feedback::report(result, window, cx) else {
             return;
         };
         let library = self.library.clone();
-        keepstone_ui::feedback::undo_toast(
+        calmfold_ui::feedback::undo_toast(
             "Moved this event only.",
             window,
             cx,
@@ -484,15 +484,15 @@ impl CalendarView {
     }
 
     /// Whether a routine (repeats 3+ times a week) is behind `occ`.
-    pub(super) fn is_routine(&self, occ: &keepstone_core::Occurrence) -> bool {
+    pub(super) fn is_routine(&self, occ: &calmfold_core::Occurrence) -> bool {
         self.span
             .events
             .get(&occ.event)
-            .is_some_and(keepstone_core::Event::is_routine)
+            .is_some_and(calmfold_core::Event::is_routine)
     }
 
     /// Whether `occ` is shown (routines can be hidden from View options).
-    pub(super) fn shows(&self, occ: &keepstone_core::Occurrence, cx: &gpui_kit::App) -> bool {
+    pub(super) fn shows(&self, occ: &calmfold_core::Occurrence, cx: &gpui_kit::App) -> bool {
         let prefs = appearance::settings(cx);
         let occasion = self
             .span
@@ -504,7 +504,7 @@ impl CalendarView {
     }
 
     #[doc(hidden)]
-    pub fn shows_for_test(&self, occ: &keepstone_core::Occurrence, cx: &gpui_kit::App) -> bool {
+    pub fn shows_for_test(&self, occ: &calmfold_core::Occurrence, cx: &gpui_kit::App) -> bool {
         self.shows(occ, cx)
     }
 
@@ -515,7 +515,7 @@ impl CalendarView {
             .on(day)
             .iter()
             .map(|h| {
-                let public = h.kind == keepstone_core::holidays::HolidayKind::Holiday;
+                let public = h.kind == calmfold_core::holidays::HolidayKind::Holiday;
                 let note = crate::holidays::describe(h);
                 h_flex()
                     .gap_3()
@@ -598,12 +598,12 @@ pub fn import_ics_file(
                 .await;
             _ = cx.update(|window, cx| {
                 let Ok(bytes) = text else {
-                    keepstone_ui::feedback::error_toast("Couldn't read that file.", window, cx);
+                    calmfold_ui::feedback::error_toast("Couldn't read that file.", window, cx);
                     return;
                 };
                 let text = String::from_utf8_lossy(&bytes);
                 let result = library.update(cx, |lib, cx| lib.import_ics(&text, cx));
-                if let Some(report) = keepstone_ui::feedback::report(result, window, cx) {
+                if let Some(report) = calmfold_ui::feedback::report(result, window, cx) {
                     gpui_kit::component::WindowExt::push_notification(window, report.message(), cx);
                 }
             });
@@ -622,7 +622,7 @@ fn view_options(cx: &gpui_kit::App) -> impl IntoElement {
     let where_you_are = prefs.holidays_where_you_are;
     let countries: Vec<&'static str> = crate::holidays::chosen(cx)
         .into_iter()
-        .filter_map(keepstone_core::holidays::country_name)
+        .filter_map(calmfold_core::holidays::country_name)
         .collect();
     let countries_label: SharedString = if countries.is_empty() {
         "No countries chosen".into()
@@ -698,7 +698,7 @@ fn quick_add_hint(text: &str, day: Date, cx: &gpui_kit::App) -> Option<SharedStr
         return None;
     }
     let today = clock::today();
-    let draft = keepstone_core::parse_event(text, today).on_default_day(day);
+    let draft = calmfold_core::parse_event(text, today).on_default_day(day);
     let clock = appearance::settings(cx).clock;
     let first = draft.start.date();
     let when = crate::views::relative_day(first, today);
@@ -725,8 +725,8 @@ fn quick_add_hint(text: &str, day: Date, cx: &gpui_kit::App) -> Option<SharedStr
     }
     if let Some(o) = draft.occasion {
         parts.push(match o.kind {
-            keepstone_core::OccasionKind::Birthday => "Birthday".to_owned(),
-            keepstone_core::OccasionKind::Anniversary => "Anniversary".to_owned(),
+            calmfold_core::OccasionKind::Birthday => "Birthday".to_owned(),
+            calmfold_core::OccasionKind::Anniversary => "Anniversary".to_owned(),
         });
         parts.extend(o.note(first));
     }
@@ -846,7 +846,7 @@ impl CalendarView {
             let (title, desc) = if self.load_error {
                 (
                     "Couldn't load the calendar",
-                    "Your events are still on disk. Restart Keepstone; if this keeps happening, check the data folder in Settings.",
+                    "Your events are still on disk. Restart Calmfold; if this keeps happening, check the data folder in Settings.",
                 )
             } else {
                 (

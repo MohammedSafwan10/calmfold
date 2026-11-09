@@ -6,6 +6,9 @@
 
 use std::time::Duration;
 
+use calmfold_core::{Date, Priority, Task, TaskId, TaskStatus, clock};
+use calmfold_ui::components::{section_label, segmented};
+use calmfold_ui::feedback;
 use chrono::Datelike as _;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -21,9 +24,6 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Subscription, Task as GpuiTask, Window, div, px,
 };
-use keepstone_core::{Date, Priority, Task, TaskId, TaskStatus, clock};
-use keepstone_ui::components::{section_label, segmented};
-use keepstone_ui::feedback;
 
 use crate::library::{Library, LibraryEvent};
 use crate::views::task_row::notify_err;
@@ -64,7 +64,7 @@ impl TaskDetail {
         let title = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Task title")
-                .validate(|text, _| text.chars().count() <= keepstone_core::MAX_TITLE_CHARS)
+                .validate(|text, _| text.chars().count() <= calmfold_core::MAX_TITLE_CHARS)
         });
         let notes = cx.new(|cx| {
             TextareaState::new(window, cx)

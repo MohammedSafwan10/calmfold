@@ -143,7 +143,7 @@ fn dt_code(dt: DateTime) -> String {
 }
 
 /// `2026-11-10:x;2026-11-12:2026-11-13T10:00:00/2026-11-13T11:00:00`.
-/// Stored by `keepstone-storage`; never change the format.
+/// Stored by `calmfold-storage`; never change the format.
 #[must_use]
 pub fn exceptions_to_code(exceptions: &BTreeMap<Date, Exception>) -> Option<String> {
     if exceptions.is_empty() {

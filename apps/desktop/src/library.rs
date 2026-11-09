@@ -12,23 +12,23 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::time::SystemTime;
 
-use keepstone_core::vault::lock::LockState;
-use keepstone_core::vault::{ItemFields, VaultItem};
-use keepstone_core::{Exception, VaultItemId};
-use keepstone_crypto::{KdfParams, SecretString};
+use calmfold_core::vault::lock::LockState;
+use calmfold_core::vault::{ItemFields, VaultItem};
+use calmfold_core::{Exception, VaultItemId};
+use calmfold_crypto::{KdfParams, SecretString};
 
 use crate::vault::{
     ArchiveFile, KdfInput, RECOVERY_KDF, VaultFilter, VaultSession, VaultSort, derive,
 };
-use keepstone_core::vault::recovery;
-use keepstone_crypto::Zeroizing;
+use calmfold_core::vault::recovery;
+use calmfold_crypto::Zeroizing;
 
-use keepstone_core::{
+use calmfold_core::{
     Date, DateTime, Event, EventId, Habit, HabitId, Note, NoteId, Occurrence, Priority, Project,
     ProjectId, Recurrence, Schedule, Stats, Task, TaskId, TaskStatus, clock, parse_event,
     parse_habit, parse_quick_add,
 };
-use keepstone_storage::{NoteSummary, Progress, Store, TaskCounts, TaskFilter};
+use calmfold_storage::{NoteSummary, Progress, Store, TaskCounts, TaskFilter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryEvent {
@@ -59,7 +59,7 @@ impl Library {
     #[must_use]
     pub fn new(store: Store) -> Self {
         let vault = VaultSession::load(&store).unwrap_or_else(|err| {
-            eprintln!("keepstone: couldn't read the vault header: {err:#}");
+            eprintln!("calmfold: couldn't read the vault header: {err:#}");
             // Locked, never "set up": setup must not overwrite a header it couldn't read.
             VaultSession::locked()
         });
@@ -68,7 +68,7 @@ impl Library {
             vault,
             kdf: KdfParams::RECOMMENDED,
             vault_activity: SystemTime::now(),
-            archive_dir: std::env::temp_dir().join("keepstone-vault-archives"),
+            archive_dir: std::env::temp_dir().join("calmfold-vault-archives"),
         }
     }
 
@@ -694,7 +694,7 @@ impl Library {
     pub fn import_ics(&mut self, text: &str, cx: &mut Context<Self>) -> Result<IcsReport> {
         let local = jiff::tz::TimeZone::system();
         let zone = |name: &str| jiff::tz::db().get(name).ok();
-        let parsed = keepstone_core::ics::parse_ics(text, &local, &zone, clock::now())
+        let parsed = calmfold_core::ics::parse_ics(text, &local, &zone, clock::now())
             .map_err(|msg| anyhow::anyhow!(msg))?;
         let mut report = IcsReport {
             skipped: parsed.skipped,
@@ -794,7 +794,7 @@ impl Library {
     pub fn set_event_occasion(
         &mut self,
         id: EventId,
-        occasion: Option<keepstone_core::Occasion>,
+        occasion: Option<calmfold_core::Occasion>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.update_event(id, cx, |e| e.set_occasion(occasion, clock::now()))
@@ -930,7 +930,7 @@ impl Library {
         &mut self,
         id: EventId,
         cx: &mut Context<Self>,
-        change: impl FnOnce(&mut Event) -> keepstone_core::DomainResult<()>,
+        change: impl FnOnce(&mut Event) -> calmfold_core::DomainResult<()>,
     ) -> Result<()> {
         let mut event = self
             .store
@@ -1120,7 +1120,7 @@ impl Library {
             .to_zoned(jiff::tz::TimeZone::system())
             .strftime("%Y-%m-%d-%H%M%S")
             .to_string();
-        let path = self.archive_dir.join(format!("vault-{stamp}.ksvault"));
+        let path = self.archive_dir.join(format!("vault-{stamp}.cfvault"));
         self.vault.archive_and_reset(&mut self.store, &path, now)?;
         cx.emit(LibraryEvent::VaultChanged);
         Ok(path)
@@ -1134,14 +1134,18 @@ impl Library {
     }
 
     /// Archived vaults, newest first: (path, archived at, item count).
-    pub fn vault_archives(&self) -> Vec<(std::path::PathBuf, keepstone_core::Timestamp, usize)> {
+    pub fn vault_archives(&self) -> Vec<(std::path::PathBuf, calmfold_core::Timestamp, usize)> {
         let Ok(entries) = std::fs::read_dir(&self.archive_dir) else {
             return Vec::new();
         };
         let mut out: Vec<_> = entries
             .flatten()
             .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "ksvault"))
+            // `.ksvault` is the name from before the Calmfold rename.
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|x| x == "cfvault" || x == "ksvault")
+            })
             .filter_map(|p| {
                 let a = ArchiveFile::read(&p).ok()?;
                 Some((p, a.archived_at(), a.item_count()))
@@ -1160,7 +1164,7 @@ impl Library {
         cx: &mut Context<Self>,
     ) -> gpui_kit::Task<Result<Option<usize>>> {
         if !self.vault.is_unlocked() {
-            return gpui_kit::Task::ready(Err(keepstone_core::DomainError::VaultState {
+            return gpui_kit::Task::ready(Err(calmfold_core::DomainError::VaultState {
                 state: self.vault.state().label(),
             }
             .into()));
@@ -1332,7 +1336,7 @@ impl Library {
         &mut self,
         id: VaultItemId,
         cx: &mut Context<Self>,
-        change: impl FnOnce(&mut VaultItem) -> keepstone_core::DomainResult<bool>,
+        change: impl FnOnce(&mut VaultItem) -> calmfold_core::DomainResult<bool>,
     ) -> Result<()> {
         self.vault.update(&mut self.store, id, change)?;
         self.touch_vault();
@@ -1388,14 +1392,14 @@ impl Library {
         Ok(n)
     }
 
-    pub fn vault_health(&mut self) -> keepstone_core::vault::health::Report {
+    pub fn vault_health(&mut self) -> calmfold_core::vault::health::Report {
         self.vault.health(clock::now())
     }
 
     pub fn vault_strength(
         &mut self,
         id: VaultItemId,
-    ) -> Option<keepstone_core::vault::health::Strength> {
+    ) -> Option<calmfold_core::vault::health::Strength> {
         self.vault.strength_of(id)
     }
 
@@ -1406,7 +1410,7 @@ impl Library {
         let today = clock::today();
         let habits = self.store.habits(archived)?;
         let from = today
-            .checked_add(jiff::Span::new().days(-keepstone_core::habit::HISTORY_DAYS))
+            .checked_add(jiff::Span::new().days(-calmfold_core::habit::HISTORY_DAYS))
             .unwrap_or(today);
         let mut checkins = self.store.checkins(from..today.tomorrow()?)?;
         let firsts = self.store.first_checkins()?;
@@ -1482,10 +1486,10 @@ impl Library {
             .habit(id)?
             .context("That habit no longer exists")?;
         if habit.is_archived() {
-            return Err(keepstone_core::DomainError::Archived.into());
+            return Err(calmfold_core::DomainError::Archived.into());
         }
         if day > clock::today() {
-            return Err(keepstone_core::DomainError::FutureCheckIn.into());
+            return Err(calmfold_core::DomainError::FutureCheckIn.into());
         }
         self.store
             .set_checkin(id, day, count.min(habit.target()))
@@ -1546,7 +1550,7 @@ impl Library {
         &mut self,
         id: HabitId,
         cx: &mut Context<Self>,
-        change: impl FnOnce(&mut Habit) -> keepstone_core::DomainResult<()>,
+        change: impl FnOnce(&mut Habit) -> calmfold_core::DomainResult<()>,
     ) -> Result<()> {
         let mut habit = self
             .store
@@ -1634,7 +1638,7 @@ impl IcsReport {
         }
         if self.simplified > 0 {
             parts.push(format!(
-                "{} repeating event{} used a rule Keepstone can't follow yet, so only the first date was added.",
+                "{} repeating event{} used a rule Calmfold can't follow yet, so only the first date was added.",
                 self.simplified,
                 plural(self.simplified)
             ));
@@ -1682,6 +1686,6 @@ pub fn daily_note_title(date: Date) -> String {
 /// A fresh recovery key, formatted for the user.
 fn new_recovery_key() -> Result<Zeroizing<String>> {
     let mut bytes = Zeroizing::new([0u8; recovery::KEY_BYTES]);
-    keepstone_crypto::random_bytes(&mut bytes[..]).context("Couldn't get secure random numbers")?;
+    calmfold_crypto::random_bytes(&mut bytes[..]).context("Couldn't get secure random numbers")?;
     Ok(recovery::format(&bytes))
 }

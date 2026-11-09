@@ -6,7 +6,7 @@
 use gpui_kit::{Action, App, KeyBinding, Menu, MenuItem, actions};
 
 actions!(
-    keepstone,
+    calmfold,
     [
         OpenCommandPalette,
         NewNote,
@@ -49,7 +49,7 @@ actions!(
 
 // Formatting in the note editor (bound only inside it, context "NoteEditor").
 actions!(
-    keepstone_format,
+    calmfold_format,
     [
         FormatBold,
         FormatItalic,
@@ -72,7 +72,7 @@ actions!(
 // Calendar navigation (bound only on the calendar grid, context "CalendarGrid",
 // so typing in quick add never triggers them).
 actions!(
-    keepstone_calendar,
+    calmfold_calendar,
     [
         CalendarToday,
         CalendarPreviousPeriod,
@@ -92,7 +92,7 @@ actions!(
 
 // Habit list keys (context "HabitList", never in the quick-add field).
 actions!(
-    keepstone_habits,
+    calmfold_habits,
     [
         HabitSelectPrevious,
         HabitSelectNext,
@@ -104,7 +104,7 @@ actions!(
 
 // Vault list keys (context "VaultList", never in a text field).
 actions!(
-    keepstone_vault,
+    calmfold_vault,
     [
         VaultPreviousItem,
         VaultNextItem,
@@ -358,10 +358,10 @@ pub fn bind(cx: &mut App) {
 
 pub fn set_menus(cx: &mut App) {
     cx.set_menus([
-        Menu::new("Keepstone").items([
+        Menu::new("Calmfold").items([
             MenuItem::action("Settings…", GoSettings),
             MenuItem::separator(),
-            MenuItem::action("Quit Keepstone", Quit),
+            MenuItem::action("Quit Calmfold", Quit),
         ]),
         Menu::new("File").items([
             MenuItem::action("New Note", NewNote),

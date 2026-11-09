@@ -5,6 +5,8 @@
 //! matter which element has focus (the palette lives in an overlay outside the
 //! shell's element tree).
 
+use calmfold_core::NoteId;
+use calmfold_ui::appearance::{self, ThemePreference};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::base::InteractiveElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -23,8 +25,6 @@ use gpui_kit::{
     Focusable as _, Global, InteractiveElement as _, IntoElement, Keystroke, ParentElement as _,
     Render, Styled as _, Subscription, TestSupportExt as _, WeakEntity, Window, div, px, rems,
 };
-use keepstone_core::NoteId;
-use keepstone_ui::appearance::{self, ThemePreference};
 
 use crate::actions::{
     ChangeMasterPassword, CreateRecoveryKey, ExportNotes, ExportVaultBackup, FindInNote, FindNext,
@@ -183,7 +183,7 @@ impl AppShell {
     pub fn save_everything(&mut self, cx: &mut Context<Self>) {
         self.layout.update(cx, |layout, _| layout.save_now());
         if let Err(err) = self.notes.update(cx, |notes, cx| notes.save_pending(cx)) {
-            eprintln!("keepstone: could not save the open note on exit: {err:#}");
+            eprintln!("calmfold: could not save the open note on exit: {err:#}");
         }
     }
 
@@ -252,7 +252,7 @@ impl AppShell {
                 self.route == Route::Notes
                     && self.notes.read(cx).open_note_title(cx).as_deref()
                         == Some(
-                            crate::library::daily_note_title(keepstone_core::clock::today())
+                            crate::library::daily_note_title(calmfold_core::clock::today())
                                 .as_str(),
                         )
             }
@@ -362,7 +362,7 @@ impl AppShell {
     pub fn new_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let library = self.library.clone();
         let shell = cx.entity().downgrade();
-        keepstone_ui::feedback::prompt_text(
+        calmfold_ui::feedback::prompt_text(
             "New project",
             "Project name",
             "",
@@ -371,7 +371,7 @@ impl AppShell {
             cx,
             move |name, window, cx| {
                 let result = library.update(cx, |lib, cx| lib.create_project(&name, cx));
-                if let Some(id) = keepstone_ui::feedback::report(result, window, cx) {
+                if let Some(id) = calmfold_ui::feedback::report(result, window, cx) {
                     _ = shell.update(cx, |s, cx| {
                         s.open_target(NavTarget::Project(id), window, cx)
                     });
@@ -951,7 +951,7 @@ fn with_shell(
             shell.update(cx, |shell, cx| f(shell, window, cx))
         });
         if updated.is_err() {
-            eprintln!("keepstone: command ignored, main window is unavailable");
+            eprintln!("calmfold: command ignored, main window is unavailable");
         }
     });
 }
@@ -1003,9 +1003,8 @@ pub fn register_commands(cx: &mut App) {
     });
     cx.on_action(|_: &CreateRecoveryKey, cx| {
         with_shell(cx, |s, w, cx| {
-            if s.library.read(cx).vault_state() != keepstone_core::vault::lock::LockState::Unlocked
-            {
-                keepstone_ui::feedback::error_toast("Unlock the vault first.", w, cx);
+            if s.library.read(cx).vault_state() != calmfold_core::vault::lock::LockState::Unlocked {
+                calmfold_ui::feedback::error_toast("Unlock the vault first.", w, cx);
                 return;
             }
             s.navigate(Route::Passwords, w, cx);
@@ -1017,7 +1016,7 @@ pub fn register_commands(cx: &mut App) {
                     Ok(key) => {
                         _ = passwords.update(cx, |p, cx| p.show_recovery_key(key, cx));
                     }
-                    Err(err) => keepstone_ui::feedback::error_toast(format!("{err:#}"), window, cx),
+                    Err(err) => calmfold_ui::feedback::error_toast(format!("{err:#}"), window, cx),
                 });
             })
             .detach();

@@ -13,7 +13,7 @@
 edition = "2024"
 name = "zorite-editor"
 version = "0.11.3"
-# Vendored by Keepstone; see PATCHES.md.
+# Vendored by Calmfold; see PATCHES.md.
 build = false
 autolib = false
 autobins = false

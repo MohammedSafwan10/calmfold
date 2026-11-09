@@ -53,14 +53,29 @@ Everything in `docs/TASKS.md` is done except the
 ## Useful commands
 
 ```bash
-rm -rf /tmp/ks && cargo run -p keepstone-storage --example seed -- /tmp/ks/keepstone.sqlite3
-KEEPSTONE_DATA_DIR=/tmp/ks KEEPSTONE_DEV_ROUTE=notes cargo run   # debug: open on a screen
+rm -rf /tmp/ks && cargo run -p calmfold-storage --example seed -- /tmp/ks/calmfold.sqlite3
+CALMFOLD_DATA_DIR=/tmp/ks CALMFOLD_DEV_ROUTE=notes cargo run   # debug: open on a screen
 scripts/screenshot.sh target/shot.png
-KEEPSTONE_DEV_ROUTE=notes KEEPSTONE_DEV_SOURCE=1 cargo run    # debug: first note as Markdown source
-KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: calendar view (month|week|day|agenda)
+CALMFOLD_DEV_ROUTE=notes CALMFOLD_DEV_SOURCE=1 cargo run    # debug: first note as Markdown source
+CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calendar view (month|week|day|agenda)
 ```
 
 ## Log
+
+### 2026-11-09: Renamed to Calmfold (by Nexdark Labs)
+
+- Keepstone → Calmfold everywhere: crates (`calmfold-*`), binary `calmfold`,
+  app ID `com.nexdark.calmfold`, menus, themes ("Calmfold Light/Dark"),
+  env vars `CALMFOLD_*`, docs. About shows "Made by Nexdark Labs".
+- Data: the old `app.Keepstone.Keepstone[-Dev]` folder moves to
+  `com.Nexdark.Calmfold[-Dev]` on first launch and `keepstone.sqlite3` is
+  renamed (`paths.rs`, tested). Saved theme names map over. Vault backups
+  are now `.cfvault`; `.ksvault` still opens.
+- Kept on purpose (format identifiers bound into existing data): vault AADs
+  `keepstone-vault-key-v1`, `keepstone-vault-recovery-v1`, archive format
+  `keepstone-vault-archive`.
+- Brand artwork goes in `assets/brand/` (see its README); not wired yet.
+- GitHub repo is still named `keepstone` (rename on GitHub if wanted).
 
 ### 2026-11-09: States, birthdays, holiday updates
 
@@ -167,8 +182,8 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
   locking, generator stayed open after lock, RNG failure fell back to 0, no
   sleep handling (now wall-clock idle + wake detection). Lock screen without
   sleep is still undetectable: documented in `docs/security.md`.
-- Dev: `KEEPSTONE_DEV_VAULT=<password>` (debug only) unlocks/creates a vault
-  with samples; `KEEPSTONE_DEV_VAULT_ITEM=<title>` selects one.
+- Dev: `CALMFOLD_DEV_VAULT=<password>` (debug only) unlocks/creates a vault
+  with samples; `CALMFOLD_DEV_VAULT_ITEM=<title>` selects one.
 
 ### 2026-11-09: Today rebuild
 
@@ -273,7 +288,7 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 - Note body is now gpui-kit `Editor` (UI font, soft wrap, no gutter) with a
   `CompletionProvider` (`views/link_completion.rs`): typing `[[` suggests note
   titles (prefix matches first) and inserts `Title]]`.
-- Preview rewrites `[[links]]` to `keepstone://note/…` Markdown links
+- Preview rewrites `[[links]]` to `calmfold://note/…` Markdown links
   (`core::links::to_markdown_links`); clicking opens the note or creates it.
 - Title matching folds Unicode case in Rust (fixes the `lower()` review item).
 - Task detail sheet (`views/task_detail.rs`): click a task or "Details…".
@@ -283,7 +298,7 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 ### 2026-11-08: Foundation
 
 - Chose GPUI via gpui-kit 0.9.0 (ADR 0001), SQLite + FTS5 (ADR 0002),
-  Argon2id + XChaCha20-Poly1305 (ADR 0003). Name: Keepstone.
+  Argon2id + XChaCha20-Poly1305 (ADR 0003). Name: Calmfold.
 - Built core (notes, tasks + state machine, wiki links), storage (migrations,
   FTS5, backlinks), crypto, design system (themes, fonts, appearance, icons,
   feedback), desktop shell and screens, UI integration tests, docs.

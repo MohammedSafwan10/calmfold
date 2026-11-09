@@ -27,12 +27,12 @@ requires an ADR before adding anything crypto-adjacent.
   for passphrases. 12.9 bits per word.
 - **`csv` 1** for importing Bitwarden / 1Password / Chrome exports.
 - **Random choice** uses `random_bytes` with rejection sampling
-  (`keepstone_crypto::random_below`), so every character and word is uniform.
+  (`calmfold_crypto::random_below`), so every character and word is uniform.
 
 ## Not now
 
 - Encrypted export (`age`) and a secret key: with sync. (A password-only
-  `.ksvault` backup exists since 2026-11-09; see `docs/security.md`.)
+  `.cfvault` backup exists since 2026-11-09; see `docs/security.md`.)
 - Touch ID quick unlock: release builds only (signing policy in `docs/security.md`).
 
 ## Consequences

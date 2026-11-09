@@ -69,7 +69,7 @@ pub fn parse_csv(text: &str) -> Result<Parsed, &'static str> {
         Source::Browser
     } else {
         return Err(
-            "Keepstone didn't recognize this CSV. Export from Bitwarden, 1Password or your browser.",
+            "Calmfold didn't recognize this CSV. Export from Bitwarden, 1Password or your browser.",
         );
     };
 

@@ -1,20 +1,20 @@
 //! Fills a database with sample notes, tasks and events for manual testing and screenshots.
 //!
-//!     cargo run -p keepstone-storage --example seed -- /tmp/ks/keepstone.sqlite3
-//!     KEEPSTONE_DATA_DIR=/tmp/ks cargo run
+//!     cargo run -p calmfold-storage --example seed -- /tmp/ks/calmfold.sqlite3
+//!     CALMFOLD_DATA_DIR=/tmp/ks cargo run
 //!
 //! Never point this at a real data folder.
 #![allow(clippy::expect_used)]
 
-use keepstone_core::{
+use calmfold_core::{
     Event, Habit, Note, Priority, Recurrence, Task, TaskStatus, clock, parse_event, parse_habit,
 };
-use keepstone_storage::Store;
+use calmfold_storage::Store;
 
 fn main() {
     let path = std::env::args()
         .nth(1)
-        .expect("usage: seed <path/to/keepstone.sqlite3>");
+        .expect("usage: seed <path/to/calmfold.sqlite3>");
     let mut store = Store::open(path.as_ref()).expect("open database");
     let now = clock::now();
     let today = clock::today();

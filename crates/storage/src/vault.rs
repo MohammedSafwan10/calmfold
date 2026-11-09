@@ -6,7 +6,7 @@ use rusqlite::{OptionalExtension, params};
 
 use crate::codec::uuid_from_sql;
 use crate::{StorageError, StorageResult, Store};
-use keepstone_core::VaultItemId;
+use calmfold_core::VaultItemId;
 
 /// The vault header (`vault_meta`).
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,6 +3,8 @@
 //! Geometry is in rems so it zooms with the interface size. Overlaps and
 //! multi-day bars come from `calendar_layout`; this file only draws them.
 
+use calmfold_core::{Date, Occurrence, Time};
+use calmfold_ui::appearance::{self, ClockFormat};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -14,8 +16,6 @@ use gpui_kit::{
     Window, div, point, px, relative, rems,
 };
 use jiff::Span;
-use keepstone_core::{Date, Occurrence, Time};
-use keepstone_ui::appearance::{self, ClockFormat};
 
 use crate::views::calendar::{CalendarDrag, CalendarView};
 use crate::views::calendar_layout::{
@@ -123,8 +123,8 @@ impl CalendarView {
     pub(super) fn occasion_icon(&self, occ: &Occurrence) -> Option<Lucide> {
         let o = self.span.events.get(&occ.event)?.occasion()?;
         Some(match o.kind {
-            keepstone_core::OccasionKind::Birthday => Lucide::Cake,
-            keepstone_core::OccasionKind::Anniversary => Lucide::Gift,
+            calmfold_core::OccasionKind::Birthday => Lucide::Cake,
+            calmfold_core::OccasionKind::Anniversary => Lucide::Gift,
         })
     }
 
@@ -264,7 +264,7 @@ impl CalendarView {
         Self::draggable(el, drag).into_any_element()
     }
 
-    fn task_chip(&self, task: &keepstone_core::Task, cx: &mut Context<Self>) -> AnyElement {
+    fn task_chip(&self, task: &calmfold_core::Task, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let id = task.id();
         let done = !task.status().is_open();
@@ -348,7 +348,7 @@ impl CalendarView {
             .holidays
             .on(day)
             .iter()
-            .any(|h| h.kind == keepstone_core::holidays::HolidayKind::Holiday);
+            .any(|h| h.kind == calmfold_core::holidays::HolidayKind::Holiday);
         let tip: SharedString = self.holidays.details(day).join("\n").into();
         Some(
             div()
@@ -617,7 +617,7 @@ impl CalendarView {
             .collect();
         let (routines, plans): (Vec<&Occurrence>, Vec<&Occurrence>) =
             occs.iter().partition(|o| self.is_routine(o));
-        let tasks: Vec<keepstone_core::Task> = self.span.tasks_on(day).cloned().collect();
+        let tasks: Vec<calmfold_core::Task> = self.span.tasks_on(day).cloned().collect();
         let relative = crate::views::relative_day(day, self.today);
         let heading = day.strftime("%A, %B %-d").to_string();
 

@@ -4,9 +4,9 @@
 
 use std::ops::Range;
 
+use calmfold_ui::appearance::{ClockFormat, WeekStart};
 use jiff::Span;
 use jiff::civil::{Date, DateTime, Time, Weekday};
-use keepstone_ui::appearance::{ClockFormat, WeekStart};
 
 /// Days shown by the agenda.
 pub const AGENDA_DAYS: i64 = 30;

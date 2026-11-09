@@ -9,7 +9,7 @@ Accepted (2026-11-09)
 The calendar should show public holidays and festivals (India first, other
 countries on request), and when you travel, the holidays where you are.
 Many holidays (Diwali, Holi, Eid) follow lunar calendars, so they can't be
-calculated from simple rules. Keepstone is local-first and doesn't make
+calculated from simple rules. Calmfold is local-first and doesn't make
 network requests.
 
 ## Decision

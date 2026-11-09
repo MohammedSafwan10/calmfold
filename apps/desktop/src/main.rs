@@ -2,8 +2,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 fn main() {
-    if let Err(err) = keepstone_desktop::run() {
-        eprintln!("keepstone: {err:#}");
+    if let Err(err) = calmfold_desktop::run() {
+        eprintln!("calmfold: {err:#}");
         std::process::exit(1);
     }
 }

@@ -110,9 +110,9 @@ pub fn normalize_target(target: &str) -> String {
 }
 
 /// URL scheme used for in-app note links in rendered Markdown.
-pub const NOTE_LINK_PREFIX: &str = "keepstone://note/";
+pub const NOTE_LINK_PREFIX: &str = "calmfold://note/";
 
-/// `keepstone://note/<percent-encoded target>`.
+/// `calmfold://note/<percent-encoded target>`.
 #[must_use]
 pub fn note_link_url(target: &str) -> String {
     let mut url = String::from(NOTE_LINK_PREFIX);
@@ -296,7 +296,7 @@ mod tests {
         let out = to_markdown_links(body, |l| note_link_url(&l.target));
         assert_eq!(
             out,
-            "See [Car](keepstone://note/Car), [the service](keepstone://note/Car) and [A\\_b](keepstone://note/A_b).\n```\n[[Code]]\n```\n`[[Inline]]`"
+            "See [Car](calmfold://note/Car), [the service](calmfold://note/Car) and [A\\_b](calmfold://note/A_b).\n```\n[[Code]]\n```\n`[[Inline]]`"
         );
     }
 
@@ -308,8 +308,8 @@ mod tests {
             assert_eq!(parse_note_link_url(&url).as_deref(), Some(target));
         }
         assert_eq!(parse_note_link_url("https://example.com"), None);
-        assert_eq!(parse_note_link_url("keepstone://note/%ZZ"), None);
-        assert_eq!(parse_note_link_url("keepstone://note/"), None);
+        assert_eq!(parse_note_link_url("calmfold://note/%ZZ"), None);
+        assert_eq!(parse_note_link_url("calmfold://note/"), None);
     }
 
     #[test]

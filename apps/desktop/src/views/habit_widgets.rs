@@ -6,6 +6,8 @@
 //! dot, missed = hollow ring, not expected = pinpoint. Only today's check is
 //! a real control-sized circle.
 
+use calmfold_core::Date;
+use calmfold_core::habit::Schedule;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
@@ -15,8 +17,6 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div, rems,
 };
 use jiff::Span;
-use keepstone_core::Date;
-use keepstone_core::habit::Schedule;
 
 use crate::library::{HabitSummary, Library};
 use crate::views::task_row::notify_err;

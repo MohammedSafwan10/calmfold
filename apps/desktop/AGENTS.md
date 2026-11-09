@@ -1,11 +1,11 @@
-# keepstone-desktop
+# calmfold-desktop
 
 The GPUI desktop app.
 
 ## Map
 
 - `lib.rs`: `run()` (binary) and `start()` (shared with UI tests). Startup order lives here.
-- `paths.rs`: data folder (`KEEPSTONE_DATA_DIR` override; debug builds use "Keepstone Dev").
+- `paths.rs`: data folder (`CALMFOLD_DATA_DIR` override; debug builds use "Calmfold Dev").
 - `library.rs`: `Entity<Library>`, the only path from views to storage. Emits `LibraryEvent`.
 - `actions.rs`: every command as an action, default shortcuts, macOS menus.
 - `shell.rs`: window chrome, sidebar, routing, command palette, app-level command handlers.

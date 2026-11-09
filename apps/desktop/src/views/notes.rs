@@ -16,6 +16,13 @@
 
 use std::time::Duration;
 
+use calmfold_core::NoteId;
+use calmfold_core::links::{note_link_url, parse_note_link_url};
+use calmfold_storage::NoteSummary;
+use calmfold_ui::appearance;
+use calmfold_ui::components::{empty_state, section_label};
+use calmfold_ui::feedback::{self, Confirm};
+use calmfold_ui::panel::{PanelSide, SidePanel};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -32,13 +39,6 @@ use gpui_kit::{
     ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
     TestSupportExt as _, Window, div, px, rems,
 };
-use keepstone_core::NoteId;
-use keepstone_core::links::{note_link_url, parse_note_link_url};
-use keepstone_storage::NoteSummary;
-use keepstone_ui::appearance;
-use keepstone_ui::components::{empty_state, section_label};
-use keepstone_ui::feedback::{self, Confirm};
-use keepstone_ui::panel::{PanelSide, SidePanel};
 
 use crate::actions::{
     FormatBold, FormatBullets, FormatChecklist, FormatCode, FormatHeading1, FormatHeading2,
@@ -102,7 +102,7 @@ impl NotesView {
             InputState::new(window, cx)
                 .placeholder("Untitled")
                 // Rejects keystrokes past the domain limit, so a save can never fail on length.
-                .validate(|text, _| text.chars().count() <= keepstone_core::MAX_TITLE_CHARS)
+                .validate(|text, _| text.chars().count() <= calmfold_core::MAX_TITLE_CHARS)
         });
         let body = cx.new(|cx| NoteEditor::new(library.downgrade(), window, cx));
 
@@ -205,7 +205,7 @@ impl NotesView {
             self.reload_list(cx);
         }
         // An untitled note shows an empty title field with the placeholder.
-        let title_text = if note.title() == keepstone_core::note::UNTITLED {
+        let title_text = if note.title() == calmfold_core::note::UNTITLED {
             ""
         } else {
             note.title()
@@ -306,7 +306,7 @@ impl NotesView {
                 self.load_error = false;
             }
             Err(err) => {
-                eprintln!("keepstone: failed to load notes: {err:#}");
+                eprintln!("calmfold: failed to load notes: {err:#}");
                 self.list.clear();
                 self.load_error = true;
             }
@@ -322,7 +322,7 @@ impl NotesView {
         cx: &mut Context<Self>,
     ) {
         let tag = tag
-            .map(|t| keepstone_core::tags::normalize_tag(&t))
+            .map(|t| calmfold_core::tags::normalize_tag(&t))
             .filter(|t| !t.is_empty());
         if tag == self.tag_filter && !self.show_trash {
             return;
@@ -609,7 +609,7 @@ impl NotesView {
         if !self.flush(window, cx) {
             return;
         }
-        let today = keepstone_core::clock::today();
+        let today = calmfold_core::clock::today();
         let result = self
             .library
             .update(cx, |lib, cx| lib.open_daily_note(today, cx));
@@ -696,8 +696,8 @@ impl NotesView {
         self.library
             .update(cx, |lib, cx| lib.edit_note(id, &title, &body, cx))?;
         self.dirty = false;
-        let saved_title = keepstone_core::normalize_title(&title)
-            .unwrap_or_else(|_| keepstone_core::note::UNTITLED.to_owned());
+        let saved_title = calmfold_core::normalize_title(&title)
+            .unwrap_or_else(|_| calmfold_core::note::UNTITLED.to_owned());
         if let Some(open) = &mut self.open
             && open.title != saved_title
         {
@@ -970,7 +970,7 @@ impl NotesView {
             _ if self.load_error => empty_state(
                 Lucide::TriangleAlert,
                 "Couldn't load notes",
-                "Your notes are still on disk. Restart Keepstone; if this keeps happening, check the data folder in Settings.",
+                "Your notes are still on disk. Restart Calmfold; if this keeps happening, check the data folder in Settings.",
                 cx,
             ),
             (true, _) => empty_state(
@@ -1238,7 +1238,7 @@ impl NotesView {
                     this.child(column().pb_4().child(
                         div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(
                             if title_text.is_empty() {
-                                SharedString::from(keepstone_core::note::UNTITLED)
+                                SharedString::from(calmfold_core::note::UNTITLED)
                             } else {
                                 title_text.clone()
                             },
@@ -1435,12 +1435,12 @@ impl NotesView {
     }
 }
 
-const TAG_URL_PREFIX: &str = "keepstone://tag/";
+const TAG_URL_PREFIX: &str = "calmfold://tag/";
 
 /// Markdown for the preview: `[[links]]` and `#tags` become clickable links.
 fn preview_markdown(body: &str) -> String {
-    let links = keepstone_core::links::wiki_link_spans(body);
-    let tags: Vec<_> = keepstone_core::tags::tag_spans(body)
+    let links = calmfold_core::links::wiki_link_spans(body);
+    let tags: Vec<_> = calmfold_core::tags::tag_spans(body)
         .into_iter()
         .filter(|(r, _)| {
             !links
@@ -1466,7 +1466,7 @@ fn preview_markdown(body: &str) -> String {
         })
         .chain(tags.into_iter().map(|(range, tag)| {
             let url = note_link_url(&tag).replacen(
-                keepstone_core::links::NOTE_LINK_PREFIX,
+                calmfold_core::links::NOTE_LINK_PREFIX,
                 TAG_URL_PREFIX,
                 1,
             );
@@ -1476,7 +1476,7 @@ fn preview_markdown(body: &str) -> String {
         .collect();
     // ==highlight== → <mark>…</mark> (the renderer understands the HTML tag).
     // Delimiters inside a link or tag are left as typed.
-    let marks: Vec<_> = keepstone_core::format::highlight_spans(body)
+    let marks: Vec<_> = calmfold_core::format::highlight_spans(body)
         .into_iter()
         .filter(|(open, close)| {
             !spans.iter().any(|(r, _)| {
@@ -1512,10 +1512,7 @@ fn escape_link_text(text: &str) -> String {
 
 fn parse_tag_url(url: &str) -> Option<String> {
     let rest = url.strip_prefix(TAG_URL_PREFIX)?;
-    parse_note_link_url(&format!(
-        "{}{rest}",
-        keepstone_core::links::NOTE_LINK_PREFIX
-    ))
+    parse_note_link_url(&format!("{}{rest}", calmfold_core::links::NOTE_LINK_PREFIX))
 }
 
 /// Right-click menu for a note in the list. Same order as task menus:

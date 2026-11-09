@@ -1,4 +1,4 @@
-# keepstone-core
+# calmfold-core
 
 Pure domain types and rules. No IO, no SQLite, no UI, no global clock (only
 `clock.rs` reads the system time; everything else takes `now`).
@@ -16,4 +16,4 @@ Pure domain types and rules. No IO, no SQLite, no UI, no global clock (only
 
 ## Test
 
-`cargo test -p keepstone-core`.
+`cargo test -p calmfold-core`.

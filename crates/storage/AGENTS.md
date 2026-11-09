@@ -1,4 +1,4 @@
-# keepstone-storage
+# calmfold-storage
 
 SQLite persistence. One `Store` owns one connection.
 
@@ -26,4 +26,4 @@ SQLite persistence. One `Store` owns one connection.
 
 ## Test
 
-`cargo test -p keepstone-storage` (in-memory databases; one test uses a temp file).
+`cargo test -p calmfold-storage` (in-memory databases; one test uses a temp file).

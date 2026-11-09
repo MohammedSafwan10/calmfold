@@ -1,6 +1,6 @@
-//! Keepstone design system.
+//! Calmfold design system.
 //!
-//! * [`theme`]: the monochrome Keepstone Light/Dark themes (`themes/keepstone.json`).
+//! * [`theme`]: the monochrome Calmfold Light/Dark themes (`themes/calmfold.json`).
 //! * [`fonts`]: bundled Inter and JetBrains Mono (SIL OFL 1.1).
 //! * [`appearance`]: user-chosen appearance (mode, fonts, sizes, motion,
 //!   content width), persisted as JSON and applied to the GPUI Kit theme.
