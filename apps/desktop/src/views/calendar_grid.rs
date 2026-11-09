@@ -90,18 +90,17 @@ fn is_bar(o: &Occurrence) -> bool {
 }
 
 impl CalendarView {
-    /// A drag source for an event, unless it repeats (a repeat can only be
-    /// moved as a whole series, from its detail panel).
+    /// A drag source for an event. Dragging one occurrence of a repeating
+    /// event moves only that one (with Undo); the series moves from its
+    /// detail panel.
     fn event_drag(&self, occ: &Occurrence) -> Option<CalendarDrag> {
         let event = self.span.events.get(&occ.event)?;
-        if event.recurrence().is_some() {
-            return None;
-        }
         Some(CalendarDrag::Event {
             id: event.id(),
+            series_date: event.recurrence().map(|_| occ.series_date),
             title: event.title().to_owned().into(),
             all_day: event.is_all_day(),
-            minutes: (event.end() - event.start())
+            minutes: (occ.end - occ.start)
                 .total(jiff::Unit::Minute)
                 .map_or(60, |m| m as i64),
             grab_y: std::rc::Rc::default(),
@@ -144,6 +143,7 @@ impl CalendarView {
         let theme = cx.theme();
         let clock = appearance::settings(cx).clock;
         let id = bar.occ.event;
+        let series = bar.occ.series_date;
         let span = bar.last_col - bar.first_col + 1;
         let label: SharedString = if bar.occ.all_day {
             self.title_of(&bar.occ)
@@ -184,7 +184,7 @@ impl CalendarView {
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                this.open_event(id, window, cx);
+                this.open_event(id, series, window, cx);
             }));
         let drag = self.event_drag(&bar.occ);
         Self::draggable(el, drag).into_any_element()
@@ -200,6 +200,7 @@ impl CalendarView {
     ) -> AnyElement {
         let theme = cx.theme();
         let id = occ.event;
+        let series = occ.series_date;
         let past = occ.end <= self.now;
         let el = h_flex()
             .id(SharedString::from(format!("chip-{id}-{day}")))
@@ -233,7 +234,7 @@ impl CalendarView {
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                this.open_event(id, window, cx);
+                this.open_event(id, series, window, cx);
             }));
         let drag = self.event_drag(occ);
         Self::draggable(el, drag).into_any_element()
@@ -566,6 +567,7 @@ impl CalendarView {
 
         let row = |occ: &Occurrence, muted: bool, cx: &mut Context<Self>| {
             let id = occ.event;
+            let series = occ.series_date;
             let event = self.span.events.get(&id);
             let when: SharedString = if occ.all_day {
                 "All day".into()
@@ -584,7 +586,9 @@ impl CalendarView {
                 .rounded(theme.radius)
                 .hover(|s| s.bg(theme.list_hover))
                 .when(occ.end <= self.now, |s| s.opacity(0.6))
-                .on_click(cx.listener(move |this, _, window, cx| this.open_event(id, window, cx)))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.open_event(id, series, window, cx)),
+                )
                 .child(
                     div()
                         .w(rems(3.75))
@@ -1107,6 +1111,7 @@ impl CalendarView {
     ) -> AnyElement {
         let theme = cx.theme();
         let id = occ.event;
+        let series = occ.series_date;
         let minutes = (to - from).max(MIN_BLOCK);
         // Two lines need an hour; shorter blocks put the start time inline.
         let tall = minutes >= 60;
@@ -1180,7 +1185,7 @@ impl CalendarView {
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                this.open_event(id, window, cx);
+                this.open_event(id, series, window, cx);
             }));
         let drag = self.event_drag(occ);
         Self::draggable(el, drag).into_any_element()

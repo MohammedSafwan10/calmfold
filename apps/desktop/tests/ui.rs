@@ -2371,6 +2371,109 @@ fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn one_occurrence_of_a_repeating_event_can_change_on_its_own(cx: &mut TestAppContext) {
+    use keepstone_core::{Recurrence, Time};
+    use keepstone_desktop::actions::GoCalendar;
+    use keepstone_desktop::views::event_detail::open_event_detail;
+
+    let app = launch(cx);
+    dispatch(&app, cx, GoCalendar);
+    let lib = library(&app, cx);
+    let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
+    let today = keepstone_core::clock::today();
+    let tomorrow = today.tomorrow().expect("date");
+    let id = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let id = l
+                .create_timed_event(
+                    "Walk",
+                    today.to_datetime(Time::constant(7, 0, 0, 0)),
+                    today.to_datetime(Time::constant(7, 30, 0, 0)),
+                    cx,
+                )
+                .expect("event");
+            l.set_event_recurrence(id, Some(Recurrence::DAILY), cx)
+                .expect("repeat");
+            id
+        })
+    });
+    let walks_on = |cx: &mut TestAppContext, day| {
+        cx.update_window(app.window, |_, window, _| window.refresh())
+            .expect("window");
+        cx.run_until_parked();
+        cx.read(|cx| {
+            calendar
+                .read(cx)
+                .span()
+                .on_day(day)
+                .filter(|o| o.event == id)
+                .count()
+        })
+    };
+    assert_eq!(walks_on(cx, tomorrow), 1);
+
+    // Delete only tomorrow's walk from its panel: the question comes first.
+    let open = |cx: &mut TestAppContext| {
+        let lib = lib.clone();
+        cx.update_window(app.window, |_, window, cx| {
+            open_event_detail(id, Some(tomorrow), false, lib, window, cx);
+        })
+        .expect("window");
+        cx.run_until_parked();
+    };
+    open(cx);
+    click(&app, cx, "event-delete");
+    assert!(dialog_open(&app, cx), "asks this one or all");
+    click(&app, cx, "scope-this");
+    assert_eq!(walks_on(cx, tomorrow), 0);
+    assert_eq!(walks_on(cx, today), 1, "the rest stay");
+    let event = cx.read(|cx| lib.read(cx).event(id)).expect("event");
+    assert!(!event.is_trashed());
+    cx.update(|cx| {
+        lib.update(cx, |l, cx| l.restore_occurrence(id, tomorrow, None, cx))
+            .expect("undo")
+    });
+    assert_eq!(walks_on(cx, tomorrow), 1);
+
+    // Dragging one occurrence moves just it (a day later, same time).
+    let later = tomorrow.tomorrow().expect("date");
+    let previous = cx
+        .update(|cx| {
+            lib.update(cx, |l, cx| {
+                l.move_occurrence_to_day(id, tomorrow, later, cx)
+            })
+        })
+        .expect("move");
+    assert_eq!(previous, None);
+    assert_eq!(walks_on(cx, tomorrow), 0);
+    assert_eq!(walks_on(cx, later), 2, "its own walk plus the moved one");
+    let moved = cx
+        .read(|cx| lib.read(cx).event(id))
+        .and_then(|e| e.occurrence_on(tomorrow))
+        .expect("moved");
+    assert!(moved.moved);
+    assert_eq!(moved.start, later.to_datetime(Time::constant(7, 0, 0, 0)));
+
+    // Cancel does nothing; "Delete all events" deletes the series.
+    open(cx);
+    click(&app, cx, "event-delete");
+    click(&app, cx, "scope-cancel");
+    assert!(
+        !cx.read(|cx| lib.read(cx).event(id))
+            .expect("e")
+            .is_trashed()
+    );
+    click(&app, cx, "event-delete");
+    click(&app, cx, "scope-all");
+    assert!(
+        cx.read(|cx| lib.read(cx).event(id))
+            .expect("e")
+            .is_trashed()
+    );
+    assert_eq!(walks_on(cx, today), 0);
+}
+
+#[gpui_kit::test]
 fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
     use keepstone_core::vault::template::Template;
     use keepstone_core::vault::{FieldKind, ItemFields, ItemKind};

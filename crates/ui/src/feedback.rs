@@ -117,6 +117,67 @@ pub fn report<T, E: std::fmt::Display>(
     }
 }
 
+/// Asks whether a change to a repeating event is for this occurrence only
+/// or the whole series (Apple Calendar's question). Cancel and Escape do
+/// nothing; `on_choose(true)` means "only this one".
+pub fn ask_repeat_scope(
+    title: impl Into<SharedString>,
+    this_label: impl Into<SharedString>,
+    all_label: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+    on_choose: impl Fn(bool, &mut Window, &mut App) + 'static,
+) {
+    use gpui_kit::component::dialog::DialogFooter;
+    use gpui_kit::{ParentElement as _, Styled as _};
+
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    let on_choose = Rc::new(on_choose);
+    let (title, this_label, all_label): (SharedString, SharedString, SharedString) =
+        (title.into(), this_label.into(), all_label.into());
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let (this, all) = (on_choose.clone(), on_choose.clone());
+        dialog
+            .title(title.clone())
+            .w(gpui_kit::px(420.))
+            .child(
+                gpui_kit::div()
+                    .text_sm()
+                    .text_color(gpui_kit::component::ActiveTheme::theme(cx).muted_foreground)
+                    .child("This is a repeating event."),
+            )
+            .footer(
+                DialogFooter::new()
+                    .child(
+                        Button::new("scope-cancel")
+                            .ghost()
+                            .label("Cancel")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("scope-all")
+                            .outline()
+                            .label(all_label.clone())
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                all(false, window, cx);
+                            }),
+                    )
+                    .child(
+                        Button::new("scope-this")
+                            .primary()
+                            .label(this_label.clone())
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                this(true, window, cx);
+                            }),
+                    ),
+            )
+    });
+}
+
 /// Asks for one line of text ("New project", "Rename"). Enter or the confirm
 /// button submits; empty input is ignored; Escape cancels.
 pub fn prompt_text(

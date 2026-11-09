@@ -2,13 +2,14 @@
 
 use std::ops::Range;
 
+use keepstone_core::event::{exceptions_from_code, exceptions_to_code};
 use keepstone_core::{Date, DateTime, Event, EventId, EventRecord, Recurrence, Task, Time};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::codec::{date_to_sql, opt_ts_from_sql, ts_from_sql, ts_to_sql, uuid_from_sql};
 use crate::{StorageError, StorageResult, Store};
 
-const COLUMNS: &str = "id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at";
+const COLUMNS: &str = "id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions";
 
 /// Fixed-width ISO text, so SQLite's string order is time order.
 fn dt_to_sql(dt: DateTime) -> String {
@@ -23,8 +24,8 @@ impl Store {
     pub fn save_event(&mut self, event: &Event) -> StorageResult<()> {
         let r = event.to_record();
         self.conn.execute(
-            "INSERT INTO events (id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "INSERT INTO events (id, title, notes, location, all_day, start_at, end_at, recurrence, created_at, updated_at, deleted_at, exceptions)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT (id) DO UPDATE SET
                 title = excluded.title,
                 notes = excluded.notes,
@@ -34,7 +35,8 @@ impl Store {
                 end_at = excluded.end_at,
                 recurrence = excluded.recurrence,
                 updated_at = excluded.updated_at,
-                deleted_at = excluded.deleted_at",
+                deleted_at = excluded.deleted_at,
+                exceptions = excluded.exceptions",
             params![
                 r.id.to_string(),
                 r.title,
@@ -47,6 +49,7 @@ impl Store {
                 ts_to_sql(r.created_at),
                 ts_to_sql(r.updated_at),
                 r.deleted_at.map(ts_to_sql),
+                exceptions_to_code(&r.exceptions),
             ],
         )?;
         Ok(())
@@ -65,15 +68,17 @@ impl Store {
     }
 
     /// Live events that may touch a day in `days` (end exclusive): one-off
-    /// events overlapping the range, and repeating events that began before
-    /// its end. Expand with [`Event::occurrences`]. Ordered by start.
+    /// events overlapping the range, repeating events that began before its
+    /// end, and repeating events with exceptions (a moved occurrence can land
+    /// before the series starts). Expand with [`Event::occurrences`]. Ordered by start.
     pub fn events_between(&self, days: Range<Date>) -> StorageResult<Vec<Event>> {
         let from = dt_to_sql(days.start.to_datetime(Time::midnight()));
         let to = dt_to_sql(days.end.to_datetime(Time::midnight()));
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT {COLUMNS} FROM events
-             WHERE deleted_at IS NULL AND start_at < ?2
-               AND (recurrence IS NOT NULL OR end_at > ?1)
+             WHERE deleted_at IS NULL
+               AND ((start_at < ?2 AND (recurrence IS NOT NULL OR end_at > ?1))
+                    OR exceptions IS NOT NULL)
              ORDER BY start_at, id"
         ))?;
         let rows = stmt.query_map([from, to], raw_event)?.collect::<Vec<_>>();
@@ -138,6 +143,7 @@ struct RawEvent {
     created_at: i64,
     updated_at: i64,
     deleted_at: Option<i64>,
+    exceptions: Option<String>,
 }
 
 impl RawEvent {
@@ -155,6 +161,11 @@ impl RawEvent {
             created_at: ts_from_sql(self.created_at, "events.created_at")?,
             updated_at: ts_from_sql(self.updated_at, "events.updated_at")?,
             deleted_at: opt_ts_from_sql(self.deleted_at, "events.deleted_at")?,
+            exceptions: self
+                .exceptions
+                .as_deref()
+                .map(exceptions_from_code)
+                .unwrap_or_default(),
         }))
     }
 }
@@ -172,6 +183,7 @@ fn raw_event(row: &Row<'_>) -> rusqlite::Result<RawEvent> {
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
         deleted_at: row.get(10)?,
+        exceptions: row.get(11)?,
     })
 }
 
@@ -191,6 +203,41 @@ mod tests {
     }
     fn titles(events: &[Event]) -> Vec<&str> {
         events.iter().map(Event::title).collect()
+    }
+
+    #[test]
+    fn exceptions_persist_and_moved_occurrences_are_found() {
+        let mut store = Store::open_in_memory().expect("store");
+        let mut e = Event::new_timed(
+            "Review",
+            dt("2026-11-10T15:00"),
+            dt("2026-11-10T16:00"),
+            at(1),
+        )
+        .expect("event");
+        e.set_recurrence(Some(Recurrence::WEEKLY), at(1))
+            .expect("repeat");
+        e.skip_occurrence(d("2026-11-17"), at(2)).expect("skip");
+        // The first one moves a week earlier than the series starts.
+        e.move_occurrence(
+            d("2026-11-10"),
+            dt("2026-11-03T15:00"),
+            dt("2026-11-03T16:00"),
+            at(2),
+        )
+        .expect("move");
+        store.save_event(&e).expect("save");
+        assert_eq!(store.event(e.id()).expect("load").as_ref(), Some(&e));
+        let early = store
+            .events_between(d("2026-11-02")..d("2026-11-09"))
+            .expect("range");
+        assert_eq!(titles(&early), ["Review"]);
+        assert_eq!(
+            early[0]
+                .occurrences(d("2026-11-02")..d("2026-11-09"), 10)
+                .len(),
+            1
+        );
     }
 
     #[test]

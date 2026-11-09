@@ -72,6 +72,7 @@ Lucide (1,800+ icons, one consistent stroke style, ISC). Use
 | Reversible (move to trash, complete) | Do it now, `undo_toast("… moved to trash.")` |
 | Permanent (delete forever, empty trash) | `confirm_destructive` with a verb button ("Delete", "Empty trash"), Cancel default, Escape cancels |
 | Failure | `error_toast` with a user-safe message |
+| Editing or deleting one occurrence of a repeating event | `ask_repeat_scope` ("Only this event" primary, "All events", Cancel); a drag moves only that one and offers Undo |
 
 Never confirm reversible actions. Never use "OK" or "Yes" as the confirm label.
 

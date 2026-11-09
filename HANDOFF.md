@@ -39,9 +39,11 @@ Everything in `docs/TASKS.md` is done except the
 - Vault: Touch ID only in signed release builds
   (not built); lock screen without sleep isn't detected. Backups open with
   the master password at export time only (no recovery key in the file).
-- Calendar: repeating events can't be dragged (only whole-series edits exist; no
-  per-occurrence exceptions yet). Deleted events have no trash view: Undo is the
-  way back. No time zones (local wall-clock times) and no ICS import yet.
+- Calendar: one occurrence of a repeating event can be moved (drag, or the
+  detail panel → "Only this event") or deleted on its own; changing the
+  series' schedule resets those. Not yet: "this and following", a series end
+  date, per-occurrence titles/notes. Deleted events have no trash view: Undo
+  is the way back. No time zones (local wall-clock times) and no ICS import yet.
 - Calendar month cells fit as many lines as the window height allows (estimated
   from the viewport, `MONTH_CHROME`); the rest go behind "N more".
 
@@ -56,6 +58,21 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 ```
 
 ## Log
+
+### 2026-11-09: Change one occurrence of a repeating event
+
+- `core::event::Exception` (Skipped / Moved, keyed by series date) with
+  `skip_occurrence`, `move_occurrence`, `restore_exception`,
+  `occurrence_on`; `occurrences()` applies them (moved ones can land outside
+  their week). Schedule changes clear exceptions; text changes keep them.
+  Migration 0007 (`events.exceptions`, text code). `Occurrence` gained
+  `series_date` and `moved`.
+- Detail panel opens at the clicked occurrence; date/time changes and Delete
+  ask "Only this event / All events" (`feedback::ask_repeat_scope`). Dragging
+  a repeat moves only that one, with Undo. Tests: 5 core, 1 storage, UI
+  `one_occurrence_of_a_repeating_event_can_change_on_its_own`.
+- Not checked on screen (real clicks don't reach the window); the flow is
+  covered by the UI test.
 
 ### 2026-11-09: Encrypted vault backup
 

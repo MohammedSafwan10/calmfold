@@ -44,11 +44,13 @@ use crate::views::task_row::notify_err;
 /// How often the "now" line moves.
 const CLOCK_TICK: Duration = Duration::from_secs(30);
 
-/// What's being dragged: an event (one-off only) or a task.
+/// What's being dragged: an event (or one occurrence of a repeating one) or a task.
 #[derive(Clone)]
 pub enum CalendarDrag {
     Event {
         id: EventId,
+        /// Set for an occurrence of a repeating event: only it moves.
+        series_date: Option<Date>,
         title: SharedString,
         all_day: bool,
         /// Length in minutes, kept when dropped on the time grid.
@@ -283,8 +285,22 @@ impl CalendarView {
         notify_err(result, window, cx);
     }
 
-    pub(super) fn open_event(&self, id: EventId, window: &mut Window, cx: &mut Context<Self>) {
-        open_event_detail(id, false, self.library.clone(), window, cx);
+    /// Opens the event's details at the occurrence on `series_date`.
+    pub(super) fn open_event(
+        &self,
+        id: EventId,
+        series_date: Date,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        open_event_detail(
+            id,
+            Some(series_date),
+            false,
+            self.library.clone(),
+            window,
+            cx,
+        );
     }
 
     pub(super) fn open_task(&self, id: TaskId, window: &mut Window, cx: &mut Context<Self>) {
@@ -305,7 +321,7 @@ impl CalendarView {
             lib.create_timed_event("New event", start, end, cx)
         });
         if let Some(id) = keepstone_ui::feedback::report(result, window, cx) {
-            open_event_detail(id, true, self.library.clone(), window, cx);
+            open_event_detail(id, None, true, self.library.clone(), window, cx);
         }
     }
 
@@ -320,7 +336,7 @@ impl CalendarView {
             .library
             .update(cx, |lib, cx| lib.create_all_day_event("New event", day, cx));
         if let Some(id) = keepstone_ui::feedback::report(result, window, cx) {
-            open_event_detail(id, true, self.library.clone(), window, cx);
+            open_event_detail(id, None, true, self.library.clone(), window, cx);
         }
     }
 
@@ -335,6 +351,28 @@ impl CalendarView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let CalendarDrag::Event {
+            id,
+            series_date: Some(series_date),
+            all_day,
+            ..
+        } = drag
+        {
+            if make_all_day && !all_day {
+                keepstone_ui::feedback::error_toast(
+                    "One repeat can't become all-day on its own. Open the event to change them all.",
+                    window,
+                    cx,
+                );
+                return;
+            }
+            let (id, series_date) = (*id, *series_date);
+            let result = self.library.update(cx, |lib, cx| {
+                lib.move_occurrence_to_day(id, series_date, day, cx)
+            });
+            self.offer_occurrence_undo(id, series_date, result, window, cx);
+            return;
+        }
         let result = self.library.update(cx, |lib, cx| match drag {
             CalendarDrag::Event { id, all_day, .. } if make_all_day && !all_day => {
                 lib.set_event_all_day(*id, day, day, cx)
@@ -360,6 +398,32 @@ impl CalendarView {
             .to_datetime(jiff::civil::Time::midnight())
             .checked_add(Span::new().minutes(i64::from(minute)));
         let Ok(start) = start else { return };
+        if let CalendarDrag::Event {
+            id,
+            series_date: Some(series_date),
+            all_day,
+            minutes,
+            ..
+        } = drag
+        {
+            if *all_day {
+                keepstone_ui::feedback::error_toast(
+                    "One repeat can't get times on its own. Open the event to change them all.",
+                    window,
+                    cx,
+                );
+                return;
+            }
+            let Ok(end) = start.checked_add(Span::new().minutes(*minutes)) else {
+                return;
+            };
+            let (id, series_date) = (*id, *series_date);
+            let result = self.library.update(cx, |lib, cx| {
+                lib.move_occurrence(id, series_date, start, end, cx)
+            });
+            self.offer_occurrence_undo(id, series_date, result, window, cx);
+            return;
+        }
         let result = self.library.update(cx, |lib, cx| match drag {
             CalendarDrag::Event {
                 id,
@@ -376,6 +440,35 @@ impl CalendarView {
             CalendarDrag::Task { id, .. } => lib.set_task_due(*id, Some(day), cx),
         });
         notify_err(result, window, cx);
+    }
+
+    /// After moving one occurrence by drag: say so, and offer Undo.
+    fn offer_occurrence_undo(
+        &self,
+        id: EventId,
+        series_date: Date,
+        result: anyhow::Result<Option<keepstone_core::Exception>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(previous) = keepstone_ui::feedback::report(result, window, cx) else {
+            return;
+        };
+        let library = self.library.clone();
+        keepstone_ui::feedback::undo_toast(
+            "Moved this event only.",
+            window,
+            cx,
+            move |window, cx| {
+                notify_err(
+                    library.update(cx, |lib, cx| {
+                        lib.restore_occurrence(id, series_date, previous, cx)
+                    }),
+                    window,
+                    cx,
+                );
+            },
+        );
     }
 
     /// Whether a routine (repeats 3+ times a week) is behind `occ`.
@@ -593,6 +686,7 @@ impl CalendarView {
                     let rows = events.into_iter().filter_map(|occ| {
                         let event = self.span.events.get(&occ.event)?;
                         let id = event.id();
+                        let series = occ.series_date;
                         let when: SharedString = if occ.all_day {
                             "All day".into()
                         } else if occ.start.date() < day {
@@ -609,7 +703,7 @@ impl CalendarView {
                                 .rounded(theme.radius)
                                 .hover(|s| s.bg(theme.muted))
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_event(id, window, cx)
+                                    this.open_event(id, series, window, cx)
                                 }))
                                 .child(
                                     div()

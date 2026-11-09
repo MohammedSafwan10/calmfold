@@ -9,9 +9,17 @@
 //! like ICS). A repeating event stores its first occurrence and a
 //! [`Recurrence`]; [`Event::occurrences`] expands it for a date range.
 //!
+//! One occurrence of a repeating event can be changed on its own ("this
+//! event only"): an [`Exception`] keyed by the date it *would* have had
+//! (its series date) either skips it or gives it other times. Changing the
+//! series' schedule (times, dates, all-day, repeat rule) clears exceptions,
+//! because their series dates no longer line up; title, notes and place
+//! changes keep them.
+//!
 //! State machine: `Active ──trash──▶ Trashed ──restore──▶ Active`; a trashed
 //! event can't be edited.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use jiff::civil::{Date, DateTime, Time};
@@ -27,6 +35,65 @@ pub const MAX_EVENT_DAYS: i64 = 366;
 /// Notes and location limits.
 pub const MAX_EVENT_NOTES_BYTES: usize = 64 * 1024;
 pub const MAX_LOCATION_CHARS: usize = 200;
+/// Most per-occurrence changes one series keeps (bounds storage and expansion).
+pub const MAX_EXCEPTIONS: usize = 1000;
+
+/// How one occurrence of a repeating event differs from the series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exception {
+    /// Deleted on its own ("Delete this event only").
+    Skipped,
+    /// Happens at other times (same length rules as the event).
+    Moved { start: DateTime, end: DateTime },
+}
+
+/// Fixed-width text for the storage code (sortable, round-trips exactly).
+fn dt_code(dt: DateTime) -> String {
+    dt.strftime("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
+/// `2026-11-10:x;2026-11-12:2026-11-13T10:00:00/2026-11-13T11:00:00`.
+/// Stored by `keepstone-storage`; never change the format.
+#[must_use]
+pub fn exceptions_to_code(exceptions: &BTreeMap<Date, Exception>) -> Option<String> {
+    if exceptions.is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = exceptions
+        .iter()
+        .map(|(date, e)| match e {
+            Exception::Skipped => format!("{date}:x"),
+            Exception::Moved { start, end } => {
+                format!("{date}:{}/{}", dt_code(*start), dt_code(*end))
+            }
+        })
+        .collect();
+    Some(parts.join(";"))
+}
+
+/// Parses [`exceptions_to_code`]. Entries that don't parse are dropped
+/// (a newer version's data shouldn't make the event unreadable).
+#[must_use]
+pub fn exceptions_from_code(code: &str) -> BTreeMap<Date, Exception> {
+    code.split(';')
+        .filter_map(|part| {
+            let (date, rest) = part.split_once(':')?;
+            let date: Date = date.parse().ok()?;
+            let e = if rest == "x" {
+                Exception::Skipped
+            } else {
+                let (start, end) = rest.split_once('/')?;
+                let (start, end): (DateTime, DateTime) = (start.parse().ok()?, end.parse().ok()?);
+                if end <= start {
+                    return None;
+                }
+                Exception::Moved { start, end }
+            };
+            Some((date, e))
+        })
+        .take(MAX_EXCEPTIONS)
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
@@ -38,6 +105,7 @@ pub struct Event {
     start: DateTime,
     end: DateTime,
     recurrence: Option<Recurrence>,
+    exceptions: BTreeMap<Date, Exception>,
     created_at: Timestamp,
     updated_at: Timestamp,
     deleted_at: Option<Timestamp>,
@@ -54,6 +122,7 @@ pub struct EventRecord {
     pub start: DateTime,
     pub end: DateTime,
     pub recurrence: Option<Recurrence>,
+    pub exceptions: BTreeMap<Date, Exception>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
     pub deleted_at: Option<Timestamp>,
@@ -66,6 +135,11 @@ pub struct Occurrence {
     pub start: DateTime,
     pub end: DateTime,
     pub all_day: bool,
+    /// The date the series puts it on (differs from `start` once moved).
+    /// Identifies the occurrence for "this event only" changes.
+    pub series_date: Date,
+    /// Changed on its own (an [`Exception::Moved`]).
+    pub moved: bool,
 }
 
 impl Occurrence {
@@ -113,6 +187,7 @@ impl Event {
             start,
             end: start,
             recurrence: None,
+            exceptions: BTreeMap::new(),
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -130,6 +205,12 @@ impl Event {
             start: r.start,
             end: r.end,
             recurrence: r.recurrence,
+            // Exceptions only mean something on a repeating event.
+            exceptions: if r.recurrence.is_some() {
+                r.exceptions
+            } else {
+                BTreeMap::new()
+            },
             created_at: r.created_at,
             updated_at: r.updated_at,
             deleted_at: r.deleted_at,
@@ -147,6 +228,7 @@ impl Event {
             start: self.start,
             end: self.end,
             recurrence: self.recurrence,
+            exceptions: self.exceptions.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
             deleted_at: self.deleted_at,
@@ -206,6 +288,11 @@ impl Event {
     #[must_use]
     pub fn recurrence(&self) -> Option<Recurrence> {
         self.recurrence
+    }
+    /// Per-occurrence changes, by series date.
+    #[must_use]
+    pub fn exceptions(&self) -> &BTreeMap<Date, Exception> {
+        &self.exceptions
     }
     #[must_use]
     pub fn created_at(&self) -> Timestamp {
@@ -287,6 +374,7 @@ impl Event {
         self.all_day = false;
         self.start = start;
         self.end = end;
+        self.exceptions.clear();
         self.touch(now);
         Ok(())
     }
@@ -309,6 +397,7 @@ impl Event {
         self.all_day = true;
         self.start = first.to_datetime(Time::midnight());
         self.end = end.to_datetime(Time::midnight());
+        self.exceptions.clear();
         self.touch(now);
         Ok(())
     }
@@ -327,13 +416,131 @@ impl Event {
             .map_err(|_| DomainError::InvalidTimeRange)?;
         self.start = start;
         self.end = end;
+        self.exceptions.clear();
         self.touch(now);
         Ok(())
     }
 
     pub fn set_recurrence(&mut self, rule: Option<Recurrence>, now: Timestamp) -> DomainResult<()> {
         self.editable()?;
+        if rule != self.recurrence {
+            self.exceptions.clear();
+        }
         self.recurrence = rule;
+        self.touch(now);
+        Ok(())
+    }
+
+    // ---- One occurrence ----
+
+    /// The occurrence the series puts on `series_date`, with any exception
+    /// applied (`None` if the series has no occurrence that day, or it was
+    /// skipped).
+    #[must_use]
+    pub fn occurrence_on(&self, series_date: Date) -> Option<Occurrence> {
+        let regular = self.regular_on(series_date)?;
+        match self.exceptions.get(&series_date) {
+            None => Some(regular),
+            Some(Exception::Skipped) => None,
+            Some(Exception::Moved { start, end }) => Some(Occurrence {
+                start: *start,
+                end: *end,
+                moved: true,
+                ..regular
+            }),
+        }
+    }
+
+    /// The unchanged occurrence starting on `series_date`, if the series has one.
+    fn regular_on(&self, series_date: Date) -> Option<Occurrence> {
+        let next = series_date.tomorrow().ok()?;
+        // Room for every occurrence that can touch one day (long repeats overlap).
+        self.series(series_date..next, MAX_EVENT_DAYS as usize + 1, false)
+            .into_iter()
+            .find(|o| o.series_date == series_date)
+    }
+
+    fn exception_target(&self, series_date: Date) -> DomainResult<Occurrence> {
+        self.editable()?;
+        if self.recurrence.is_none() {
+            return Err(DomainError::NoSuchOccurrence);
+        }
+        self.regular_on(series_date)
+            .ok_or(DomainError::NoSuchOccurrence)
+    }
+
+    fn insert_exception(&mut self, series_date: Date, e: Exception) -> DomainResult<()> {
+        if !self.exceptions.contains_key(&series_date) && self.exceptions.len() >= MAX_EXCEPTIONS {
+            return Err(DomainError::NoSuchOccurrence);
+        }
+        self.exceptions.insert(series_date, e);
+        Ok(())
+    }
+
+    /// "Delete this event only". Returns the exception it replaced, for Undo.
+    pub fn skip_occurrence(
+        &mut self,
+        series_date: Date,
+        now: Timestamp,
+    ) -> DomainResult<Option<Exception>> {
+        self.exception_target(series_date)?;
+        let previous = self.exceptions.get(&series_date).copied();
+        self.insert_exception(series_date, Exception::Skipped)?;
+        self.touch(now);
+        Ok(previous)
+    }
+
+    /// "Change this event only": the occurrence on `series_date` happens
+    /// `start..end` instead (same rules as [`Event::set_times`]; all-day
+    /// events pass midnights). Moving it back to its series slot removes
+    /// the exception. Returns the exception it replaced, for Undo.
+    pub fn move_occurrence(
+        &mut self,
+        series_date: Date,
+        start: DateTime,
+        end: DateTime,
+        now: Timestamp,
+    ) -> DomainResult<Option<Exception>> {
+        let regular = self.exception_target(series_date)?;
+        if end <= start {
+            return Err(DomainError::InvalidTimeRange);
+        }
+        if start
+            .date()
+            .checked_add(Span::new().days(MAX_EVENT_DAYS))
+            .ok()
+            .is_some_and(|limit| end.date() > limit)
+        {
+            return Err(DomainError::InvalidTimeRange);
+        }
+        if self.all_day && (start.time() != Time::midnight() || end.time() != Time::midnight()) {
+            return Err(DomainError::InvalidTimeRange);
+        }
+        let previous = self.exceptions.get(&series_date).copied();
+        if (start, end) == (regular.start, regular.end) {
+            self.exceptions.remove(&series_date);
+        } else {
+            self.insert_exception(series_date, Exception::Moved { start, end })?;
+        }
+        self.touch(now);
+        Ok(previous)
+    }
+
+    /// Puts back an exception returned by [`Event::skip_occurrence`] or
+    /// [`Event::move_occurrence`] (`None` = back to the series).
+    pub fn restore_exception(
+        &mut self,
+        series_date: Date,
+        previous: Option<Exception>,
+        now: Timestamp,
+    ) -> DomainResult<()> {
+        self.exception_target(series_date)?;
+        match previous {
+            Some(e) => self.insert_exception(series_date, e)?,
+            None => {
+                self.exceptions.remove(&series_date);
+            }
+        }
         self.touch(now);
         Ok(())
     }
@@ -353,14 +560,52 @@ impl Event {
 
     // ---- Occurrences ----
 
-    /// Every occurrence that touches a day in `days` (end exclusive), in order.
-    /// Bounded: at most `limit` occurrences.
+    /// Every occurrence that touches a day in `days` (end exclusive), in
+    /// start order, with exceptions applied. Bounded: at most `limit`.
     #[must_use]
     pub fn occurrences(&self, days: Range<Date>, limit: usize) -> Vec<Occurrence> {
-        let mut out = Vec::new();
         if self.is_trashed() || days.start >= days.end {
-            return out;
+            return Vec::new();
         }
+        if self.exceptions.is_empty() {
+            return self.series(days, limit, false);
+        }
+        let mut out: Vec<Occurrence> = self
+            .series(days.clone(), limit, true)
+            .into_iter()
+            .filter(|o| !self.exceptions.contains_key(&o.series_date))
+            .collect();
+        // Moved occurrences can land in the range from a series date outside it.
+        out.extend(self.exceptions.iter().filter_map(|(date, e)| {
+            let Exception::Moved { start, end } = *e else {
+                return None;
+            };
+            // Validated when it was made; schedule changes clear exceptions.
+            let occ = Occurrence {
+                event: self.id,
+                start,
+                end,
+                all_day: self.all_day,
+                series_date: *date,
+                moved: true,
+            };
+            let span = occ.days();
+            (span.start < days.end && span.end > days.start).then_some(occ)
+        }));
+        out.sort_by_key(|o| (o.start, o.series_date));
+        out.truncate(limit);
+        out
+    }
+
+    /// The series without exceptions. With `extra`, the limit also leaves
+    /// room for the exceptions that will be filtered out.
+    fn series(&self, days: Range<Date>, limit: usize, extra: bool) -> Vec<Occurrence> {
+        let mut out = Vec::new();
+        let limit = if extra {
+            limit.saturating_add(self.exceptions.len())
+        } else {
+            limit
+        };
         let length = self.end - self.start;
         let mut start = self.start;
         let make = |start: DateTime| -> Option<Occurrence> {
@@ -369,6 +614,8 @@ impl Event {
                 start,
                 end: start.checked_add(length).ok()?,
                 all_day: self.all_day,
+                series_date: start.date(),
+                moved: false,
             })
         };
         let mut k = 0_i64;
@@ -598,5 +845,164 @@ mod tests {
         e.set_location("Coorg", now()).expect("loc");
         e.set_notes("Pack boots", now()).expect("notes");
         assert_eq!(Event::from_record(e.to_record()), e);
+    }
+
+    fn standup() -> Event {
+        let mut e = Event::new_timed(
+            "Standup",
+            dt("2026-11-02T09:30"),
+            dt("2026-11-02T09:45"),
+            now(),
+        )
+        .expect("event");
+        e.set_recurrence(Some(Recurrence::WORKDAYS), now())
+            .expect("repeat");
+        e
+    }
+
+    fn starts(e: &Event, from: &str, to: &str) -> Vec<DateTime> {
+        e.occurrences(d(from)..d(to), 100)
+            .iter()
+            .map(|o| o.start)
+            .collect()
+    }
+
+    #[test]
+    fn one_occurrence_can_be_skipped_and_restored() {
+        let mut e = standup();
+        let previous = e.skip_occurrence(d("2026-11-11"), now()).expect("skip");
+        assert_eq!(previous, None);
+        let week = starts(&e, "2026-11-09", "2026-11-16");
+        assert_eq!(week.len(), 4);
+        assert!(!week.contains(&dt("2026-11-11T09:30")));
+        assert_eq!(e.occurrence_on(d("2026-11-11")), None);
+        e.restore_exception(d("2026-11-11"), previous, now())
+            .expect("undo");
+        assert_eq!(starts(&e, "2026-11-09", "2026-11-16").len(), 5);
+        // Saturday isn't in the series; one-off events have no occurrences to change.
+        assert_eq!(
+            e.skip_occurrence(d("2026-11-14"), now()),
+            Err(DomainError::NoSuchOccurrence)
+        );
+        let mut once = Event::new_timed("X", dt("2026-11-10T15:00"), dt("2026-11-10T16:00"), now())
+            .expect("event");
+        assert_eq!(
+            once.skip_occurrence(d("2026-11-10"), now()),
+            Err(DomainError::NoSuchOccurrence)
+        );
+    }
+
+    #[test]
+    fn one_occurrence_can_move_even_outside_the_range() {
+        let mut e = standup();
+        // Friday's standup moves to the next Monday afternoon.
+        e.move_occurrence(
+            d("2026-11-13"),
+            dt("2026-11-16T14:00"),
+            dt("2026-11-16T14:30"),
+            now(),
+        )
+        .expect("move");
+        let this_week = starts(&e, "2026-11-09", "2026-11-14");
+        assert_eq!(this_week.len(), 4, "Friday is gone from its week");
+        let next_monday = e.occurrences(d("2026-11-16")..d("2026-11-17"), 10);
+        assert_eq!(
+            next_monday.iter().map(|o| o.start).collect::<Vec<_>>(),
+            [dt("2026-11-16T09:30"), dt("2026-11-16T14:00")],
+            "in start order, both on Monday"
+        );
+        assert!(next_monday[1].moved);
+        assert_eq!(next_monday[1].series_date, d("2026-11-13"));
+        assert_eq!(
+            e.occurrence_on(d("2026-11-13")).map(|o| o.start),
+            Some(dt("2026-11-16T14:00"))
+        );
+        // Moving it back to its slot drops the exception.
+        e.move_occurrence(
+            d("2026-11-13"),
+            dt("2026-11-13T09:30"),
+            dt("2026-11-13T09:45"),
+            now(),
+        )
+        .expect("back");
+        assert!(e.exceptions().is_empty());
+        assert_eq!(
+            e.move_occurrence(
+                d("2026-11-13"),
+                dt("2026-11-13T10:00"),
+                dt("2026-11-13T10:00"),
+                now()
+            ),
+            Err(DomainError::InvalidTimeRange)
+        );
+    }
+
+    #[test]
+    fn schedule_changes_clear_exceptions_but_text_changes_keep_them() {
+        let mut e = standup();
+        e.skip_occurrence(d("2026-11-11"), now()).expect("skip");
+        e.rename("Daily sync", now()).expect("rename");
+        e.set_location("Room 4", now()).expect("place");
+        assert_eq!(e.exceptions().len(), 1);
+        assert_eq!(Event::from_record(e.to_record()), e);
+        e.set_times(dt("2026-11-02T10:00"), dt("2026-11-02T10:15"), now())
+            .expect("times");
+        assert!(e.exceptions().is_empty());
+        e.skip_occurrence(d("2026-11-11"), now()).expect("skip");
+        e.set_recurrence(Some(Recurrence::DAILY), now())
+            .expect("rule");
+        assert!(e.exceptions().is_empty());
+    }
+
+    #[test]
+    fn all_day_occurrences_move_by_whole_days() {
+        let mut e =
+            Event::new_all_day("Bins", d("2026-11-03"), d("2026-11-03"), now()).expect("event");
+        e.set_recurrence(Some(Recurrence::WEEKLY), now())
+            .expect("repeat");
+        assert_eq!(
+            e.move_occurrence(
+                d("2026-11-10"),
+                dt("2026-11-11T09:00"),
+                dt("2026-11-11T10:00"),
+                now()
+            ),
+            Err(DomainError::InvalidTimeRange),
+            "an all-day occurrence stays all-day"
+        );
+        e.move_occurrence(
+            d("2026-11-10"),
+            dt("2026-11-11T00:00"),
+            dt("2026-11-12T00:00"),
+            now(),
+        )
+        .expect("move");
+        let occ = e.occurrences(d("2026-11-09")..d("2026-11-16"), 10);
+        assert_eq!(occ.len(), 1);
+        assert_eq!(occ[0].days(), d("2026-11-11")..d("2026-11-12"));
+    }
+
+    #[test]
+    fn exception_codes_round_trip_and_ignore_junk() {
+        let mut e = standup();
+        e.skip_occurrence(d("2026-11-11"), now()).expect("skip");
+        e.move_occurrence(
+            d("2026-11-12"),
+            dt("2026-11-12T11:00"),
+            dt("2026-11-12T11:20"),
+            now(),
+        )
+        .expect("move");
+        let code = exceptions_to_code(e.exceptions()).expect("code");
+        assert_eq!(
+            code,
+            "2026-11-11:x;2026-11-12:2026-11-12T11:00:00/2026-11-12T11:20:00"
+        );
+        assert_eq!(&exceptions_from_code(&code), e.exceptions());
+        assert_eq!(exceptions_to_code(&BTreeMap::new()), None);
+        let junk = exceptions_from_code(
+            "nope;2026-11-11:x;2026-11-12:bad/also;2026-11-13:2026-11-13T10:00:00/2026-11-13T09:00:00",
+        );
+        assert_eq!(junk.len(), 1);
     }
 }

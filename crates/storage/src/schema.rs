@@ -15,6 +15,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/0004_habits.sql")),
         M::up(include_str!("../migrations/0005_vault.sql")),
         M::up(include_str!("../migrations/0006_vault_recovery.sql")),
+        M::up(include_str!("../migrations/0007_event_exceptions.sql")),
     ])
 }
 

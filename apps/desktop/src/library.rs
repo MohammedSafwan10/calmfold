@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::time::SystemTime;
 
-use keepstone_core::VaultItemId;
 use keepstone_core::vault::lock::LockState;
 use keepstone_core::vault::{ItemFields, VaultItem};
+use keepstone_core::{Exception, VaultItemId};
 use keepstone_crypto::{KdfParams, SecretString};
 
 use crate::vault::{
@@ -755,6 +755,72 @@ impl Library {
 
     pub fn trash_event(&mut self, id: EventId, cx: &mut Context<Self>) -> Result<()> {
         self.update_event(id, cx, |e| e.trash(clock::now()))
+    }
+
+    /// "Delete this event only" on a repeating event. Returns what to pass
+    /// to [`Library::restore_occurrence`] for Undo.
+    pub fn skip_occurrence(
+        &mut self,
+        id: EventId,
+        series_date: Date,
+        cx: &mut Context<Self>,
+    ) -> Result<Option<Exception>> {
+        let mut previous = None;
+        self.update_event(id, cx, |e| {
+            previous = e.skip_occurrence(series_date, clock::now())?;
+            Ok(())
+        })?;
+        Ok(previous)
+    }
+
+    /// "Change this event only": the occurrence on `series_date` happens
+    /// `start..end` instead. Returns what Undo needs.
+    pub fn move_occurrence(
+        &mut self,
+        id: EventId,
+        series_date: Date,
+        start: DateTime,
+        end: DateTime,
+        cx: &mut Context<Self>,
+    ) -> Result<Option<Exception>> {
+        let mut previous = None;
+        self.update_event(id, cx, |e| {
+            previous = e.move_occurrence(series_date, start, end, clock::now())?;
+            Ok(())
+        })?;
+        Ok(previous)
+    }
+
+    /// Moves one occurrence to `day`, keeping its times and length (a drag
+    /// onto a month or all-day cell). Returns what Undo needs.
+    pub fn move_occurrence_to_day(
+        &mut self,
+        id: EventId,
+        series_date: Date,
+        day: Date,
+        cx: &mut Context<Self>,
+    ) -> Result<Option<Exception>> {
+        let occ = self
+            .event(id)
+            .and_then(|e| e.occurrence_on(series_date))
+            .context("That event no longer exists")?;
+        let shift = day - occ.start.date();
+        let start = occ.start.checked_add(shift)?;
+        let end = occ.end.checked_add(shift)?;
+        self.move_occurrence(id, series_date, start, end, cx)
+    }
+
+    /// Undo for [`Library::skip_occurrence`] and [`Library::move_occurrence`].
+    pub fn restore_occurrence(
+        &mut self,
+        id: EventId,
+        series_date: Date,
+        previous: Option<Exception>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.update_event(id, cx, |e| {
+            e.restore_exception(series_date, previous, clock::now())
+        })
     }
 
     pub fn restore_event(&mut self, id: EventId, cx: &mut Context<Self>) -> Result<()> {

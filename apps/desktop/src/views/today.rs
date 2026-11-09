@@ -502,6 +502,7 @@ impl TodayView {
     ) -> AnyElement {
         let theme = cx.theme().clone();
         let id = occ.event;
+        let series = occ.series_date;
         let event = self.span.events.get(&id);
         let location = event.map(|e| e.location().to_owned()).unwrap_or_default();
         let past = occ.end <= self.now && !occ.all_day;
@@ -537,7 +538,7 @@ impl TodayView {
             .hover(|s| s.bg(theme.list_hover))
             .when(past, |s| s.opacity(0.5))
             .on_click(move |_, window, cx| {
-                open_event_detail(id, false, library.clone(), window, cx)
+                open_event_detail(id, Some(series), false, library.clone(), window, cx)
             })
             .test_support()
             .child(
@@ -887,6 +888,7 @@ impl TodayView {
                 match item {
                     Upcoming::Event(o) => {
                         let id = o.event;
+                        let series = o.series_date;
                         let library = self.library.clone();
                         (
                             format!("upcoming-event-{id}-{day}"),
@@ -898,7 +900,14 @@ impl TodayView {
                             },
                             self.title_of(o),
                             Box::new(move |_, window, cx| {
-                                open_event_detail(id, false, library.clone(), window, cx)
+                                open_event_detail(
+                                    id,
+                                    Some(series),
+                                    false,
+                                    library.clone(),
+                                    window,
+                                    cx,
+                                )
                             }),
                         )
                     }

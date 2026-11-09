@@ -17,6 +17,8 @@ pub enum DomainError {
     Deleted,
     #[error("The end must be after the start, and an event can last at most a year.")]
     InvalidTimeRange,
+    #[error("That date isn't part of this repeating event.")]
+    NoSuchOccurrence,
     #[error("Pick at least one day.")]
     InvalidSchedule,
     #[error("The daily goal must be between 1 and {max}.")]
