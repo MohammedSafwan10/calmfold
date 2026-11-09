@@ -55,6 +55,8 @@ pub struct NavEntry {
 pub enum DynamicChildren {
     /// One child per project, with its open-task count.
     Projects,
+    /// The most used vault tags (only while unlocked: tags are encrypted).
+    VaultTags,
 }
 
 pub struct NavSection {
@@ -179,6 +181,11 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
                     badge: Badge::None,
                 },
                 NavChild {
+                    label: "One-time codes",
+                    target: NavTarget::Vault(VaultFilter::Codes),
+                    badge: Badge::None,
+                },
+                NavChild {
                     label: "Password health",
                     target: NavTarget::Vault(VaultFilter::Health),
                     badge: Badge::None,
@@ -189,7 +196,7 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
                     badge: Badge::None,
                 },
             ],
-            dynamic: None,
+            dynamic: Some(DynamicChildren::VaultTags),
         },
     ],
 }];

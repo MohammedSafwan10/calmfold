@@ -11,6 +11,9 @@ pub mod generator;
 pub mod health;
 pub mod import;
 pub mod lock;
+pub mod recovery;
+pub mod search;
+pub mod template;
 pub mod totp;
 
 use std::fmt;
@@ -30,6 +33,8 @@ pub const MAX_URLS: usize = 20;
 pub const MAX_TAGS: usize = 20;
 /// Previous passwords kept per item.
 pub const PASSWORD_HISTORY: usize = 10;
+/// Custom fields per item.
+pub const MAX_CUSTOM_FIELDS: usize = 30;
 /// Serialized format version (bump with a migration in `from_json`).
 const FORMAT: u8 = 1;
 
@@ -64,6 +69,64 @@ impl ItemKind {
     }
 }
 
+/// What a custom field holds; decides how it shows and whether it's masked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldKind {
+    #[default]
+    Text,
+    /// Masked until revealed; cleared from the clipboard after copying.
+    Secret,
+    Url,
+    /// `YYYY-MM-DD` (or free text the user typed).
+    Date,
+    /// A setup key or `otpauth://` link; shows a live code.
+    OneTimeCode,
+}
+
+impl FieldKind {
+    pub const ALL: [Self; 5] = [
+        Self::Text,
+        Self::Secret,
+        Self::Url,
+        Self::Date,
+        Self::OneTimeCode,
+    ];
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Text => "Text",
+            Self::Secret => "Hidden text",
+            Self::Url => "Website",
+            Self::Date => "Date",
+            Self::OneTimeCode => "One-time code",
+        }
+    }
+
+    /// Whether the value is secret (masked, cleared from the clipboard).
+    #[must_use]
+    pub fn is_secret(self) -> bool {
+        matches!(self, Self::Secret | Self::OneTimeCode)
+    }
+
+    /// Whether search may look at the value (never at secrets).
+    #[must_use]
+    pub fn searchable(self) -> bool {
+        matches!(self, Self::Text | Self::Url)
+    }
+}
+
+/// An extra labelled value on any item (Wi-Fi network name, licence key…).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Zeroize)]
+#[serde(default)]
+pub struct CustomField {
+    #[zeroize(skip)]
+    pub kind: FieldKind,
+    pub label: String,
+    pub value: String,
+}
+
 /// What the user edits. Every string is secret: a stored item zeroes its
 /// fields on drop ([`VaultItem`] is `ZeroizeOnDrop`); editors call
 /// `zeroize()` on drafts they throw away. (Not `ZeroizeOnDrop` itself so
@@ -90,6 +153,11 @@ pub struct ItemFields {
     // All kinds
     pub notes: String,
     pub tags: Vec<String>,
+    /// Extra fields, in the order the user arranged them.
+    pub custom: Vec<CustomField>,
+    /// Which template made it (for its icon and suggested fields).
+    #[zeroize(skip)]
+    pub template: Option<template::Template>,
 }
 
 impl fmt::Debug for ItemFields {
@@ -158,6 +226,42 @@ impl ItemFields {
         if !f.totp.is_empty() && totp::parse(&f.totp).is_err() {
             return Err(DomainError::InvalidOneTimeCode);
         }
+        // Custom fields: trim labels, drop rows with neither label nor value,
+        // name unnamed ones after their kind.
+        let mut custom = Vec::with_capacity(f.custom.len());
+        for field in std::mem::take(&mut f.custom) {
+            let label = field.label.trim().to_owned();
+            let value = if field.kind == FieldKind::Secret {
+                field.value.clone()
+            } else {
+                field.value.trim().to_owned()
+            };
+            if label.is_empty() && value.is_empty() {
+                continue;
+            }
+            if label.chars().count() > 100 || value.chars().count() > MAX_FIELD_CHARS {
+                return Err(DomainError::TitleTooLong {
+                    max: MAX_FIELD_CHARS,
+                });
+            }
+            if field.kind == FieldKind::OneTimeCode
+                && !value.is_empty()
+                && totp::parse(&value).is_err()
+            {
+                return Err(DomainError::InvalidOneTimeCode);
+            }
+            custom.push(CustomField {
+                kind: field.kind,
+                label: if label.is_empty() {
+                    field.kind.label().to_owned()
+                } else {
+                    label
+                },
+                value,
+            });
+        }
+        custom.truncate(MAX_CUSTOM_FIELDS);
+        f.custom = custom;
         Ok(f)
     }
 }
@@ -210,6 +314,10 @@ pub struct VaultItem {
     password_changed_at: i64,
     #[zeroize(skip)]
     trashed_at: Option<i64>,
+    /// Last time a value was copied or opened (for "Recently used").
+    #[zeroize(skip)]
+    #[serde(default)]
+    used_at: Option<i64>,
 }
 
 impl fmt::Debug for VaultItem {
@@ -241,6 +349,7 @@ impl VaultItem {
             updated_at: ms(now),
             password_changed_at: ms(now),
             trashed_at: None,
+            used_at: None,
         })
     }
 
@@ -287,6 +396,29 @@ impl VaultItem {
     #[must_use]
     pub fn is_trashed(&self) -> bool {
         self.trashed_at.is_some()
+    }
+    #[must_use]
+    pub fn used_at(&self) -> Option<Timestamp> {
+        self.used_at.map(ts)
+    }
+
+    /// Records a copy/open. Doesn't count as an edit.
+    pub fn mark_used(&mut self, now: Timestamp) {
+        self.used_at = Some(ms(now));
+    }
+
+    /// The item's one-time code setup: the login field, else the first
+    /// one-time-code custom field.
+    #[must_use]
+    pub fn otp_setup(&self) -> Option<&str> {
+        let f = &self.fields;
+        if !f.totp.is_empty() {
+            return Some(&f.totp);
+        }
+        f.custom
+            .iter()
+            .find(|c| c.kind == FieldKind::OneTimeCode && !c.value.is_empty())
+            .map(|c| c.value.as_str())
     }
 
     fn editable(&self) -> DomainResult<()> {
@@ -389,36 +521,17 @@ impl VaultItem {
                     (None, false) => format!("•••• {last4}"),
                 }
             }
-            ItemKind::Note => "Secure note".to_owned(),
+            ItemKind::Note => f
+                .template
+                .filter(|t| *t != template::Template::Note)
+                .map_or_else(|| "Secure note".to_owned(), |t| t.label().to_owned()),
         }
     }
 
-    /// Search score for `query` (higher is better), or `None` if it doesn't
-    /// match. Looks at the title, username, URLs and tags, never at secrets.
+    /// Search score for `query` (see [`search::Query`]).
     #[must_use]
     pub fn matches(&self, query: &str) -> Option<u8> {
-        let q = query.trim().to_lowercase();
-        if q.is_empty() {
-            return Some(1);
-        }
-        let title = self.fields.title.to_lowercase();
-        if title.starts_with(&q) {
-            return Some(4);
-        }
-        if title.split_whitespace().any(|w| w.starts_with(&q)) {
-            return Some(3);
-        }
-        if title.contains(&q) {
-            return Some(2);
-        }
-        let f = &self.fields;
-        let other = f.username.to_lowercase().contains(&q)
-            || f.urls.iter().any(|u| host(u).to_lowercase().contains(&q))
-            || f.tags
-                .iter()
-                .any(|t| t.starts_with(q.trim_start_matches('#')))
-            || f.cardholder.to_lowercase().contains(&q);
-        other.then_some(1)
+        search::Query::parse(query).score(self)
     }
 }
 
@@ -564,10 +677,10 @@ mod tests {
     #[test]
     fn search_ranks_title_matches_first() {
         let item = VaultItem::new(&login("GitHub Work", "sam@x.io", "pw"), now()).expect("item");
-        assert_eq!(item.matches("git"), Some(4));
-        assert_eq!(item.matches("work"), Some(3));
-        assert_eq!(item.matches("hub"), Some(2));
-        assert_eq!(item.matches("sam@"), Some(1));
+        assert_eq!(item.matches("git"), Some(5));
+        assert_eq!(item.matches("work"), Some(4));
+        assert_eq!(item.matches("hub"), Some(3));
+        assert_eq!(item.matches("sam@"), Some(2));
         assert_eq!(item.matches("pw"), None, "never searches passwords");
     }
 

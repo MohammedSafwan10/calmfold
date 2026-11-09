@@ -16,6 +16,7 @@ pub struct VaultPrefs {
     /// Lock when Keepstone goes to the background.
     pub lock_on_hide: bool,
     pub generator: Options,
+    pub sort: crate::vault::VaultSort,
 }
 
 struct PrefsState {

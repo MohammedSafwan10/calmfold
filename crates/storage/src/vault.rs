@@ -20,6 +20,9 @@ pub struct VaultMeta {
     pub wrapped_key: Vec<u8>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Salt for the recovery key, and the vault key sealed with it.
+    pub recovery_salt: Option<Vec<u8>>,
+    pub recovery_wrapped: Option<Vec<u8>>,
 }
 
 /// One sealed item.
@@ -34,7 +37,8 @@ impl Store {
     pub fn vault_meta(&self) -> StorageResult<Option<VaultMeta>> {
         self.conn
             .query_row(
-                "SELECT version, salt, kdf_memory, kdf_time, kdf_lanes, wrapped_key, created_at, updated_at
+                "SELECT version, salt, kdf_memory, kdf_time, kdf_lanes, wrapped_key, created_at, updated_at,
+                        recovery_salt, recovery_wrapped
                  FROM vault_meta WHERE id = 1",
                 [],
                 |r| {
@@ -47,6 +51,8 @@ impl Store {
                         wrapped_key: r.get(5)?,
                         created_at: r.get(6)?,
                         updated_at: r.get(7)?,
+                        recovery_salt: r.get(8)?,
+                        recovery_wrapped: r.get(9)?,
                     })
                 },
             )
@@ -57,13 +63,15 @@ impl Store {
     /// Writes the header (setup, or a master-password change).
     pub fn save_vault_meta(&mut self, m: &VaultMeta) -> StorageResult<()> {
         self.conn.execute(
-            "INSERT INTO vault_meta (id, version, salt, kdf_memory, kdf_time, kdf_lanes, wrapped_key, created_at, updated_at)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO vault_meta (id, version, salt, kdf_memory, kdf_time, kdf_lanes, wrapped_key, created_at, updated_at, recovery_salt, recovery_wrapped)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT (id) DO UPDATE SET
                 version = excluded.version, salt = excluded.salt,
                 kdf_memory = excluded.kdf_memory, kdf_time = excluded.kdf_time,
                 kdf_lanes = excluded.kdf_lanes, wrapped_key = excluded.wrapped_key,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                recovery_salt = excluded.recovery_salt,
+                recovery_wrapped = excluded.recovery_wrapped",
             params![
                 m.version,
                 m.salt,
@@ -72,7 +80,9 @@ impl Store {
                 m.kdf_parallelism,
                 m.wrapped_key,
                 m.created_at,
-                m.updated_at
+                m.updated_at,
+                m.recovery_salt,
+                m.recovery_wrapped
             ],
         )?;
         Ok(())
@@ -116,6 +126,16 @@ impl Store {
         Ok(())
     }
 
+    /// Removes the header and every item in one transaction (after the app
+    /// has written an archive). The next launch shows setup.
+    pub fn reset_vault(&mut self) -> StorageResult<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM vault_items", [])?;
+        tx.execute("DELETE FROM vault_meta", [])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn delete_vault_items(&mut self, ids: &[VaultItemId]) -> StorageResult<usize> {
         let tx = self.conn.transaction()?;
         let mut n = 0;
@@ -144,6 +164,8 @@ mod tests {
             wrapped_key: vec![9; 72],
             created_at: 1,
             updated_at: 1,
+            recovery_salt: None,
+            recovery_wrapped: None,
         }
     }
 
@@ -181,6 +203,23 @@ mod tests {
         assert!(items.contains(&b2));
         assert_eq!(store.delete_vault_items(&[a.id]).expect("delete"), 1);
         assert_eq!(store.vault_items().expect("items"), vec![b2]);
+
+        let mut m = store.vault_meta().expect("meta").expect("some");
+        m.recovery_salt = Some(vec![3; 16]);
+        m.recovery_wrapped = Some(vec![4; 72]);
+        store.save_vault_meta(&m).expect("recovery");
+        assert_eq!(
+            store
+                .vault_meta()
+                .expect("meta")
+                .expect("some")
+                .recovery_wrapped,
+            Some(vec![4; 72])
+        );
+
+        store.reset_vault().expect("reset");
+        assert_eq!(store.vault_meta().expect("meta"), None);
+        assert!(store.vault_items().expect("items").is_empty());
     }
 
     #[test]

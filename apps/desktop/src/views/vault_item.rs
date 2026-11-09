@@ -30,7 +30,10 @@ use gpui_kit::{
 };
 use keepstone_core::VaultItemId;
 use keepstone_core::vault::health::estimate;
-use keepstone_core::vault::{ItemFields, ItemKind, VaultItem, host, openable_url, totp};
+use keepstone_core::vault::template::Template;
+use keepstone_core::vault::{
+    CustomField, FieldKind, ItemFields, ItemKind, VaultItem, host, openable_url, totp,
+};
 use keepstone_crypto::Zeroizing;
 use keepstone_ui::components::{empty_state, section_label};
 use keepstone_ui::feedback::{self, Confirm};
@@ -116,6 +119,13 @@ enum Mode {
     Read,
     Edit,
     New(ItemKind),
+}
+
+/// One custom field in the edit form.
+struct CustomRow {
+    kind: FieldKind,
+    label: Entity<InputState>,
+    value: Entity<InputState>,
 }
 
 /// The edit form. One input per field the kind uses.
@@ -221,6 +231,8 @@ impl Form {
             pin: v(&self.pin),
             notes: self.notes.read(cx).value().to_string(),
             tags: v(&self.tags).split(',').map(str::to_owned).collect(),
+            custom: Vec::new(),
+            template: None,
         }
     }
 
@@ -237,7 +249,11 @@ pub struct VaultItemPane {
     item: Option<VaultItem>,
     mode: Mode,
     form: Form,
-    revealed: HashSet<&'static str>,
+    /// Custom fields being edited, in order.
+    custom: Vec<CustomRow>,
+    /// The template of a new item (its suggested fields and icon).
+    template: Option<Template>,
+    revealed: HashSet<SharedString>,
     history_open: bool,
     error: Option<SharedString>,
     _ticker: Option<GpuiTask<()>>,
@@ -260,6 +276,8 @@ impl VaultItemPane {
             item: None,
             mode: Mode::Read,
             form,
+            custom: Vec::new(),
+            template: None,
             revealed: HashSet::new(),
             history_open: false,
             error: None,
@@ -305,11 +323,8 @@ impl VaultItemPane {
 
     /// One-time codes change every 30 s: re-render each second while one shows.
     fn update_ticker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let needs = self.mode == Mode::Read
-            && self
-                .item
-                .as_ref()
-                .is_some_and(|i| !i.fields().totp.is_empty());
+        let needs =
+            self.mode == Mode::Read && self.item.as_ref().is_some_and(|i| i.otp_setup().is_some());
         if needs && self._ticker.is_none() {
             self._ticker = Some(cx.spawn_in(window, async move |this, cx| {
                 loop {
@@ -328,6 +343,7 @@ impl VaultItemPane {
     /// `show(None)`, this also throws away an unsaved new item.
     pub fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.form.clear(window, cx);
+        self.clear_custom(window, cx);
         self.mode = Mode::Read;
         self.id = None;
         self.item = None;
@@ -336,6 +352,58 @@ impl VaultItemPane {
         self.error = None;
         self._ticker = None;
         cx.notify();
+    }
+
+    /// Replaces the custom-field editors with `fields`.
+    fn set_custom(&mut self, fields: &[CustomField], window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_custom(window, cx);
+        for f in fields {
+            self.add_custom(f.kind, &f.label, &f.value, window, cx);
+        }
+    }
+
+    fn add_custom(
+        &mut self,
+        kind: FieldKind,
+        label: &str,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let label_input = cx.new(|cx| {
+            let mut i = InputState::new(window, cx).placeholder("Label");
+            i.set_value(label.to_owned(), window, cx);
+            i
+        });
+        let placeholder = match kind {
+            FieldKind::Text => "Value",
+            FieldKind::Secret => "Hidden value",
+            FieldKind::Url => "example.com",
+            FieldKind::Date => "YYYY-MM-DD",
+            FieldKind::OneTimeCode => "Setup key or otpauth:// link",
+        };
+        let value_input = cx.new(|cx| {
+            let mut i = InputState::new(window, cx)
+                .masked(kind.is_secret())
+                .placeholder(placeholder);
+            i.set_value(value.to_owned(), window, cx);
+            i
+        });
+        self.custom.push(CustomRow {
+            kind,
+            label: label_input,
+            value: value_input,
+        });
+        cx.notify();
+    }
+
+    /// Empties and drops every custom-field editor.
+    fn clear_custom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for row in self.custom.drain(..) {
+            for input in [&row.label, &row.value] {
+                input.update(cx, |i, cx| i.set_value("", window, cx));
+            }
+        }
     }
 
     /// Whether any edit field holds text (tests check drafts are wiped).
@@ -354,6 +422,7 @@ impl VaultItemPane {
         ]
         .iter()
         .all(|i| i.read(cx).value().is_empty())
+            && self.custom.is_empty()
             && f.notes.read(cx).value().is_empty()
             && f.urls.read(cx).value().is_empty()
     }
@@ -371,11 +440,29 @@ impl VaultItemPane {
     }
 
     pub fn start_new(&mut self, kind: ItemKind, window: &mut Window, cx: &mut Context<Self>) {
+        let template = match kind {
+            ItemKind::Login => Template::Login,
+            ItemKind::Card => Template::Card,
+            ItemKind::Note => Template::Note,
+        };
+        self.start_template(template, window, cx);
+    }
+
+    /// A new item from `template`, with its suggested fields ready to fill.
+    pub fn start_template(
+        &mut self,
+        template: Template,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.id = None;
         self.item = None;
-        self.mode = Mode::New(kind);
+        self.mode = Mode::New(template.kind());
+        self.template = Some(template);
         self.error = None;
         self.form.clear(window, cx);
+        let fields = template.fields();
+        self.set_custom(&fields.custom, window, cx);
         self.form.title.update(cx, |i, cx| i.focus(window, cx));
         self.update_ticker(window, cx);
         cx.notify();
@@ -386,6 +473,8 @@ impl VaultItemPane {
             return;
         };
         self.form.fill(item.fields(), window, cx);
+        self.set_custom(&item.fields().custom, window, cx);
+        self.template = item.fields().template;
         self.mode = Mode::Edit;
         self.error = None;
         self.form.title.update(cx, |i, cx| i.focus(window, cx));
@@ -395,6 +484,7 @@ impl VaultItemPane {
 
     pub fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.form.clear(window, cx);
+        self.clear_custom(window, cx);
         self.mode = Mode::Read;
         self.error = None;
         self.update_ticker(window, cx);
@@ -409,6 +499,16 @@ impl VaultItemPane {
             Mode::New(kind) => kind,
         };
         let mut fields = self.form.read(kind, cx);
+        fields.custom = self
+            .custom
+            .iter()
+            .map(|r| CustomField {
+                kind: r.kind,
+                label: r.label.read(cx).value().to_string(),
+                value: r.value.read(cx).value().to_string(),
+            })
+            .collect();
+        fields.template = self.template;
         let result = match self.mode {
             Mode::New(_) => self
                 .library
@@ -430,6 +530,7 @@ impl VaultItemPane {
         match result {
             Ok(created) => {
                 self.form.clear(window, cx);
+                self.clear_custom(window, cx);
                 self.mode = Mode::Read;
                 self.error = None;
                 if let Some(id) = created {
@@ -547,8 +648,8 @@ impl VaultItemPane {
     #[allow(clippy::too_many_arguments)]
     fn field(
         &self,
-        key: &'static str,
-        label: &'static str,
+        key: impl Into<SharedString>,
+        label: impl Into<SharedString>,
         value: &str,
         secret: bool,
         mono: bool,
@@ -556,15 +657,17 @@ impl VaultItemPane {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme().clone();
-        let shown = !secret || self.revealed.contains(key);
+        let key: SharedString = key.into();
+        let label: SharedString = label.into();
+        let shown = !secret || self.revealed.contains(&key);
         let display: SharedString = if shown {
-            if key == "number" {
+            if key.as_ref() == "number" {
                 group_card(value)
             } else {
                 value.to_owned()
             }
             .into()
-        } else if key == "number" {
+        } else if key.as_ref() == "number" {
             let digits: String = value.chars().filter(char::is_ascii_digit).collect();
             format!(
                 "•••• {}",
@@ -577,7 +680,7 @@ impl VaultItemPane {
             "••••••••••".into()
         };
         // Codes show grouped ("123 456") but copy as typed.
-        let copy_value = if key == "totp" {
+        let copy_value = if key.as_ref() == "totp" || key.starts_with("code-") {
             value.replace(' ', "")
         } else {
             value.to_owned()
@@ -598,7 +701,7 @@ impl VaultItemPane {
                         div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child(label),
+                            .child(label.clone()),
                     )
                     .child(
                         div()
@@ -612,6 +715,7 @@ impl VaultItemPane {
             )
             .children(extra)
             .when(secret, |s| {
+                let key = key.clone();
                 s.child(
                     Button::new(SharedString::from(format!("reveal-{key}")))
                         .ghost()
@@ -619,43 +723,35 @@ impl VaultItemPane {
                         .icon(if shown { Lucide::EyeOff } else { Lucide::Eye })
                         .tooltip(if shown { "Hide" } else { "Reveal" })
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if !this.revealed.remove(key) {
-                                this.revealed.insert(key);
+                            if !this.revealed.remove(&key) {
+                                this.revealed.insert(key.clone());
                             }
                             cx.notify();
                         })),
                 )
             })
-            .child(
+            .child({
+                let library = self.library.clone();
+                let used = self.id;
                 Button::new(SharedString::from(format!("copy-{key}")))
                     .ghost()
                     .xsmall()
                     .icon(Lucide::Copy)
                     .tooltip(format!("Copy {}", label.to_lowercase()))
                     .on_click(move |_, window, cx| {
-                        copy_field(label, copy_value.clone(), secret, window, cx)
-                    }),
-            )
+                        copy_field(&label, copy_value.clone(), secret, window, cx);
+                        if let Some(id) = used {
+                            library.update(cx, |lib, cx| lib.mark_vault_used(id, cx));
+                        }
+                    })
+            })
             .into_any_element()
     }
 
     fn totp_row(&self, item: &VaultItem, cx: &mut Context<Self>) -> Option<AnyElement> {
         let otp = totp::parse(&item.fields().totp).ok()?;
         let code = otp.code_at(unix_now());
-        let left = code.seconds_left as f32 / code.period as f32;
-        let ring = h_flex()
-            .gap_1p5()
-            .items_center()
-            .text_xs()
-            .text_color(cx.theme().muted_foreground)
-            .child(
-                ProgressCircle::new("totp-ring")
-                    .value(left * 100.)
-                    .small()
-                    .accessibility_label("Time left for this code"),
-            )
-            .child(format!("{}s", code.seconds_left))
-            .into_any_element();
+        let ring = countdown(&code, cx);
         Some(self.field(
             "totp",
             "One-time code",
@@ -729,6 +825,11 @@ impl VaultItemPane {
                 }
             }
             ItemKind::Note => {}
+        }
+        for (i, c) in f.custom.iter().enumerate() {
+            if let Some(row) = self.custom_row(i, c, cx) {
+                rows.push(row);
+            }
         }
         let n = rows.len();
         let rows: Vec<AnyElement> = rows
@@ -1035,6 +1136,116 @@ impl VaultItemPane {
             .into_any_element()
     }
 
+    /// A custom field in read mode, shown by its kind.
+    fn custom_row(&self, i: usize, c: &CustomField, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if c.value.is_empty() {
+            return None;
+        }
+        let key = SharedString::from(format!("custom-{i}"));
+        Some(match c.kind {
+            FieldKind::Text | FieldKind::Date => {
+                self.field(key, c.label.clone(), &c.value, false, false, None, cx)
+            }
+            FieldKind::Secret => self.field(key, c.label.clone(), &c.value, true, true, None, cx),
+            FieldKind::Url => self.website_row(1000 + i, &c.value, cx),
+            FieldKind::OneTimeCode => {
+                let otp = totp::parse(&c.value).ok()?;
+                let code = otp.code_at(unix_now());
+                let ring = countdown(&code, cx);
+                self.field(
+                    SharedString::from(format!("code-{i}")),
+                    c.label.clone(),
+                    &code.grouped(),
+                    false,
+                    true,
+                    Some(ring),
+                    cx,
+                )
+            }
+        })
+    }
+
+    /// Custom fields in edit mode: label, value, remove; then "Add field".
+    fn custom_editor(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let view = cx.entity().downgrade();
+        let add = Button::new("custom-add")
+            .ghost()
+            .small()
+            .icon(Lucide::Plus)
+            .label("Add field")
+            .dropdown_menu(move |menu, _, _| {
+                FieldKind::ALL.into_iter().fold(menu, |menu, kind| {
+                    let view = view.clone();
+                    menu.item(
+                        PopupMenuItem::new(kind.label()).on_click(move |_, window, cx| {
+                            _ = view.update(cx, |this, cx| {
+                                this.add_custom(kind, "", "", window, cx);
+                                if let Some(row) = this.custom.last() {
+                                    row.label.update(cx, |i, cx| i.focus(window, cx));
+                                }
+                            });
+                        }),
+                    )
+                })
+            });
+        let rows = self.custom.iter().enumerate().map(|(i, row)| {
+            let value = Input::new(&row.value).small();
+            let value = if row.kind.is_secret() {
+                value.mask_toggle()
+            } else {
+                value
+            };
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .w(rems(9.))
+                        .flex_shrink_0()
+                        .child(Input::new(&row.label).small()),
+                )
+                .child(div().flex_1().min_w_0().child(value))
+                .child(
+                    div()
+                        .w(rems(5.5))
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(row.kind.label()),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("custom-remove-{i}")))
+                        .ghost()
+                        .xsmall()
+                        .icon(Lucide::X)
+                        .tooltip("Remove field")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if i < this.custom.len() {
+                                let row = this.custom.remove(i);
+                                for input in [&row.label, &row.value] {
+                                    input.update(cx, |inp, cx| inp.set_value("", window, cx));
+                                }
+                                cx.notify();
+                            }
+                        })),
+                )
+        });
+        v_flex()
+            .gap_2()
+            .when(!self.custom.is_empty(), |s| {
+                s.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child("More fields"),
+                )
+            })
+            .children(rows)
+            .child(h_flex().child(add))
+            .into_any_element()
+    }
+
     fn website_row(&self, i: usize, url: &str, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let open = openable_url(url);
@@ -1193,6 +1404,7 @@ impl VaultItemPane {
             }
             ItemKind::Note => {}
         }
+        rows.push(self.custom_editor(cx));
         rows.push(Self::form_row(
             if kind == ItemKind::Note {
                 "Note"
@@ -1209,7 +1421,12 @@ impl VaultItemPane {
         ));
 
         let heading = match self.mode {
-            Mode::New(k) => format!("New {}", k.label().to_lowercase()),
+            Mode::New(k) => format!(
+                "New {}",
+                self.template
+                    .map_or(k.label(), Template::label)
+                    .to_lowercase()
+            ),
             _ => "Edit".to_owned(),
         };
         v_flex()
@@ -1353,6 +1570,24 @@ impl VaultItemPane {
 }
 
 /// "4111 1111 1111 1111" from any spacing.
+/// The ring and seconds left for a one-time code.
+pub fn countdown(code: &totp::Code, cx: &App) -> AnyElement {
+    let left = code.seconds_left as f32 / code.period as f32;
+    h_flex()
+        .gap_1p5()
+        .items_center()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(
+            ProgressCircle::new("totp-ring")
+                .value(left * 100.)
+                .small()
+                .accessibility_label("Time left for this code"),
+        )
+        .child(format!("{}s", code.seconds_left))
+        .into_any_element()
+}
+
 fn group_card(number: &str) -> String {
     let digits: Vec<char> = number.chars().filter(char::is_ascii_digit).collect();
     if digits.len() < 12 {

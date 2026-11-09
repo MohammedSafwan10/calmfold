@@ -22,6 +22,7 @@ pub mod today;
 pub mod today_layout;
 pub mod vault_generator;
 pub mod vault_item;
+pub mod vault_recovery;
 
 use keepstone_core::NoteId;
 

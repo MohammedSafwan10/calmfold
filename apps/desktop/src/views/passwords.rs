@@ -31,7 +31,7 @@ use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable, FontWeight,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task as GpuiTask,
-    TestSupportExt as _, UniformListScrollHandle, Window, div, rems, uniform_list,
+    TestSupportExt as _, Window, div, rems,
 };
 use keepstone_core::VaultItemId;
 use keepstone_core::vault::health::{Strength, estimate};
@@ -45,9 +45,12 @@ use crate::actions::{
     VaultNextItem, VaultPreviousItem, VaultTrashSelected,
 };
 use crate::library::{Library, LibraryEvent};
-use crate::vault::VaultFilter;
+use crate::vault::{VaultFilter, VaultSort};
 use crate::vault_prefs;
 use crate::views::vault_item::{PaneEvent, VaultItemPane, avatar, copy_field};
+use gpui_kit::component::{VirtualListScrollHandle, v_virtual_list};
+use keepstone_core::vault::template::Template;
+use keepstone_core::vault::totp;
 
 /// Shortest master password we accept (zxcvbn must also say "Fair" or better).
 pub const MIN_MASTER_CHARS: usize = 10;
@@ -59,13 +62,37 @@ const AUTO_LOCK_TICK: Duration = Duration::from_secs(10);
 /// background" is the defense.
 const SLEEP_GAP: Duration = Duration::from_secs(60);
 
+/// One line in the item list.
+#[derive(Debug, Clone, PartialEq)]
+enum Row {
+    Header(SharedString),
+    Item(VaultItemId),
+}
+
+/// Show "Recent" above the list when the vault has more items than this.
+const RECENT_FROM: usize = 12;
+const RECENT_MAX: usize = 4;
+/// Show A–Z headers when a name-sorted list is longer than this.
+const LETTERS_FROM: usize = 30;
+const HEADER_HEIGHT: f32 = 1.75;
+
 pub struct PasswordsView {
     library: Entity<Library>,
     filter: VaultFilter,
+    /// Tag chosen in the sidebar (narrows any filter).
+    tag: Option<String>,
     search: Entity<InputState>,
+    /// The list in navigation order (↑/↓).
     ids: Vec<VaultItemId>,
+    /// What the list draws: items plus section headers.
+    rows: Vec<Row>,
     selected: Option<VaultItemId>,
-    scroll: UniformListScrollHandle,
+    scroll: VirtualListScrollHandle,
+    /// Shown once after setup or when a new key is made; zeroed on drop.
+    recovery: Option<keepstone_crypto::Zeroizing<String>>,
+    recovery_saved: bool,
+    /// Re-renders codes each second in the one-time codes view.
+    _codes_tick: Option<GpuiTask<()>>,
     pane: Entity<VaultItemPane>,
     // Setup
     master: Entity<InputState>,
@@ -153,8 +180,13 @@ impl PasswordsView {
             filter: VaultFilter::All,
             search,
             ids: Vec::new(),
+            rows: Vec::new(),
+            tag: None,
             selected: None,
-            scroll: UniformListScrollHandle::new(),
+            scroll: VirtualListScrollHandle::new(),
+            recovery: None,
+            recovery_saved: false,
+            _codes_tick: None,
             pane,
             master,
             confirm,
@@ -204,10 +236,57 @@ impl PasswordsView {
     }
 
     pub fn set_filter(&mut self, filter: VaultFilter, window: &mut Window, cx: &mut Context<Self>) {
-        if self.filter != filter {
+        if self.filter != filter || self.tag.is_some() {
             self.filter = filter;
+            self.tag = None;
             self.selected = None;
+            self.update_codes_tick(window, cx);
             self.refresh(window, cx);
+        }
+    }
+
+    pub fn tag(&self) -> Option<&str> {
+        self.tag.as_deref()
+    }
+
+    /// Shows items with `tag` (from the sidebar), across all kinds.
+    pub fn set_tag(&mut self, tag: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter = VaultFilter::All;
+        self.tag = tag;
+        self.selected = None;
+        self.update_codes_tick(window, cx);
+        self.refresh(window, cx);
+    }
+
+    /// The recovery key waiting to be saved (setup or "new recovery key").
+    pub fn recovery_key(&self) -> Option<&str> {
+        self.recovery.as_deref().map(String::as_str)
+    }
+
+    pub fn show_recovery_key(
+        &mut self,
+        key: keepstone_crypto::Zeroizing<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.recovery = Some(key);
+        self.recovery_saved = false;
+        cx.notify();
+    }
+
+    fn update_codes_tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter == VaultFilter::Codes {
+            if self._codes_tick.is_none() {
+                self._codes_tick = Some(cx.spawn_in(window, async move |this, cx| {
+                    loop {
+                        cx.background_executor().timer(Duration::from_secs(1)).await;
+                        if this.update(cx, |_, cx| cx.notify()).is_err() {
+                            break;
+                        }
+                    }
+                }));
+            }
+        } else {
+            self._codes_tick = None;
         }
     }
 
@@ -247,7 +326,10 @@ impl PasswordsView {
         if state != LockState::Unlocked {
             // Locked: drop every trace of plaintext the screen holds, drafts too.
             self.ids.clear();
+            self.rows.clear();
             self.selected = None;
+            self.tag = None;
+            self._codes_tick = None;
             self.pane.update(cx, |p, cx| p.discard(window, cx));
             self.search.update(cx, |i, cx| i.set_value("", window, cx));
             cx.notify();
@@ -255,9 +337,12 @@ impl PasswordsView {
         }
         let query = self.search.read(cx).value().to_string();
         let filter = self.filter;
-        self.ids = self
-            .library
-            .update(cx, |lib, _| lib.vault_list(filter, &query));
+        let tag = self.tag.clone();
+        let sort = vault_prefs::get(cx).sort;
+        self.ids = self.library.update(cx, |lib, _| {
+            lib.vault_list(filter, tag.as_deref(), &query, sort)
+        });
+        self.rows = self.build_rows(query.trim().is_empty(), sort, cx);
         if self.selected.is_some_and(|id| !self.ids.contains(&id)) {
             // Keep a just-edited item open even if it no longer matches.
             let exists = self
@@ -272,6 +357,51 @@ impl PasswordsView {
         cx.notify();
     }
 
+    /// Items plus headers: "Recent" on a big, unfiltered vault; A–Z letters
+    /// on long name-sorted lists. Search results are one ranked list.
+    fn build_rows(&self, no_query: bool, sort: VaultSort, cx: &App) -> Vec<Row> {
+        let lib = self.library.read(cx);
+        let mut rows = Vec::with_capacity(self.ids.len() + 8);
+        let browsing = no_query && self.tag.is_none();
+        if browsing && self.filter == VaultFilter::All && self.ids.len() > RECENT_FROM {
+            let recent = lib.vault_recent(RECENT_MAX);
+            if !recent.is_empty() {
+                rows.push(Row::Header("Recently used".into()));
+                rows.extend(recent.into_iter().map(Row::Item));
+                rows.push(Row::Header(
+                    if sort == VaultSort::Name {
+                        "All items"
+                    } else {
+                        sort.label()
+                    }
+                    .into(),
+                ));
+            }
+        }
+        let letters = no_query && sort == VaultSort::Name && self.ids.len() > LETTERS_FROM;
+        let mut last: Option<char> = None;
+        for id in &self.ids {
+            if letters {
+                let initial = lib
+                    .vault_item(*id)
+                    .and_then(|i| i.title().chars().next())
+                    .map(|c| {
+                        if c.is_alphabetic() {
+                            c.to_uppercase().next().unwrap_or(c)
+                        } else {
+                            '#'
+                        }
+                    });
+                if initial.is_some() && initial != last {
+                    last = initial;
+                    rows.push(Row::Header(initial.unwrap_or('#').to_string().into()));
+                }
+            }
+            rows.push(Row::Item(*id));
+        }
+        rows
+    }
+
     fn select(&mut self, id: Option<VaultItemId>, window: &mut Window, cx: &mut Context<Self>) {
         if self.pane.read(cx).is_editing() && self.selected != id {
             // Leaving an edit saves it, like closing a sheet.
@@ -284,9 +414,10 @@ impl PasswordsView {
     }
 
     fn scroll_to_selection(&self) {
+        // The last row for the item: the main list, not the "Recent" copy.
         if let Some(ix) = self
             .selected
-            .and_then(|id| self.ids.iter().position(|i| *i == id))
+            .and_then(|id| self.rows.iter().rposition(|r| *r == Row::Item(id)))
         {
             self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
         }
@@ -355,7 +486,9 @@ impl PasswordsView {
             _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match result {
-                    Ok(()) => {
+                    Ok(recovery) => {
+                        this.recovery = Some(recovery);
+                        this.recovery_saved = false;
                         for input in [this.master.clone(), this.confirm.clone()] {
                             input.update(cx, |i, cx| i.set_value("", window, cx));
                         }
@@ -585,6 +718,65 @@ impl PasswordsView {
                                 .text_color(theme.danger)
                                 .children(self.error.clone()),
                         ),
+                )
+                .child(
+                    h_flex().justify_center().child(
+                        Button::new("vault-forgot")
+                            .ghost()
+                            .small()
+                            .label("Forgot master password?")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                crate::views::vault_recovery::open_forgot(
+                                    this.library.clone(),
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    ),
+                ),
+        )
+        .into_any_element()
+    }
+
+    /// After setup (or "Create new recovery key"): show the key once.
+    fn recovery_step(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let key = self
+            .recovery
+            .as_deref()
+            .map(|k| k.to_string())
+            .unwrap_or_default();
+        let saved = self.recovery_saved;
+        Self::centered(
+            v_flex()
+                .gap_5()
+                .child(Self::hero(
+                    Lucide::ShieldCheck,
+                    "Save your recovery key",
+                    "If you ever forget your master password, this key is the only way back into your vault. Keepstone shows it once.",
+                    cx,
+                ))
+                .child(crate::views::vault_recovery::key_box(&key, cx))
+                .child(
+                    Checkbox::new("recovery-saved")
+                        .checked(saved)
+                        .label("I saved my recovery key somewhere safe, outside this computer.")
+                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            this.recovery_saved = *checked;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("recovery-done")
+                        .primary()
+                        .w_full()
+                        .label("Continue")
+                        .disabled(!saved)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.recovery = None;
+                            this.recovery_saved = false;
+                            this.focus_primary(window, cx);
+                            cx.notify();
+                        })),
                 ),
         )
         .into_any_element()
@@ -607,14 +799,30 @@ impl PasswordsView {
         cx.notify();
     }
 
+    fn new_from_template(
+        &mut self,
+        template: Template,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selected = None;
+        self.pane
+            .update(cx, |p, cx| p.start_template(template, window, cx));
+        cx.notify();
+    }
+
     fn row(&self, item: &VaultItem, issues: &[&'static str], cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let id = item.id();
         let selected = self.selected == Some(id);
-        let subtitle: SharedString = if issues.is_empty() {
-            item.subtitle().into()
-        } else {
-            issues.join(" · ").into()
+        let code = (self.filter == VaultFilter::Codes)
+            .then(|| item.otp_setup().and_then(|s| totp::parse(s).ok()))
+            .flatten()
+            .map(|t| t.code_at(unix_now()));
+        let subtitle: SharedString = match &code {
+            Some(c) => format!("{} · {}s", c.grouped(), c.seconds_left).into(),
+            None if issues.is_empty() => item.subtitle().into(),
+            None => issues.join(" · ").into(),
         };
         h_flex()
             .id(SharedString::from(format!("vault-row-{id}")))
@@ -652,6 +860,9 @@ impl PasswordsView {
                         div()
                             .truncate()
                             .text_xs()
+                            .when(code.is_some(), |s| {
+                                s.font_family(theme.mono_font_family.clone())
+                            })
                             .text_color(if issues.is_empty() {
                                 theme.muted_foreground
                             } else {
@@ -673,16 +884,30 @@ impl PasswordsView {
     fn list_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let health = (self.filter == VaultFilter::Health)
             .then(|| self.library.update(cx, |lib, _| lib.vault_health()));
-        let ids: Vec<VaultItemId> =
-            self.ids[range.start.min(self.ids.len())..range.end.min(self.ids.len())].to_vec();
-        ids.into_iter()
-            .filter_map(|id| {
-                let item = self.library.read(cx).vault_item(id)?;
-                let issues = health
-                    .as_ref()
-                    .map(|h| h.issues_for(id))
-                    .unwrap_or_default();
-                Some(self.row(&item, &issues, cx))
+        let rows: Vec<Row> =
+            self.rows[range.start.min(self.rows.len())..range.end.min(self.rows.len())].to_vec();
+        let theme = cx.theme().clone();
+        rows.into_iter()
+            .map(|row| match row {
+                Row::Header(text) => div()
+                    .h(rems(HEADER_HEIGHT))
+                    .px_3()
+                    .pt_2()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.muted_foreground)
+                    .child(text)
+                    .into_any_element(),
+                Row::Item(id) => match self.library.read(cx).vault_item(id) {
+                    Some(item) => {
+                        let issues = health
+                            .as_ref()
+                            .map(|h| h.issues_for(id))
+                            .unwrap_or_default();
+                        self.row(&item, &issues, cx)
+                    }
+                    None => div().h(rems(ROW_HEIGHT)).into_any_element(),
+                },
             })
             .collect()
     }
@@ -692,12 +917,13 @@ impl PasswordsView {
             VaultFilter::All => "All items",
             VaultFilter::Favorites => "Favorites",
             VaultFilter::Kind(k) => k.plural(),
+            VaultFilter::Codes => "One-time codes",
             VaultFilter::Health => "Password health",
             VaultFilter::Trash => "Trash",
         }
     }
 
-    fn list_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn list_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let count = self.ids.len();
         let view = cx.entity().downgrade();
@@ -705,28 +931,51 @@ impl PasswordsView {
             .small()
             .icon(Lucide::Plus)
             .tooltip("New item")
-            .dropdown_menu(move |menu, _, _| {
-                ItemKind::ALL.into_iter().fold(menu, |menu, kind| {
-                    let view = view.clone();
-                    menu.item(
-                        PopupMenuItem::new(format!("New {}", kind.label().to_lowercase()))
-                            .icon(kind_icon(kind))
-                            .on_click(move |_, window, cx| {
-                                _ = view.update(cx, |this, cx| this.new_item(kind, window, cx));
-                            }),
-                    )
-                })
+            .dropdown_menu(move |menu, window, cx| {
+                let item = |template: Template, view: gpui_kit::WeakEntity<Self>| {
+                    PopupMenuItem::new(template.label())
+                        .icon(template_icon(template))
+                        .on_click(move |_, window, cx| {
+                            _ = view.update(cx, |this, cx| {
+                                this.new_from_template(template, window, cx)
+                            });
+                        })
+                };
+                let more_view = view.clone();
+                let menu = Template::PRIMARY
+                    .into_iter()
+                    .fold(menu, |menu, t| menu.item(item(t, view.clone())));
+                menu.separator()
+                    .submenu("More", window, cx, move |sub, _, _| {
+                        Template::MORE
+                            .into_iter()
+                            .fold(sub, |sub, t| sub.item(item(t, more_view.clone())))
+                    })
             });
+        let sort = vault_prefs::get(cx).sort;
         let view = cx.entity().downgrade();
         let more = Button::new("vault-more")
             .ghost()
             .small()
             .icon(Lucide::Ellipsis)
             .tooltip("Vault")
-            .dropdown_menu(move |menu, _, _| {
+            .dropdown_menu(move |menu, window, cx| {
                 let gen_view = view.clone();
                 let import_view = view.clone();
-                menu.item(
+                let sort_view = view.clone();
+                menu.submenu("Sort by", window, cx, move |sub, _, _| {
+                    VaultSort::ALL.into_iter().fold(sub, |sub, s| {
+                        let view = sort_view.clone();
+                        sub.item(PopupMenuItem::new(s.label()).checked(s == sort).on_click(
+                            move |_, window, cx| {
+                                vault_prefs::update(cx, |p| p.sort = s);
+                                _ = view.update(cx, |this, cx| this.refresh(window, cx));
+                            },
+                        ))
+                    })
+                })
+                .separator()
+                .item(
                     PopupMenuItem::new("Generate password…")
                         .icon(Lucide::Dices)
                         .on_click(move |_, window, cx| {
@@ -756,10 +1005,24 @@ impl PasswordsView {
                         }),
                 )
             });
-        let list = uniform_list(
+        let rem = window.rem_size();
+        let sizes: std::rc::Rc<Vec<gpui_kit::Size<gpui_kit::Pixels>>> = std::rc::Rc::new(
+            self.rows
+                .iter()
+                .map(|r| {
+                    let h = match r {
+                        Row::Header(_) => HEADER_HEIGHT,
+                        Row::Item(_) => ROW_HEIGHT,
+                    };
+                    gpui_kit::size(gpui_kit::px(0.), rem * h)
+                })
+                .collect(),
+        );
+        let list = v_virtual_list(
+            cx.entity(),
             "vault-list",
-            count,
-            cx.processor(|this, range: Range<usize>, _, cx| this.list_rows(range, cx)),
+            sizes,
+            |this, range: Range<usize>, _, cx| this.list_rows(range, cx),
         )
         .track_scroll(&self.scroll)
         .flex_1()
@@ -776,6 +1039,10 @@ impl PasswordsView {
                 ),
                 (_, VaultFilter::Favorites) => ("No favorites", "Star an item to keep it here."),
                 (_, VaultFilter::Health) => ("All clear", "No weak, reused or old passwords."),
+                (_, VaultFilter::Codes) => (
+                    "No one-time codes",
+                    "Add a setup key to a login, or New → More → Authenticator.",
+                ),
                 _ => (
                     "Nothing here yet",
                     "Add a login with New, or import from another app.",
@@ -828,14 +1095,30 @@ impl PasswordsView {
                     .child(
                         h_flex()
                             .px_1()
+                            .h(rems(1.5))
                             .justify_between()
+                            .items_center()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(self.filter_title()),
-                            )
+                            .map(|row| match self.tag.clone() {
+                                // A tag shows as a removable chip in the title's place.
+                                Some(tag) => row.child(
+                                    Button::new("vault-clear-tag")
+                                        .xsmall()
+                                        .outline()
+                                        .label(format!("#{tag}"))
+                                        .icon(Lucide::X)
+                                        .tooltip("Show all items")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.set_tag(None, window, cx)
+                                        })),
+                                ),
+                                None => row.child(
+                                    div()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(self.filter_title()),
+                                ),
+                            })
                             .child(count.to_string()),
                     ),
             )
@@ -893,8 +1176,9 @@ impl PasswordsView {
             (CopyWhat::Username, ItemKind::Card) => ("Cardholder", f.cardholder.clone()),
             (CopyWhat::Username, _) => ("Username", f.username.clone()),
             (CopyWhat::Code, _) => {
-                let code = keepstone_core::vault::totp::parse(&f.totp)
-                    .ok()
+                let code = item
+                    .otp_setup()
+                    .and_then(|s| keepstone_core::vault::totp::parse(s).ok())
                     .map(|t| t.code_at(unix_now()).code);
                 ("One-time code", code.unwrap_or_default())
             }
@@ -914,6 +1198,9 @@ impl PasswordsView {
             window,
             cx,
         );
+        let id = item.id();
+        self.library
+            .update(cx, |lib, cx| lib.mark_vault_used(id, cx));
     }
 
     fn import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -971,10 +1258,10 @@ impl PasswordsView {
         .detach();
     }
 
-    fn unlocked(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn unlocked(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         h_flex()
             .size_full()
-            .child(self.list_pane(cx))
+            .child(self.list_pane(window, cx))
             .child(div().flex_1().min_w_0().h_full().child(self.pane.clone()))
             .into_any_element()
     }
@@ -990,6 +1277,20 @@ enum CopyWhat {
 /// Seconds since the Unix epoch (for one-time codes).
 pub fn unix_now() -> u64 {
     u64::try_from(keepstone_core::clock::now().as_second()).unwrap_or(0)
+}
+
+pub fn template_icon(t: Template) -> Lucide {
+    match t {
+        Template::Login => Lucide::KeyRound,
+        Template::Card => Lucide::CreditCard,
+        Template::Note => Lucide::StickyNote,
+        Template::Wifi => Lucide::Wifi,
+        Template::License => Lucide::BadgeCheck,
+        Template::ApiKey => Lucide::Code,
+        Template::SshKey => Lucide::Terminal,
+        Template::Identity => Lucide::IdCard,
+        Template::Authenticator => Lucide::ShieldCheck,
+    }
 }
 
 pub fn kind_icon(kind: ItemKind) -> Lucide {
@@ -1040,11 +1341,17 @@ impl Focusable for PasswordsView {
 }
 
 impl Render for PasswordsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = match self.library.read(cx).vault_state() {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self.library.read(cx).vault_state();
+        if state != LockState::Unlocked && self.recovery.is_some() {
+            // Never leave a recovery key on screen once the vault locks.
+            self.recovery = None;
+        }
+        let body = match state {
             LockState::Uninitialized => self.setup(cx),
             LockState::Locked | LockState::Unlocking => self.locked(cx),
-            LockState::Unlocked => self.unlocked(cx),
+            LockState::Unlocked if self.recovery.is_some() => self.recovery_step(cx),
+            LockState::Unlocked => self.unlocked(window, cx),
         };
         div()
             .id("passwords")

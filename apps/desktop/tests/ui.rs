@@ -1962,6 +1962,18 @@ fn vault_setup_items_lock_unlock_and_copy(cx: &mut TestAppContext) {
         cx.read(|cx| lib.read(cx).vault_state()),
         LockState::Unlocked
     );
+    // The recovery key is shown once; Continue needs the "saved it" box.
+    let key = cx.read(|cx| passwords.read(cx).recovery_key().map(str::to_owned));
+    assert!(key.is_some_and(|k| k.len() == 39), "XXXX-… ×8");
+    assert!(cx.read(|cx| lib.read(cx).vault_has_recovery()));
+    click(&app, cx, "recovery-done");
+    assert!(
+        cx.read(|cx| passwords.read(cx).recovery_key().is_some()),
+        "not yet acknowledged"
+    );
+    click(&app, cx, "recovery-saved");
+    click(&app, cx, "recovery-done");
+    assert!(cx.read(|cx| passwords.read(cx).recovery_key().is_none()));
 
     // Items.
     let id = cx.update(|cx| {
@@ -2143,4 +2155,223 @@ fn waking_from_sleep_locks_the_vault(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(11));
     cx.run_until_parked();
     assert_eq!(cx.read(|cx| lib.read(cx).vault_state()), LockState::Locked);
+}
+
+fn set_up_with_key(app: &App, cx: &mut TestAppContext) -> String {
+    use keepstone_desktop::actions::GoPasswords;
+    let lib = library(app, cx);
+    cx.update(|cx| {
+        lib.update(cx, |l, _| {
+            l.set_kdf_params_for_tests(keepstone_crypto::KdfParams::MINIMUM)
+        })
+    });
+    dispatch(app, cx, GoPasswords);
+    let setup = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.set_up_vault(
+                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                cx,
+            )
+        })
+    });
+    let key = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+    let out = key.clone();
+    cx.foreground_executor()
+        .spawn(async move {
+            if let Ok(k) = setup.await {
+                *out.borrow_mut() = k.to_string();
+            }
+        })
+        .detach();
+    cx.run_until_parked();
+    let k = key.borrow().clone();
+    assert!(!k.is_empty(), "setup finished");
+    k
+}
+
+#[gpui_kit::test]
+fn a_forgotten_password_is_recovered_with_the_recovery_key(cx: &mut TestAppContext) {
+    use keepstone_core::vault::lock::LockState;
+    use keepstone_core::vault::{ItemFields, ItemKind};
+    use keepstone_desktop::actions::LockVault;
+
+    let app = launch(cx);
+    let lib = library(&app, cx);
+    let key = set_up_with_key(&app, cx);
+    let id = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let f = ItemFields {
+                title: "Bank".into(),
+                password: "keep-me-1".into(),
+                ..ItemFields::new(ItemKind::Login)
+            };
+            l.create_vault_item(&f, cx).expect("item")
+        })
+    });
+    dispatch(&app, cx, LockVault);
+    let wrong = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.recover_vault(
+                "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
+                keepstone_crypto::SecretString::from("a whole new master 7".to_owned()),
+                cx,
+            )
+        })
+    });
+    wrong.detach();
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| lib.read(cx).vault_state()), LockState::Locked);
+    // Typed loosely: lower case, spaces instead of dashes.
+    let typed = key.to_lowercase().replace('-', " ");
+    let right = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.recover_vault(
+                &typed,
+                keepstone_crypto::SecretString::from("a whole new master 7".to_owned()),
+                cx,
+            )
+        })
+    });
+    right.detach();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_state()),
+        LockState::Unlocked
+    );
+    assert!(
+        cx.read(|cx| lib.read(cx).vault_item(id).is_some()),
+        "nothing lost"
+    );
+}
+
+#[gpui_kit::test]
+fn starting_over_archives_the_old_vault_and_it_can_be_reopened(cx: &mut TestAppContext) {
+    use keepstone_core::vault::lock::LockState;
+    use keepstone_core::vault::{ItemFields, ItemKind};
+    use keepstone_desktop::actions::LockVault;
+
+    let app = launch(cx);
+    let lib = library(&app, cx);
+    let dir = app.paths.data_dir.join("vault-archives");
+    cx.update(|cx| lib.update(cx, |l, _| l.set_archive_dir(dir)));
+    set_up_with_key(&app, cx);
+    cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let f = ItemFields {
+                title: "Old bank".into(),
+                password: "pw".into(),
+                ..ItemFields::new(ItemKind::Login)
+            };
+            l.create_vault_item(&f, cx).expect("item")
+        })
+    });
+    dispatch(&app, cx, LockVault);
+    let path = cx
+        .update(|cx| lib.update(cx, |l, cx| l.start_new_vault(cx)))
+        .expect("archive");
+    assert!(path.exists());
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_state()),
+        LockState::Uninitialized
+    );
+    assert_eq!(cx.read(|cx| lib.read(cx).vault_archives().len()), 1);
+
+    // New vault, then the old password brings the old items back.
+    set_up_with_key(&app, cx);
+    let open = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.import_vault_archive(
+                path.clone(),
+                keepstone_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                cx,
+            )
+        })
+    });
+    open.detach();
+    cx.run_until_parked();
+    let titles: Vec<String> = cx.read(|cx| {
+        lib.read(cx)
+            .vault()
+            .items()
+            .iter()
+            .map(|i| i.title().to_owned())
+            .collect()
+    });
+    assert_eq!(titles, ["Old bank"]);
+}
+
+#[gpui_kit::test]
+fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
+    use keepstone_core::vault::template::Template;
+    use keepstone_core::vault::{FieldKind, ItemFields, ItemKind};
+
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    let passwords = cx.read(|cx| app.shell.read(cx).passwords().clone());
+    let pane = cx.read(|cx| passwords.read(cx).pane().clone());
+    cx.update_window(app.window, |_, window, cx| {
+        pane.update(cx, |p, cx| p.start_template(Template::Wifi, window, cx));
+    })
+    .expect("window");
+    type_text(&app, cx, "Home Wi-Fi");
+    click(&app, cx, "edit-save");
+    cx.run_until_parked();
+    let wifi = cx
+        .read(|cx| {
+            lib.read(cx)
+                .vault()
+                .items()
+                .iter()
+                .find(|i| i.title() == "Home Wi-Fi")
+                .cloned()
+        })
+        .expect("saved");
+    assert_eq!(wifi.kind(), ItemKind::Note);
+    assert_eq!(wifi.fields().template, Some(Template::Wifi));
+    assert!(
+        wifi.fields()
+            .custom
+            .iter()
+            .any(|c| c.kind == FieldKind::Secret && c.label == "Password"),
+        "suggested fields stay, ready to fill"
+    );
+
+    cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let f = ItemFields {
+                title: "GitHub".into(),
+                tags: vec!["work".into()],
+                custom: vec![keepstone_core::vault::CustomField {
+                    kind: FieldKind::Text,
+                    label: "Account ID".into(),
+                    value: "acme-42".into(),
+                }],
+                ..ItemFields::new(ItemKind::Login)
+            };
+            l.create_vault_item(&f, cx).expect("item")
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_tags()),
+        [("work".to_owned(), 1)]
+    );
+    cx.update_window(app.window, |_, window, cx| {
+        passwords.update(cx, |p, cx| p.set_tag(Some("work".into()), window, cx));
+    })
+    .expect("window");
+    assert_eq!(cx.read(|cx| passwords.read(cx).ids().len()), 1);
+    let found = cx.update(|cx| {
+        lib.update(cx, |l, _| {
+            (
+                l.vault_list(Default::default(), None, "githb", Default::default())
+                    .len(),
+                l.vault_list(Default::default(), None, "type:note", Default::default())
+                    .len(),
+                l.vault_list(Default::default(), None, "acme", Default::default())
+                    .len(),
+            )
+        })
+    });
+    assert_eq!(found, (1, 1, 1), "typo, filter word, custom field value");
 }

@@ -25,3 +25,10 @@ Read `docs/security.md` and `crates/crypto/AGENTS.md` first.
 8. [~] Import: Bitwarden / 1Password / browser CSV (done). Export (`age`): later.
 9. [x] Tests: lock state machine, wrong password, tampered blob, header bounds,
        UI flow setup → lock → unlock → copy.
+
+## Next level (2026-11-09)
+
+- [x] Custom fields and templates (Wi-Fi, licence, API/SSH key, identity, authenticator)
+- [x] Search language, typo fallback, tags in sidebar, sort, recently used, A–Z
+- [x] One-time codes view
+- [x] Recovery key + Emergency Kit, forgot-password flow, archive and start over (ADR 0006)

@@ -17,7 +17,11 @@ use keepstone_core::vault::lock::LockState;
 use keepstone_core::vault::{ItemFields, VaultItem};
 use keepstone_crypto::{KdfParams, SecretString};
 
-use crate::vault::{KdfInput, VaultFilter, VaultSession, derive};
+use crate::vault::{
+    ArchiveFile, KdfInput, RECOVERY_KDF, VaultFilter, VaultSession, VaultSort, derive,
+};
+use keepstone_core::vault::recovery;
+use keepstone_crypto::Zeroizing;
 
 use keepstone_core::{
     Date, DateTime, Event, EventId, Habit, HabitId, Note, NoteId, Occurrence, Priority, Project,
@@ -45,6 +49,8 @@ pub struct Library {
     /// clock on purpose: `Instant` stops while macOS sleeps, so time asleep
     /// would not count as idle.
     vault_activity: SystemTime,
+    /// Where "Start a new vault" keeps the old encrypted vault.
+    archive_dir: std::path::PathBuf,
 }
 
 impl EventEmitter<LibraryEvent> for Library {}
@@ -62,6 +68,7 @@ impl Library {
             vault,
             kdf: KdfParams::RECOMMENDED,
             vault_activity: SystemTime::now(),
+            archive_dir: std::env::temp_dir().join("keepstone-vault-archives"),
         }
     }
 
@@ -818,30 +825,232 @@ impl Library {
             .unwrap_or(std::time::Duration::MAX)
     }
 
-    /// Creates the vault. Argon2 runs in the background; the task resolves
-    /// once the vault is set up and unlocked.
+    pub fn set_archive_dir(&mut self, dir: std::path::PathBuf) {
+        self.archive_dir = dir;
+    }
+
+    /// Creates the vault and its recovery key. Argon2 runs in the
+    /// background; resolves to the recovery key to show the user once.
     pub fn set_up_vault(
         &mut self,
         password: SecretString,
         cx: &mut Context<Self>,
-    ) -> gpui_kit::Task<Result<()>> {
-        let input = match KdfInput::fresh(self.kdf) {
-            Ok(i) => i,
+    ) -> gpui_kit::Task<Result<Zeroizing<String>>> {
+        let inputs =
+            KdfInput::fresh(self.kdf).and_then(|a| Ok((a, KdfInput::fresh(RECOVERY_KDF)?)));
+        let ((input, rinput), recovery) = match inputs.and_then(|i| Ok((i, new_recovery_key()?))) {
+            Ok(v) => v,
             Err(err) => return gpui_kit::Task::ready(Err(err)),
         };
         cx.spawn(async move |this, cx| {
-            let kek = cx
+            let normalized =
+                recovery::normalize(&recovery).context("Couldn't make a recovery key")?;
+            let (kek, rkek) = cx
                 .background_executor()
-                .spawn(async move { derive(&password, &input.salt, input.params) })
+                .spawn(async move {
+                    let rk = SecretString::from(normalized.to_string());
+                    anyhow::Ok((
+                        derive(&password, &input.salt, input.params)?,
+                        derive(&rk, &rinput.salt, rinput.params)?,
+                    ))
+                })
+                .await?;
+            this.update(cx, |lib, cx| {
+                lib.vault.finish_setup(
+                    &mut lib.store,
+                    input,
+                    &kek,
+                    Some((rinput, &rkek)),
+                    clock::now(),
+                )?;
+                lib.touch_vault();
+                cx.emit(LibraryEvent::VaultChanged);
+                anyhow::Ok(recovery)
+            })?
+        })
+    }
+
+    pub fn vault_has_recovery(&self) -> bool {
+        VaultSession::has_recovery(&self.store)
+    }
+
+    /// Makes a new recovery key (the old one stops working). Unlocked only.
+    pub fn new_recovery_key(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<Zeroizing<String>>> {
+        let made = KdfInput::fresh(RECOVERY_KDF).and_then(|i| Ok((i, new_recovery_key()?)));
+        let (rinput, recovery) = match made {
+            Ok(v) => v,
+            Err(err) => return gpui_kit::Task::ready(Err(err)),
+        };
+        cx.spawn(async move |this, cx| {
+            let normalized =
+                recovery::normalize(&recovery).context("Couldn't make a recovery key")?;
+            let rkek = cx
+                .background_executor()
+                .spawn(async move {
+                    derive(
+                        &SecretString::from(normalized.to_string()),
+                        &rinput.salt,
+                        rinput.params,
+                    )
+                })
                 .await?;
             this.update(cx, |lib, cx| {
                 lib.vault
-                    .finish_setup(&mut lib.store, input, &kek, clock::now())?;
-                lib.touch_vault();
+                    .set_recovery(&mut lib.store, rinput, &rkek, clock::now())?;
                 cx.emit(LibraryEvent::VaultChanged);
-                anyhow::Ok(())
+                anyhow::Ok(recovery)
             })?
         })
+    }
+
+    /// Unlocks with the recovery key and sets `new_password` as the master
+    /// password. Resolves to `false` for a wrong recovery key.
+    pub fn recover_vault(
+        &mut self,
+        recovery_key: &str,
+        new_password: SecretString,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<bool>> {
+        let Some(normalized) = recovery::normalize(recovery_key) else {
+            return gpui_kit::Task::ready(Ok(false));
+        };
+        let inputs = VaultSession::recovery_kdf(&self.store)
+            .and_then(|r| Ok((r, KdfInput::fresh(self.kdf)?)));
+        let (rinput, new_input) = match inputs {
+            Ok(v) => v,
+            Err(err) => return gpui_kit::Task::ready(Err(err)),
+        };
+        cx.spawn(async move |this, cx| {
+            let (rkek, new_kek) = cx
+                .background_executor()
+                .spawn(async move {
+                    let rkek = derive(
+                        &SecretString::from(normalized.to_string()),
+                        &rinput.salt,
+                        rinput.params,
+                    );
+                    (
+                        rkek,
+                        derive(&new_password, &new_input.salt, new_input.params),
+                    )
+                })
+                .await;
+            let new_kek = new_kek?;
+            this.update(cx, |lib, cx| {
+                let ok =
+                    lib.vault
+                        .recover(&mut lib.store, rkek, new_input, &new_kek, clock::now())?;
+                if ok {
+                    lib.touch_vault();
+                }
+                cx.emit(LibraryEvent::VaultChanged);
+                anyhow::Ok(ok)
+            })?
+        })
+    }
+
+    /// Archives the encrypted vault to the archive folder and empties it.
+    /// Returns the archive's path.
+    pub fn start_new_vault(&mut self, cx: &mut Context<Self>) -> Result<std::path::PathBuf> {
+        let now = clock::now();
+        let stamp = now
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%Y-%m-%d-%H%M%S")
+            .to_string();
+        let path = self.archive_dir.join(format!("vault-{stamp}.ksvault"));
+        self.vault.archive_and_reset(&mut self.store, &path, now)?;
+        cx.emit(LibraryEvent::VaultChanged);
+        Ok(path)
+    }
+
+    /// Archived vaults, newest first: (path, archived at, item count).
+    pub fn vault_archives(&self) -> Vec<(std::path::PathBuf, keepstone_core::Timestamp, usize)> {
+        let Ok(entries) = std::fs::read_dir(&self.archive_dir) else {
+            return Vec::new();
+        };
+        let mut out: Vec<_> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "ksvault"))
+            .filter_map(|p| {
+                let a = ArchiveFile::read(&p).ok()?;
+                Some((p, a.archived_at(), a.item_count()))
+            })
+            .collect();
+        out.sort_by_key(|(_, t, _)| std::cmp::Reverse(*t));
+        out
+    }
+
+    /// Opens an archive with its old master password and adds its items to
+    /// the current (unlocked) vault. Resolves to `None` for a wrong password.
+    pub fn import_vault_archive(
+        &mut self,
+        path: std::path::PathBuf,
+        password: SecretString,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<Option<usize>>> {
+        if !self.vault.is_unlocked() {
+            return gpui_kit::Task::ready(Err(keepstone_core::DomainError::VaultState {
+                state: self.vault.state().label(),
+            }
+            .into()));
+        }
+        cx.spawn(async move |this, cx| {
+            let items = cx
+                .background_executor()
+                .spawn(async move {
+                    let archive = ArchiveFile::read(&path)?;
+                    let k = archive.kdf()?;
+                    let kek = derive(&password, &k.salt, k.params)?;
+                    VaultSession::open_archive(&archive, &kek)
+                })
+                .await?;
+            let Some(items) = items else {
+                return Ok(None);
+            };
+            this.update(cx, |lib, cx| {
+                // New IDs, so importing twice can't overwrite live items.
+                let now = clock::now();
+                let copies: Vec<VaultItem> = items
+                    .iter()
+                    .filter_map(|i| {
+                        let mut copy = VaultItem::new(i.fields(), now).ok()?;
+                        if i.is_favorite() {
+                            copy.set_favorite(true, now).ok()?;
+                        }
+                        Some(copy)
+                    })
+                    .collect();
+                let n = copies.len();
+                lib.vault.put(&mut lib.store, copies)?;
+                cx.emit(LibraryEvent::VaultChanged);
+                anyhow::Ok(Some(n))
+            })?
+        })
+    }
+
+    /// Records that a value was copied from `id` ("Recently used").
+    pub fn mark_vault_used(&mut self, id: VaultItemId, cx: &mut Context<Self>) {
+        let now = clock::now();
+        let result = self.vault.update(&mut self.store, id, |i| {
+            i.mark_used(now);
+            Ok(true)
+        });
+        if result.is_ok() {
+            self.touch_vault();
+            cx.emit(LibraryEvent::VaultChanged);
+        }
+    }
+
+    pub fn vault_tags(&self) -> Vec<(String, usize)> {
+        self.vault.tags()
+    }
+
+    pub fn vault_recent(&self, n: usize) -> Vec<VaultItemId> {
+        self.vault.recent(n)
     }
 
     /// Unlocks; resolves to `false` for a wrong password.
@@ -919,8 +1128,14 @@ impl Library {
         })
     }
 
-    pub fn vault_list(&mut self, filter: VaultFilter, query: &str) -> Vec<VaultItemId> {
-        self.vault.list(filter, query, clock::now())
+    pub fn vault_list(
+        &mut self,
+        filter: VaultFilter,
+        tag: Option<&str>,
+        query: &str,
+        sort: VaultSort,
+    ) -> Vec<VaultItemId> {
+        self.vault.list(filter, tag, query, sort, clock::now())
     }
 
     pub fn vault_item(&self, id: VaultItemId) -> Option<VaultItem> {
@@ -1240,4 +1455,11 @@ impl CalendarSpan {
 #[must_use]
 pub fn daily_note_title(date: Date) -> String {
     date.to_string()
+}
+
+/// A fresh recovery key, formatted for the user.
+fn new_recovery_key() -> Result<Zeroizing<String>> {
+    let mut bytes = Zeroizing::new([0u8; recovery::KEY_BYTES]);
+    keepstone_crypto::random_bytes(&mut bytes[..]).context("Couldn't get secure random numbers")?;
+    Ok(recovery::format(&bytes))
 }

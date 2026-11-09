@@ -484,8 +484,36 @@ impl SettingsView {
                     })
             }),
         )
-        .description("Requires the current password. Keepstone can't recover a forgotten one.")
+        .description("Requires the current password, or your recovery key if you forgot it.")
         .keywords(["master password", "vault", "change password"]);
+        let recovery = SettingItem::new(
+            "Recovery key",
+            SettingField::render(|_, _, _| {
+                Button::new("set-recovery")
+                    .small()
+                    .label("Create new key…")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(crate::actions::CreateRecoveryKey), cx)
+                    })
+            }),
+        )
+        .description(
+            "Opens your vault if you forget the master password. A new key replaces the old one.",
+        )
+        .keywords(["recovery", "emergency kit", "forgot password", "vault"]);
+        let archives = SettingItem::new(
+            "Archived vaults",
+            SettingField::render(|_, _, _| {
+                Button::new("set-archives")
+                    .small()
+                    .label("Show…")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(crate::actions::ShowVaultArchives), cx)
+                    })
+            }),
+        )
+        .description("Old vaults kept when you started a new one. Open one with its old password to get its items back.")
+        .keywords(["archive", "old vault", "restore", "forgot password"]);
         SettingPage::new("Passwords")
             .icon(Lucide::KeyRound)
             .group(
@@ -493,7 +521,11 @@ impl SettingsView {
                     .title("Security")
                     .items(vec![auto_lock, hide, clipboard]),
             )
-            .group(SettingGroup::new().title("Vault").items(vec![master]))
+            .group(
+                SettingGroup::new()
+                    .title("Vault")
+                    .items(vec![master, recovery, archives]),
+            )
     }
 
     fn calendar_page() -> SettingPage {

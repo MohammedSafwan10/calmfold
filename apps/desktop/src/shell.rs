@@ -27,11 +27,11 @@ use keepstone_core::NoteId;
 use keepstone_ui::appearance::{self, ThemePreference};
 
 use crate::actions::{
-    ChangeMasterPassword, ExportNotes, FindInNote, FindNext, FindPrevious, GeneratePassword,
-    GoCalendar, GoHabits, GoNotes, GoPasswords, GoSettings, GoTasks, GoToday, ImportNotes,
-    LockVault, NewEvent, NewHabit, NewLogin, NewNote, NewProject, NewTask, OpenCommandPalette,
-    OpenDailyNote, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseDarkTheme,
-    UseLightTheme, UseSystemTheme,
+    ChangeMasterPassword, CreateRecoveryKey, ExportNotes, FindInNote, FindNext, FindPrevious,
+    GeneratePassword, GoCalendar, GoHabits, GoNotes, GoPasswords, GoSettings, GoTasks, GoToday,
+    ImportNotes, LockVault, NewEvent, NewHabit, NewLogin, NewNote, NewProject, NewTask,
+    OpenCommandPalette, OpenDailyNote, ShowVaultArchives, ToggleListPanel, ToggleMarkdownSource,
+    ToggleSidebar, UseDarkTheme, UseLightTheme, UseSystemTheme,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
@@ -47,6 +47,8 @@ use crate::views::today::TodayView;
 use crate::views::{Navigate, Route};
 
 const PALETTE_NOTE_LIMIT: usize = 200;
+/// Vault tags listed in the sidebar (the rest are a search away: `tag:`).
+const SIDEBAR_TAGS: usize = 6;
 
 /// Drag payload for the sidebar's resize edge.
 #[derive(Clone)]
@@ -119,7 +121,9 @@ impl AppShell {
             cx.subscribe(&library, |this, _, event, cx| {
                 if matches!(
                     event,
-                    LibraryEvent::TasksChanged | LibraryEvent::HabitsChanged
+                    LibraryEvent::TasksChanged
+                        | LibraryEvent::HabitsChanged
+                        | LibraryEvent::VaultChanged
                 ) {
                     this.refresh_badges(cx);
                 }
@@ -239,7 +243,9 @@ impl AppShell {
                 self.route == Route::Tasks && self.tasks.read(cx).project() == Some(id)
             }
             NavTarget::Vault(filter) => {
-                self.route == Route::Passwords && self.passwords.read(cx).filter() == filter
+                self.route == Route::Passwords
+                    && self.passwords.read(cx).filter() == filter
+                    && self.passwords.read(cx).tag().is_none()
             }
             NavTarget::DailyNote => {
                 self.route == Route::Notes
@@ -569,6 +575,26 @@ impl AppShell {
                                     cx.listener(|this, _, window, cx| this.new_project(window, cx)),
                                 ),
                         );
+                    }
+                    if entry.dynamic == Some(nav::DynamicChildren::VaultTags) {
+                        let tags = self.library.read(cx).vault_tags();
+                        let current = self.passwords.read(cx).tag().map(str::to_owned);
+                        for (tag, n) in tags.into_iter().take(SIDEBAR_TAGS) {
+                            let active = self.route == Route::Passwords
+                                && current.as_deref() == Some(tag.as_str());
+                            let label = gpui_kit::SharedString::from(format!("#{tag}"));
+                            children.push(
+                                SidebarMenuItem::new(label)
+                                    .active(active)
+                                    .suffix(count_suffix(n))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.navigate(Route::Passwords, window, cx);
+                                        let tag = tag.clone();
+                                        this.passwords
+                                            .update(cx, |p, cx| p.set_tag(Some(tag), window, cx));
+                                    })),
+                            );
+                        }
                     }
                     let has_children = !children.is_empty();
                     SidebarMenuItem::new(entry.label)
@@ -913,6 +939,33 @@ pub fn register_commands(cx: &mut App) {
     cx.on_action(|_: &ChangeMasterPassword, cx| {
         with_shell(cx, |s, w, cx| {
             crate::views::passwords::open_change_password(s.library.clone(), w, cx)
+        })
+    });
+    cx.on_action(|_: &CreateRecoveryKey, cx| {
+        with_shell(cx, |s, w, cx| {
+            if s.library.read(cx).vault_state() != keepstone_core::vault::lock::LockState::Unlocked
+            {
+                keepstone_ui::feedback::error_toast("Unlock the vault first.", w, cx);
+                return;
+            }
+            s.navigate(Route::Passwords, w, cx);
+            let task = s.library.update(cx, |lib, cx| lib.new_recovery_key(cx));
+            let passwords = s.passwords.downgrade();
+            w.spawn(cx, async move |cx| {
+                let result = task.await;
+                _ = cx.update(|window, cx| match result {
+                    Ok(key) => {
+                        _ = passwords.update(cx, |p, cx| p.show_recovery_key(key, cx));
+                    }
+                    Err(err) => keepstone_ui::feedback::error_toast(format!("{err:#}"), window, cx),
+                });
+            })
+            .detach();
+        })
+    });
+    cx.on_action(|_: &ShowVaultArchives, cx| {
+        with_shell(cx, |s, w, cx| {
+            crate::views::vault_recovery::open_archives(s.library.clone(), w, cx)
         })
     });
     cx.on_action(|_: &GeneratePassword, cx| {

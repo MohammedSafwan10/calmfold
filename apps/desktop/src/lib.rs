@@ -63,7 +63,11 @@ pub fn start(
     actions::set_menus(cx);
     shell::register_commands(cx);
 
-    let library = cx.new(|_| Library::new(store));
+    let library = cx.new(|_| {
+        let mut lib = Library::new(store);
+        lib.set_archive_dir(paths.data_dir.join("vault-archives"));
+        lib
+    });
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,

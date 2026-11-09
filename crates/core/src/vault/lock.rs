@@ -5,6 +5,8 @@
 //! Locked ──StartUnlock──▶ Unlocking ──Unlocked──▶ Unlocked
 //!                           └──Failed──▶ Locked
 //! Unlocked ──Lock──▶ Locked            (manual, idle, sleep, quit)
+//! Locked ──Reset──▶ Uninitialized      (forgot password → start a new vault;
+//!                                       the old one is archived first)
 //! ```
 //!
 //! Every other (state, event) pair is refused, so for example a stale unlock
@@ -43,6 +45,7 @@ pub enum LockEvent {
     Unlocked,
     Failed,
     Lock,
+    Reset,
 }
 
 /// The next state, or `None` if `event` isn't allowed in `state`.
@@ -56,6 +59,7 @@ pub fn next(state: LockState, event: LockEvent) -> Option<LockState> {
         (S::Unlocking, E::Unlocked) => Some(S::Unlocked),
         (S::Unlocking, E::Failed) => Some(S::Locked),
         (S::Unlocked | S::Unlocking, E::Lock) => Some(S::Locked),
+        (S::Locked, E::Reset) => Some(S::Uninitialized),
         _ => None,
     }
 }
@@ -157,7 +161,14 @@ mod tests {
     #[test]
     fn transition_table() {
         let all_states = [S::Uninitialized, S::Locked, S::Unlocking, S::Unlocked];
-        let all_events = [E::SetUp, E::StartUnlock, E::Unlocked, E::Failed, E::Lock];
+        let all_events = [
+            E::SetUp,
+            E::StartUnlock,
+            E::Unlocked,
+            E::Failed,
+            E::Lock,
+            E::Reset,
+        ];
         let allowed = [
             (S::Uninitialized, E::SetUp, S::Unlocked),
             (S::Locked, E::StartUnlock, S::Unlocking),
@@ -165,6 +176,7 @@ mod tests {
             (S::Unlocking, E::Failed, S::Locked),
             (S::Unlocking, E::Lock, S::Locked),
             (S::Unlocked, E::Lock, S::Locked),
+            (S::Locked, E::Reset, S::Uninitialized),
         ];
         for s in all_states {
             for e in all_events {

@@ -54,6 +54,20 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 
 ## Log
 
+### 2026-11-09: Vault next level + recovery
+
+- Custom fields (text, hidden, website, date, one-time code) on every item;
+  templates (Wi-Fi, licence, API key, SSH key, identity, authenticator) under
+  New → More, all on the three kinds (no format change).
+- Search language (`core::vault::search`): ranked, AND words, never secrets,
+  `tag: type: is:fav|weak|reused|old has:code site:`, typo fallback pass
+  (letters only, only when nothing matches exactly).
+- List: variable-height virtual list with "Recently used" (12+ items) and A–Z
+  headers (30+, name sort); Sort by in the … menu; tag chip; sidebar shows the
+  top 6 tags and "One-time codes" (live codes in the list).
+- Recovery key + Emergency Kit, "Forgot master password?" (recover / archive
+  and start over), Archived vaults (ADR 0006, migration 0006).
+
 ### 2026-11-09: Password vault
 
 - ADR 0005 (key hierarchy, totp-rs, zxcvbn, EFF list, csv). `core::vault`

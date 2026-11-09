@@ -23,6 +23,8 @@ actions!(
         NewLogin,
         GeneratePassword,
         ChangeMasterPassword,
+        CreateRecoveryKey,
+        ShowVaultArchives,
         GoSettings,
         ToggleSidebar,
         ToggleListPanel,
