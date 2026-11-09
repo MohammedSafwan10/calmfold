@@ -42,8 +42,9 @@ Everything in `docs/TASKS.md` is done except the
 - Calendar: one occurrence of a repeating event can be moved (drag, or the
   detail panel → "Only this event") or deleted on its own; changing the
   series' schedule resets those. Not yet: "this and following", a series end
-  date, per-occurrence titles/notes. Deleted events have no trash view: Undo
-  is the way back. No time zones (local wall-clock times) and no ICS import yet.
+  date, per-occurrence titles/notes. Deleted events live in Calendar → View
+  options → Deleted events… (restore, delete forever, empty). No time zones
+  (local wall-clock times) and no ICS import yet.
 - Calendar month cells fit as many lines as the window height allows (estimated
   from the viewport, `MONTH_CHROME`); the rest go behind "N more".
 
@@ -58,6 +59,14 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 ```
 
 ## Log
+
+### 2026-11-09: Deleted events
+
+- `views/event_trash.rs`: sheet listing deleted events (Restore, Delete
+  forever, Empty trash…, both confirmed). Opened from Calendar → View
+  options or ⌘K "Show deleted events" (`ShowDeletedEvents`). Library:
+  `deleted_events`, `delete_event_forever` (trashed only), `empty_event_trash`.
+  UI test `deleted_events_can_be_restored_or_removed_for_good`.
 
 ### 2026-11-09: Change one occurrence of a repeating event
 

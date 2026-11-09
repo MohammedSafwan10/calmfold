@@ -7,6 +7,7 @@ pub mod calendar_layout;
 pub mod code_highlight;
 pub mod diagram;
 pub mod event_detail;
+pub mod event_trash;
 pub mod habit_detail;
 pub mod habit_insights_view;
 pub mod habit_widgets;

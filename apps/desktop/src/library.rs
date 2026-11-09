@@ -823,6 +823,39 @@ impl Library {
         })
     }
 
+    /// Deleted events, most recently deleted first.
+    pub fn deleted_events(&self) -> Result<Vec<Event>> {
+        Ok(self.store.trashed_events()?)
+    }
+
+    /// Permanently removes a deleted event (callers confirm first).
+    pub fn delete_event_forever(&mut self, id: EventId, cx: &mut Context<Self>) -> Result<()> {
+        let event = self
+            .store
+            .event(id)?
+            .context("That event no longer exists")?;
+        if !event.is_trashed() {
+            anyhow::bail!("Only deleted events can be removed for good.");
+        }
+        self.store
+            .delete_event_permanently(id)
+            .context("Couldn't delete the event")?;
+        cx.emit(LibraryEvent::EventsChanged);
+        Ok(())
+    }
+
+    /// Permanently removes every deleted event. Returns how many.
+    pub fn empty_event_trash(&mut self, cx: &mut Context<Self>) -> Result<usize> {
+        let trashed = self.store.trashed_events()?;
+        for event in &trashed {
+            self.store
+                .delete_event_permanently(event.id())
+                .context("Couldn't empty the trash")?;
+        }
+        cx.emit(LibraryEvent::EventsChanged);
+        Ok(trashed.len())
+    }
+
     pub fn restore_event(&mut self, id: EventId, cx: &mut Context<Self>) -> Result<()> {
         let mut event = self
             .store

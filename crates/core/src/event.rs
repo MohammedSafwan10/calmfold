@@ -306,6 +306,11 @@ impl Event {
     pub fn is_trashed(&self) -> bool {
         self.deleted_at.is_some()
     }
+    /// When it was moved to the trash.
+    #[must_use]
+    pub fn deleted_at(&self) -> Option<Timestamp> {
+        self.deleted_at
+    }
 
     // ---- Changes ----
 

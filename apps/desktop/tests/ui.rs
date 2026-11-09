@@ -2474,6 +2474,64 @@ fn one_occurrence_of_a_repeating_event_can_change_on_its_own(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
+fn deleted_events_can_be_restored_or_removed_for_good(cx: &mut TestAppContext) {
+    use keepstone_core::Time;
+    use keepstone_desktop::actions::{GoCalendar, ShowDeletedEvents};
+
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    dispatch(&app, cx, GoCalendar);
+    let lib = library(&app, cx);
+    let today = keepstone_core::clock::today();
+    let make = |cx: &mut TestAppContext, title: &str| {
+        cx.update(|cx| {
+            lib.update(cx, |l, cx| {
+                let id = l
+                    .create_timed_event(
+                        title,
+                        today.to_datetime(Time::constant(15, 0, 0, 0)),
+                        today.to_datetime(Time::constant(16, 0, 0, 0)),
+                        cx,
+                    )
+                    .expect("event");
+                l.trash_event(id, cx).expect("trash");
+                id
+            })
+        })
+    };
+    let dentist = make(cx, "Dentist");
+    let party = make(cx, "Party");
+    let trashed = |cx: &mut TestAppContext, id| {
+        cx.read(|cx| lib.read(cx).event(id))
+            .map(|e: keepstone_core::Event| e.is_trashed())
+    };
+
+    dispatch(&app, cx, ShowDeletedEvents);
+    click(&app, cx, leak(format!("restore-event-{dentist}")));
+    assert_eq!(trashed(cx, dentist), Some(false), "restored");
+
+    click(&app, cx, leak(format!("forget-event-{party}")));
+    assert!(dialog_open(&app, cx), "permanent delete asks first");
+    press(&app, cx, "escape");
+    assert_eq!(trashed(cx, party), Some(true), "Escape keeps it");
+    click(&app, cx, leak(format!("forget-event-{party}")));
+    press(&app, cx, "enter");
+    assert_eq!(trashed(cx, party), None, "gone for good");
+
+    // Empty trash removes everything that's left, after confirming.
+    cx.update(|cx| lib.update(cx, |l, cx| l.trash_event(dentist, cx)))
+        .expect("trash");
+    click(&app, cx, "empty-event-trash");
+    press(&app, cx, "enter");
+    assert_eq!(trashed(cx, dentist), None);
+    assert!(
+        cx.read(|cx| lib.read(cx).deleted_events())
+            .expect("list")
+            .is_empty()
+    );
+}
+
+#[gpui_kit::test]
 fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
     use keepstone_core::vault::template::Template;
     use keepstone_core::vault::{FieldKind, ItemFields, ItemKind};

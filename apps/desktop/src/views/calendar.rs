@@ -515,6 +515,12 @@ fn view_options(cx: &gpui_kit::App) -> impl IntoElement {
                     }),
             )
             .label("Events repeating 3+ times a week")
+            .separator()
+            .item(
+                PopupMenuItem::new("Deleted events…")
+                    .icon(Lucide::Trash)
+                    .action(Box::new(crate::actions::ShowDeletedEvents)),
+            )
         })
 }
 

@@ -16,6 +16,7 @@ actions!(
         GoTasks,
         GoCalendar,
         NewEvent,
+        ShowDeletedEvents,
         GoHabits,
         NewHabit,
         GoPasswords,

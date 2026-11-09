@@ -30,9 +30,9 @@ use crate::actions::{
     ChangeMasterPassword, CreateRecoveryKey, ExportNotes, ExportVaultBackup, FindInNote, FindNext,
     FindPrevious, GeneratePassword, GoCalendar, GoHabits, GoNotes, GoPasswords, GoSettings,
     GoTasks, GoToday, ImportNotes, LockVault, NewEvent, NewHabit, NewLogin, NewNote, NewProject,
-    NewTask, OpenCommandPalette, OpenDailyNote, RestoreVaultBackup, ShowVaultArchives,
-    ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseDarkTheme, UseLightTheme,
-    UseSystemTheme,
+    NewTask, OpenCommandPalette, OpenDailyNote, RestoreVaultBackup, ShowDeletedEvents,
+    ShowVaultArchives, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseDarkTheme,
+    UseLightTheme, UseSystemTheme,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
@@ -805,6 +805,12 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["events", "schedule", "agenda", "month", "week"],
         ),
         cmd(
+            "Show deleted events",
+            Lucide::Trash,
+            Box::new(ShowDeletedEvents),
+            &["calendar", "trash", "restore", "undelete"],
+        ),
+        cmd(
             "Go to Habits",
             Lucide::Sprout,
             Box::new(GoHabits),
@@ -951,6 +957,11 @@ pub fn register_commands(cx: &mut App) {
         with_shell(cx, |s, w, cx| s.navigate(Route::Calendar, w, cx))
     });
     cx.on_action(|_: &NewEvent, cx| with_shell(cx, |s, w, cx| s.new_event(w, cx)));
+    cx.on_action(|_: &ShowDeletedEvents, cx| {
+        with_shell(cx, |s, w, cx| {
+            crate::views::event_trash::open_event_trash(s.library.clone(), w, cx)
+        })
+    });
     cx.on_action(|_: &GoHabits, cx| with_shell(cx, |s, w, cx| s.navigate(Route::Habits, w, cx)));
     cx.on_action(|_: &NewHabit, cx| with_shell(cx, |s, w, cx| s.new_habit(w, cx)));
     cx.on_action(|_: &GoPasswords, cx| {
