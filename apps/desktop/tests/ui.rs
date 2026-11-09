@@ -1737,3 +1737,92 @@ fn every_calendar_view_renders_events_and_tasks(cx: &mut TestAppContext) {
         assert_eq!(span.tasks_on(today).count(), 1, "{mode:?} shows the task");
     }
 }
+
+#[gpui_kit::test]
+fn habits_quick_add_check_in_keyboard_and_archive(cx: &mut TestAppContext) {
+    use keepstone_core::habit::Schedule;
+    use keepstone_desktop::actions::{GoHabits, NewHabit};
+
+    let app = launch(cx);
+    dispatch(&app, cx, NewHabit);
+    assert_eq!(route(&app, cx), Route::Habits);
+    type_text(&app, cx, "Drink water 3 times a day");
+    press(&app, cx, "enter");
+    type_text(&app, cx, "Run 3x a week");
+    press(&app, cx, "enter");
+    let habits = cx.read(|cx| app.shell.read(cx).habits().clone());
+    let list = cx.read(|cx| habits.read(cx).habits().to_vec());
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].habit.name(), "Drink water");
+    assert_eq!(list[0].habit.target(), 3);
+    assert_eq!(list[1].habit.schedule(), Schedule::PerWeek(3));
+
+    // Keyboard: select the first habit, Space counts up toward the goal.
+    dispatch(&app, cx, GoHabits);
+    press(&app, cx, "down");
+    press(&app, cx, "space");
+    press(&app, cx, "space");
+    let water = cx.read(|cx| habits.read(cx).habits()[0].clone());
+    assert_eq!(water.today_count, 2);
+    assert!(!water.done_today());
+    press(&app, cx, "space");
+    let water = cx.read(|cx| habits.read(cx).habits()[0].clone());
+    assert!(water.done_today());
+    assert_eq!(water.stats.current_streak, 1);
+
+    // Archiving moves it out of the active list; the history stays.
+    let id = water.habit.id();
+    cx.update(|cx| {
+        app.shell.read(cx).library().clone().update(cx, |lib, cx| {
+            lib.archive_habit(id, cx).expect("archive");
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| habits.read(cx).habits().len()), 1);
+    cx.update(|cx| habits.update(cx, |h, cx| h.set_archived(true, cx)));
+    let archived = cx.read(|cx| habits.read(cx).habits().to_vec());
+    assert_eq!(archived[0].today_count, 3, "history kept");
+
+    // Future check-ins are refused.
+    let tomorrow = keepstone_core::clock::today().tomorrow().expect("date");
+    let other = list[1].habit.id();
+    let err = cx.update(|cx| {
+        app.shell
+            .read(cx)
+            .library()
+            .clone()
+            .update(cx, |lib, cx| lib.tap_habit(other, tomorrow, cx).is_err())
+    });
+    assert!(err);
+}
+
+#[gpui_kit::test]
+fn habit_insights_render_with_history(cx: &mut TestAppContext) {
+    use keepstone_desktop::actions::GoHabits;
+    use keepstone_desktop::views::habits::HabitTab;
+
+    let app = launch(cx);
+    let today = keepstone_core::clock::today();
+    cx.update(|cx| {
+        app.shell.read(cx).library().clone().update(cx, |lib, cx| {
+            let read = lib.quick_add_habit("Read daily", cx).expect("habit");
+            lib.quick_add_habit("Run 3x a week", cx).expect("habit");
+            for k in 1..20 {
+                let day = today.checked_add(jiff::Span::new().days(-k)).expect("date");
+                lib.set_habit_count(read, day, 1, cx).expect("check-in");
+            }
+        })
+    });
+    dispatch(&app, cx, GoHabits);
+    let habits = cx.read(|cx| app.shell.read(cx).habits().clone());
+    cx.update(|cx| habits.update(cx, |h, cx| h.set_tab(HabitTab::Insights, cx)));
+    cx.update_window(app.window, |_, window, _| window.refresh())
+        .expect("window");
+    cx.run_until_parked();
+    let read = cx.read(|cx| habits.read(cx).habits()[0].clone());
+    assert_eq!(read.stats.current_streak, 19, "backfilled days count");
+    assert!(read.stats.strength > 0.5);
+    // Keyboard selection does nothing on Insights (no rows to act on).
+    press(&app, cx, "down");
+    assert_eq!(cx.read(|cx| habits.read(cx).selected_habit()), None);
+}

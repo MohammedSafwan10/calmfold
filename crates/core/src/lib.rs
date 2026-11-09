@@ -10,6 +10,7 @@ pub mod event;
 pub mod event_quick_add;
 pub mod format;
 pub mod habit;
+pub mod habit_insights;
 mod id;
 pub mod links;
 pub mod note;

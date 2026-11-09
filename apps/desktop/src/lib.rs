@@ -118,6 +118,19 @@ pub fn start(
                 calendar.update(cx, |c, cx| c.set_mode(mode, cx));
             }
         }
+        // KEEPSTONE_DEV_HABITS=insights|archived: open that Habits tab.
+        if let Ok(name) = std::env::var("KEEPSTONE_DEV_HABITS") {
+            use views::habits::HabitTab;
+            let tab = match name.trim() {
+                "insights" => Some(HabitTab::Insights),
+                "archived" => Some(HabitTab::Archived),
+                _ => None,
+            };
+            if let Some(tab) = tab {
+                let habits = shell.read(cx).habits().clone();
+                habits.update(cx, |h, cx| h.set_tab(tab, cx));
+            }
+        }
         // KEEPSTONE_DEV_NOTE=<title>: open that note with the caret at the end of its body.
         if let Ok(title) = std::env::var("KEEPSTONE_DEV_NOTE") {
             window.update(cx, |_, window, cx| {

@@ -54,9 +54,12 @@ Calm, organized, not noisy; keyboard path; empty/error states; one source of tru
 
 ## 5. Habits
 
-- [ ] Research (Streaks, Loop Habit Tracker, Things-style calm).
-- [ ] Domain: habit, schedule (daily / weekdays / n per week), check-ins, streaks, tests.
-- [ ] UI: list with week strip, quick check, history heatmap, reminders later.
+- [x] Research (Streaks, Loop Habit Tracker, Things-style calm).
+- [x] Domain: habit, schedule (daily / weekdays / n per week), daily goal, check-ins,
+      streaks, strength (EMA), insights (rates by day / weekday / period); migration 0004.
+- [x] UI: Today list (week as dots, streak, check), Insights tab (headline numbers,
+      30-day chart, weekday chart, strength ranking, per-habit table), Archived tab,
+      habit panel (schedule, goal, stats, 90-day strength line, heatmap). Reminders later.
 
 ## 6. Today dashboard, next level
 

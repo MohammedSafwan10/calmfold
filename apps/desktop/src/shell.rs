@@ -27,16 +27,17 @@ use keepstone_core::NoteId;
 use keepstone_ui::appearance::{self, ThemePreference};
 
 use crate::actions::{
-    ExportNotes, FindInNote, FindNext, FindPrevious, GoCalendar, GoNotes, GoSettings, GoTasks,
-    GoToday, ImportNotes, NewEvent, NewNote, NewProject, NewTask, OpenCommandPalette,
-    OpenDailyNote, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseDarkTheme,
-    UseLightTheme, UseSystemTheme,
+    ExportNotes, FindInNote, FindNext, FindPrevious, GoCalendar, GoHabits, GoNotes, GoSettings,
+    GoTasks, GoToday, ImportNotes, NewEvent, NewHabit, NewNote, NewProject, NewTask,
+    OpenCommandPalette, OpenDailyNote, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar,
+    UseDarkTheme, UseLightTheme, UseSystemTheme,
 };
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
 use crate::paths::AppPaths;
 use crate::ui_state::{self, LayoutState, LayoutStore};
 use crate::views::calendar::CalendarView;
+use crate::views::habits::HabitsView;
 use crate::views::notes::NotesView;
 use crate::views::settings::SettingsView;
 use crate::views::tasks::TasksView;
@@ -61,11 +62,13 @@ pub struct AppShell {
     /// Set while the command palette is the open dialog.
     palette_open: std::rc::Rc<std::cell::Cell<bool>>,
     due_now: usize,
+    habits_left: usize,
     library: Entity<Library>,
     today: Entity<TodayView>,
     notes: Entity<NotesView>,
     tasks: Entity<TasksView>,
     calendar: Entity<CalendarView>,
+    habits: Entity<HabitsView>,
     settings: Entity<SettingsView>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -91,6 +94,7 @@ impl AppShell {
         let notes = cx.new(|cx| NotesView::new(library.clone(), layout.clone(), window, cx));
         let tasks = cx.new(|cx| TasksView::new(library.clone(), window, cx));
         let calendar = cx.new(|cx| CalendarView::new(library.clone(), window, cx));
+        let habits = cx.new(|cx| HabitsView::new(library.clone(), window, cx));
         let settings = cx.new(|cx| SettingsView::new(paths.data_dir.clone(), cx));
 
         let subscriptions = vec![
@@ -109,7 +113,10 @@ impl AppShell {
                 this.handle_nav(*nav, window, cx)
             }),
             cx.subscribe(&library, |this, _, event, cx| {
-                if *event == LibraryEvent::TasksChanged {
+                if matches!(
+                    event,
+                    LibraryEvent::TasksChanged | LibraryEvent::HabitsChanged
+                ) {
                     this.refresh_badges(cx);
                 }
             }),
@@ -129,6 +136,7 @@ impl AppShell {
                     this.tasks
                         .update(cx, |tasks, cx| tasks.refresh_if_new_day(cx));
                     this.calendar.update(cx, |calendar, cx| calendar.reload(cx));
+                    this.habits.update(cx, |habits, cx| habits.reload(cx));
                     this.refresh_badges(cx);
                 }
             }),
@@ -139,11 +147,13 @@ impl AppShell {
             layout,
             palette_open: std::rc::Rc::default(),
             due_now: 0,
+            habits_left: 0,
             library,
             today,
             notes,
             tasks,
             calendar,
+            habits,
             settings,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -163,6 +173,12 @@ impl AppShell {
     fn refresh_badges(&mut self, cx: &mut Context<Self>) {
         let counts = self.library.read(cx).task_counts().unwrap_or_default();
         self.due_now = counts.due_today + counts.overdue;
+        self.habits_left = self
+            .library
+            .read(cx)
+            .habits(false)
+            .map(|hs| hs.iter().filter(|h| h.due_today && !h.done_today()).count())
+            .unwrap_or(0);
         cx.notify();
     }
 
@@ -226,6 +242,7 @@ impl AppShell {
         match badge {
             Badge::None => 0,
             Badge::TasksDueNow => self.due_now,
+            Badge::HabitsLeft => self.habits_left,
         }
     }
 
@@ -245,6 +262,7 @@ impl AppShell {
                 .notes
                 .update(cx, |notes, cx| notes.ensure_selection(window, cx)),
             Route::Calendar => self.calendar.update(cx, |c, cx| c.reload(cx)),
+            Route::Habits => self.habits.update(cx, |h, cx| h.reload(cx)),
             Route::Tasks | Route::Settings => {}
         }
         self.focus_route(window, cx);
@@ -257,6 +275,7 @@ impl AppShell {
             Route::Notes => self.notes.focus_handle(cx),
             Route::Tasks => self.tasks.focus_handle(cx),
             Route::Calendar => self.calendar.focus_handle(cx),
+            Route::Habits => self.habits.focus_handle(cx),
             Route::Settings => self.settings.focus_handle(cx),
         };
         window.focus(&handle, cx);
@@ -291,6 +310,12 @@ impl AppShell {
         self.navigate(Route::Calendar, window, cx);
         self.calendar
             .update(cx, |calendar, cx| calendar.focus_quick_add(window, cx));
+    }
+
+    pub fn new_habit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(Route::Habits, window, cx);
+        self.habits
+            .update(cx, |habits, cx| habits.focus_quick_add(window, cx));
     }
 
     pub fn open_daily_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -344,6 +369,10 @@ impl AppShell {
 
     pub fn calendar(&self) -> &Entity<CalendarView> {
         &self.calendar
+    }
+
+    pub fn habits(&self) -> &Entity<HabitsView> {
+        &self.habits
     }
 
     pub fn layout(&self, cx: &App) -> LayoutState {
@@ -693,6 +722,12 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["create", "calendar", "meeting", "appointment"],
         ),
         cmd(
+            "New habit",
+            Lucide::Sprout,
+            Box::new(NewHabit),
+            &["create", "routine", "streak"],
+        ),
+        cmd(
             "Go to Today",
             Lucide::House,
             Box::new(GoToday),
@@ -710,6 +745,12 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             Lucide::CalendarDays,
             Box::new(GoCalendar),
             &["events", "schedule", "agenda", "month", "week"],
+        ),
+        cmd(
+            "Go to Habits",
+            Lucide::Sprout,
+            Box::new(GoHabits),
+            &["routine", "streak", "check in"],
         ),
         cmd(
             "Open settings",
@@ -798,6 +839,8 @@ pub fn register_commands(cx: &mut App) {
         with_shell(cx, |s, w, cx| s.navigate(Route::Calendar, w, cx))
     });
     cx.on_action(|_: &NewEvent, cx| with_shell(cx, |s, w, cx| s.new_event(w, cx)));
+    cx.on_action(|_: &GoHabits, cx| with_shell(cx, |s, w, cx| s.navigate(Route::Habits, w, cx)));
+    cx.on_action(|_: &NewHabit, cx| with_shell(cx, |s, w, cx| s.new_habit(w, cx)));
     cx.on_action(|_: &GoSettings, cx| {
         with_shell(cx, |s, w, cx| s.navigate(Route::Settings, w, cx))
     });
@@ -871,6 +914,7 @@ impl Render for AppShell {
             Route::Notes => self.notes.clone().into(),
             Route::Tasks => self.tasks.clone().into(),
             Route::Calendar => self.calendar.clone().into(),
+            Route::Habits => self.habits.clone().into(),
             Route::Settings => self.settings.clone().into(),
         };
         let theme = cx.theme();

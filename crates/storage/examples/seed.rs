@@ -6,7 +6,9 @@
 //! Never point this at a real data folder.
 #![allow(clippy::expect_used)]
 
-use keepstone_core::{Event, Note, Priority, Recurrence, Task, TaskStatus, clock, parse_event};
+use keepstone_core::{
+    Event, Habit, Note, Priority, Recurrence, Task, TaskStatus, clock, parse_event, parse_habit,
+};
 use keepstone_storage::Store;
 
 fn main() {
@@ -111,6 +113,37 @@ fn main() {
                 .expect("repeat");
         }
         store.save_event(&event).expect("save event");
+    }
+
+    // Habits with a few weeks of history (some misses, so streaks differ).
+    for (text, every, skip) in [
+        ("Read 20 pages daily", 1, 5),
+        ("Drink water 8 times a day", 1, 0),
+        ("Gym mon wed fri", 1, 7),
+        ("Run 3x a week", 2, 0),
+        ("Meditate weekdays", 1, 4),
+    ] {
+        let draft = parse_habit(text);
+        let mut habit = Habit::new(&draft.name, draft.schedule, now).expect("habit");
+        habit.set_target(draft.target, now).expect("target");
+        store.save_habit(&habit).expect("save habit");
+        for k in 1..=60_i64 {
+            let date = day(-k);
+            if !draft.schedule.is_due(date) || k % every != 0 || (skip > 0 && k % skip == 0) {
+                continue;
+            }
+            let count = if draft.target > 1 && k % 3 == 0 {
+                draft.target / 2
+            } else {
+                draft.target
+            };
+            store
+                .set_checkin(habit.id(), date, count)
+                .expect("check-in");
+        }
+        if draft.target > 1 {
+            store.set_checkin(habit.id(), day(0), 5).expect("check-in");
+        }
     }
     println!("Seeded {path}");
 }

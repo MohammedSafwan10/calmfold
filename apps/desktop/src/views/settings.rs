@@ -26,7 +26,9 @@ use keepstone_ui::appearance::{
 };
 use keepstone_ui::components::segmented;
 
-use crate::actions::{CALENDAR_SHORTCUTS, EDITING_SHORTCUTS, SHORTCUTS, ShortcutGroup};
+use crate::actions::{
+    CALENDAR_SHORTCUTS, EDITING_SHORTCUTS, HABIT_SHORTCUTS, SHORTCUTS, ShortcutGroup,
+};
 
 pub struct SettingsView {
     data_dir: PathBuf,
@@ -365,6 +367,14 @@ impl SettingsView {
             })
             .collect();
 
+        groups.push(
+            SettingGroup::new().title("Habits").items(
+                HABIT_SHORTCUTS
+                    .iter()
+                    .map(|s| key_row(s.keys, s.label))
+                    .collect::<Vec<_>>(),
+            ),
+        );
         groups.push(
             SettingGroup::new().title("Calendar").items(
                 CALENDAR_SHORTCUTS

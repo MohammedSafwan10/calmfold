@@ -310,6 +310,30 @@ impl Habit {
         }
     }
 
+    /// Strength at the end of each of the last `days` days, oldest first
+    /// (for a trend line). Days before `first` are 0.
+    #[must_use]
+    pub fn strength_series(
+        &self,
+        counts: &HashMap<Date, u16>,
+        first: Date,
+        today: Date,
+        days: i64,
+    ) -> Vec<(Date, f64)> {
+        (0..days)
+            .rev()
+            .map(|k| {
+                let day = add_days(today, -k);
+                let s = if day < first {
+                    0.
+                } else {
+                    self.stats(counts, first, day).strength
+                };
+                (day, s)
+            })
+            .collect()
+    }
+
     fn week_stats(
         &self,
         n: u8,
@@ -726,6 +750,17 @@ mod tests {
         assert!((0.0..=1.0).contains(&weak.strength));
         let empty = h.stats(&HashMap::new(), d("2026-11-08"), today);
         assert!(empty.strength.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn strength_series_rises_with_check_ins() {
+        let h = Habit::new("Read", Schedule::Daily, now()).expect("habit");
+        let c = counts_of(&range("2026-11-01", "2026-11-09"));
+        let series = h.strength_series(&c, d("2026-11-01"), d("2026-11-09"), 12);
+        assert_eq!(series.len(), 12);
+        assert_eq!(series[0], (d("2026-10-29"), 0.));
+        assert!(series.windows(2).all(|w| w[1].1 >= w[0].1));
+        assert_eq!(series[11].0, d("2026-11-09"));
     }
 
     #[test]

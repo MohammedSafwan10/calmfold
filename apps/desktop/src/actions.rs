@@ -16,6 +16,8 @@ actions!(
         GoTasks,
         GoCalendar,
         NewEvent,
+        GoHabits,
+        NewHabit,
         GoSettings,
         ToggleSidebar,
         ToggleListPanel,
@@ -76,6 +78,21 @@ actions!(
         CalendarQuickAdd,
     ]
 );
+
+// Habit list keys (context "HabitList", never in the quick-add field).
+actions!(
+    keepstone_habits,
+    [
+        HabitSelectPrevious,
+        HabitSelectNext,
+        HabitToggleSelected,
+        HabitOpenSelected,
+        HabitQuickAdd,
+    ]
+);
+
+/// Key context set on the habit list.
+pub const HABITS_CONTEXT: &str = "HabitList";
 
 /// Key context set on the note editor; format shortcuts only work there.
 pub const NOTE_EDITOR_CONTEXT: &str = "NoteEditor";
@@ -156,6 +173,7 @@ pub const SHORTCUTS: &[Shortcut] = shortcuts![
     Navigate, "2", "Notes", GoNotes;
     Navigate, "3", "Tasks", GoTasks;
     Navigate, "4", "Calendar", GoCalendar;
+    Navigate, "5", "Habits", GoHabits;
     View, "\\", "Toggle sidebar", ToggleSidebar;
     View, "shift-l", "Toggle note list", ToggleListPanel;
     View, "f", "Find in note", FindInNote;
@@ -216,6 +234,15 @@ const fn plain(
     }
 }
 
+/// Habit list keys, active while the list has focus.
+pub const HABIT_SHORTCUTS: &[Shortcut] = &[
+    plain("up", "Previous habit", || Box::new(HabitSelectPrevious)),
+    plain("down", "Next habit", || Box::new(HabitSelectNext)),
+    plain("space", "Check in today", || Box::new(HabitToggleSelected)),
+    plain("enter", "Open habit", || Box::new(HabitOpenSelected)),
+    plain("n", "New habit", || Box::new(HabitQuickAdd)),
+];
+
 /// Built-in editing keys of the note editor (zorite-editor), shown for reference only.
 pub const EDITING_SHORTCUTS: &[(&str, &str)] = &[
     (shortcut!("z"), "Undo"),
@@ -258,6 +285,12 @@ pub fn bind(cx: &mut App) {
     bindings.extend(CALENDAR_SHORTCUTS.iter().filter_map(|s| {
         KeyBinding::load(s.keys, s.action(), calendar.clone(), false, None, cx).ok()
     }));
+    let habits = gpui_kit::KeyBindingContextPredicate::parse(HABITS_CONTEXT)
+        .ok()
+        .map(std::rc::Rc::new);
+    bindings.extend(HABIT_SHORTCUTS.iter().filter_map(|s| {
+        KeyBinding::load(s.keys, s.action(), habits.clone(), false, None, cx).ok()
+    }));
     // Quitting by shortcut is a macOS convention; Windows and Linux close the window.
     if cfg!(target_os = "macos") {
         bindings.push(KeyBinding::new("cmd-q", Quit, None));
@@ -277,6 +310,7 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::action("New Note", NewNote),
             MenuItem::action("New Task", NewTask),
             MenuItem::action("New Event", NewEvent),
+            MenuItem::action("New Habit", NewHabit),
             MenuItem::action("New Project…", NewProject),
             MenuItem::action("Today's Note", OpenDailyNote),
             MenuItem::separator(),
@@ -290,6 +324,7 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::action("Notes", GoNotes),
             MenuItem::action("Tasks", GoTasks),
             MenuItem::action("Calendar", GoCalendar),
+            MenuItem::action("Habits", GoHabits),
             MenuItem::separator(),
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::action("Toggle Note List", ToggleListPanel),
@@ -327,19 +362,21 @@ mod tests {
                 s.keys
             );
         }
-        let mut calendar_keys = std::collections::HashSet::new();
-        for s in CALENDAR_SHORTCUTS {
-            assert!(
-                gpui_kit::Keystroke::parse(s.keys).is_ok(),
-                "{} does not parse",
-                s.keys
-            );
-            assert!(calendar_keys.insert(s.keys), "{} is bound twice", s.keys);
-            assert!(
-                !seen.contains(s.keys),
-                "{} clashes with an app shortcut",
-                s.keys
-            );
+        for table in [CALENDAR_SHORTCUTS, HABIT_SHORTCUTS] {
+            let mut calendar_keys = std::collections::HashSet::new();
+            for s in table {
+                assert!(
+                    gpui_kit::Keystroke::parse(s.keys).is_ok(),
+                    "{} does not parse",
+                    s.keys
+                );
+                assert!(calendar_keys.insert(s.keys), "{} is bound twice", s.keys);
+                assert!(
+                    !seen.contains(s.keys),
+                    "{} clashes with an app shortcut",
+                    s.keys
+                );
+            }
         }
         for (keys, _) in EDITING_SHORTCUTS {
             assert!(gpui_kit::Keystroke::parse(keys).is_ok());

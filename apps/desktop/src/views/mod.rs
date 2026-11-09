@@ -7,6 +7,10 @@ pub mod calendar_layout;
 pub mod code_highlight;
 pub mod diagram;
 pub mod event_detail;
+pub mod habit_detail;
+pub mod habit_insights_view;
+pub mod habit_widgets;
+pub mod habits;
 pub mod note_editor;
 pub mod notes;
 pub mod settings;
@@ -24,15 +28,17 @@ pub enum Route {
     Notes,
     Tasks,
     Calendar,
+    Habits,
     Settings,
 }
 
 impl Route {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Today,
         Self::Notes,
         Self::Tasks,
         Self::Calendar,
+        Self::Habits,
         Self::Settings,
     ];
 
@@ -51,6 +57,7 @@ impl Route {
             Self::Notes => "Notes",
             Self::Tasks => "Tasks",
             Self::Calendar => "Calendar",
+            Self::Habits => "Habits",
             Self::Settings => "Settings",
         }
     }

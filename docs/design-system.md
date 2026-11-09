@@ -169,6 +169,16 @@ Every row menu follows the same shape (see `views/task_row.rs`, `note_row_menu`)
 - Plain-key shortcuts (`CALENDAR_SHORTCUTS`) live only on the grid, never in
   the quick-add field.
 
+## Habits
+
+- One card, hairline rows; columns line up with the header (same padding and
+  gaps, fixed lane widths in `habits.rs`).
+- Past days are marks, not controls-sized boxes: solid dot = done, faint dot
+  = partly, hollow ring = missed, pinpoint = not expected. Only today gets a
+  real round check (`habit_widgets::check_button`).
+- Charts: bars at `primary` 55 %, full `primary` only for the point that
+  matters (today, best weekday); empty days at `muted_foreground` 25 %.
+
 ## Shared components (`crates/ui/src/components.rs`)
 
 `segmented` (controlled segmented control), `page_header`, `empty_state`,

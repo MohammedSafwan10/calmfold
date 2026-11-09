@@ -26,6 +26,8 @@ pub enum Badge {
     None,
     /// Open tasks due today or overdue.
     TasksDueNow,
+    /// Habits scheduled today and not done yet.
+    HabitsLeft,
 }
 
 pub struct NavChild {
@@ -130,6 +132,14 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
             icon: Lucide::CalendarDays,
             route: Route::Calendar,
             badge: Badge::None,
+            children: &[],
+            dynamic: None,
+        },
+        NavEntry {
+            label: "Habits",
+            icon: Lucide::Sprout,
+            route: Route::Habits,
+            badge: Badge::HabitsLeft,
             children: &[],
             dynamic: None,
         },

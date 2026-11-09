@@ -6,7 +6,7 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 - Branch `main`. `scripts/check.sh` passes (fmt, clippy `-D warnings`, all tests).
 - Done from `docs/TASKS.md`: editor perf (to 50 KB), find, code colors, Mermaid,
-  spell-check, 20 themes + typography, **Calendar** (§4).
+  spell-check, 20 themes + typography, Calendar (§4), **Habits** (§5).
 - Calendar: `core::event` (+ quick add `event_quick_add`), migration 0003,
   `storage/events.rs`, `Library::calendar` / event methods (`EventsChanged`),
   `views/calendar.rs` (state, header, agenda), `calendar_grid.rs` (month, week/day
@@ -16,7 +16,7 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Next steps (in order)
 
-`docs/TASKS.md` §5 Habits → §6 Today rebuild → §7 Password vault; then the
+`docs/TASKS.md` §6 Today rebuild → §7 Password vault; then the
 500 KB+ editor item in §1.
 
 ## Known issues / risks
@@ -51,6 +51,17 @@ KEEPSTONE_DEV_ROUTE=calendar KEEPSTONE_DEV_CALENDAR=week cargo run  # debug: cal
 ```
 
 ## Log
+
+### 2026-11-09: Habits
+
+- Research: Streaks (one big tap per habit), Loop (strength score that
+  forgives a missed day), Kadō's EMA spec (α = 0.05). Built our own EMA.
+- `core::habit` (schedule, goal, tap, stats, quick add), `core::habit_insights`
+  (expected-vs-done rates), migration 0004, `storage/habits.rs`, Library habit
+  methods (`HabitsChanged`), screens `habits.rs`, `habit_insights_view.rs`,
+  `habit_detail.rs`, `habit_widgets.rs`. Sidebar badge = habits left today.
+- First design was a wall of check boxes; redesigned to dots + one check, in
+  one card. Checked in the real window (dark): Today and Insights tabs.
 
 ### 2026-11-09: Calendar
 
