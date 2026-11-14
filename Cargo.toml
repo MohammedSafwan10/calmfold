@@ -92,8 +92,15 @@ dbg_macro = "deny"
 todo = "warn"
 
 # GPUI is slow in plain debug builds. Optimise the framework, keep our crates debuggable.
+# Disk: full debug info on ~600 dependencies was most of a 60 GB target
+# folder. Our crates keep line tables (panics and backtraces still show
+# file:line); dependencies get none. Run scripts/clean-build.sh weekly.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
 
 [profile.dev.package.calmfold-desktop]
 opt-level = 0

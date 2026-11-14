@@ -58,6 +58,31 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 
 ## Log
 
+### 2026-11-11: Build disk fixed
+
+- `[profile.dev]` debug = line-tables-only, dependencies debug = false.
+  Clean `cargo build` + `scripts/check.sh` (clippy + all tests): target
+  4.0 GB (was ~60 GB). `scripts/clean-build.sh` (cargo-sweep, 7 days)
+  keeps it level; run weekly. Local release/perf builds are optional (CI
+  builds releases).
+- Windows: the title-bar panel toggles `occlude` the drag area, so mouse
+  clicks reach them (Windows hit-tests every hitbox and reported caption).
+  Today's empty notes hint says Ctrl+N off macOS. Not yet checked on Windows.
+- Website work in `website/` (Astro 7.4, real screens via
+  `scripts/capture-screens.sh`) is in progress and not committed.
+
+### 2026-11-11: Paused development; cleared generated builds and caches
+
+- At the owner's request, ran `cargo clean` and removed Cargo's registry
+  downloads, extracted sources, index and Git dependency caches, plus
+  `website/node_modules`. Source, lockfiles, branding and app data were kept.
+- Workspace now occupies about 145 MB; disk available space rose from
+  about 167 GiB to 230 GiB. Cargo reported removing 87.5 GiB of logical build
+  files (about 62 GB as measured by `du` before cleaning).
+- On resuming, Cargo will download dependencies and rebuild; run the
+  website's package-manager install before working on it. No build/tests
+  were run after cleanup, to avoid recreating the removed artifacts.
+
 ### 2026-11-09: Renamed to Calmfold (by Nexdark Labs)
 
 - Keepstone → Calmfold everywhere: crates (`calmfold-*`), binary `calmfold`,

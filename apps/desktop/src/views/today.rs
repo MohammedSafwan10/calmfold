@@ -1027,7 +1027,14 @@ impl TodayView {
             ))
             .map(|c| {
                 if self.recent.is_empty() {
-                    c.child(Self::quiet("No notes yet. Press ⌘N to write one.", cx))
+                    c.child(Self::quiet(
+                        if cfg!(target_os = "macos") {
+                            "No notes yet. Press ⌘N to write one."
+                        } else {
+                            "No notes yet. Press Ctrl+N to write one."
+                        },
+                        cx,
+                    ))
                 } else {
                     c.child(v_flex().children(self.recent.iter().map(|n| {
                         let id = n.id;

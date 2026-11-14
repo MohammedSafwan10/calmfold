@@ -12,6 +12,7 @@ Read this file, then [`HANDOFF.md`](HANDOFF.md) for the current state, then the
 ```bash
 source "$HOME/.cargo/env"          # if cargo is not on PATH
 scripts/check.sh                   # fmt --check + clippy -D warnings + all tests (run before every commit)
+scripts/clean-build.sh             # weekly: drop build files unused for 7 days (keeps target/ ~4-6 GB)
 cargo run                          # run the desktop app (debug data: "Calmfold Dev" folder)
 scripts/dev.sh [--sample]          # run + auto-rebuild/relaunch on save (needs watchexec)
 CALMFOLD_DATA_DIR=/tmp/ks cargo run   # run against a throwaway data folder

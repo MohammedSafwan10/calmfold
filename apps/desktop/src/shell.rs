@@ -702,8 +702,13 @@ impl AppShell {
                 .pr_2()
                 .items_center()
                 // Panel toggles live here so they never move when a panel collapses.
+                // `occlude` keeps the title bar's drag area out from under them:
+                // Windows hit-tests every hitbox under the pointer, and without
+                // this it reports "caption" and the OS swallows the click.
                 .child(
                     h_flex()
+                        .id("title-bar-toggles")
+                        .occlude()
                         .gap_1()
                         .child(
                             Button::new("toggle-sidebar")
