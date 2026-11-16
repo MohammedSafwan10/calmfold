@@ -8,6 +8,7 @@ pub mod clock;
 mod error;
 pub mod event;
 pub mod event_quick_add;
+pub mod focus;
 pub mod format;
 pub mod habit;
 pub mod habit_insights;
@@ -27,8 +28,12 @@ pub mod vault;
 pub use error::{DomainError, DomainResult};
 pub use event::{Event, EventRecord, Exception, Occasion, OccasionKind, Occurrence};
 pub use event_quick_add::{EventDraft, parse_event};
+pub use focus::{
+    FOCUS_DURATION_PRESETS, FocusKind, FocusPreset, FocusSession, FocusTimer, MAX_DURATION_MINS,
+    MIN_DURATION_MINS, TaskFocusStats, TimerState, format_duration, format_mm_ss,
+};
 pub use habit::{Habit, HabitDraft, HabitRecord, Schedule, Stats, parse_habit};
-pub use id::{EventId, HabitId, NoteId, ProjectId, TaskId, VaultItemId};
+pub use id::{EventId, FocusSessionId, HabitId, NoteId, ProjectId, TaskId, VaultItemId};
 pub use jiff::{
     Timestamp,
     civil::{Date, DateTime, Time},

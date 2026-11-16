@@ -7,6 +7,7 @@
 mod codec;
 mod error;
 mod events;
+mod focus;
 mod habits;
 mod notes;
 mod schema;

@@ -18,6 +18,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/0007_event_exceptions.sql")),
         M::up(include_str!("../migrations/0008_event_until.sql")),
         M::up(include_str!("../migrations/0009_event_occasion.sql")),
+        M::up(include_str!("../migrations/0010_focus.sql")),
     ])
 }
 

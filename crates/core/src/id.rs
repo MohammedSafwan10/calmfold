@@ -82,6 +82,10 @@ define_id!(
     HabitId
 );
 define_id!(
+    /// Identifies a [`crate::FocusSession`].
+    FocusSessionId
+);
+define_id!(
     /// Identifies a [`crate::vault::VaultItem`].
     VaultItemId
 );
