@@ -1,37 +1,57 @@
-name: Native updater probes
-
+name: Native updater integration
 on:
   workflow_dispatch:
+  workflow_call:
   pull_request:
-    paths:
-      - 'tools/update-engine-probe/**'
-      - '.github/workflows/update-probes.yml'
+    paths: ['native/**', 'scripts/test-sparkle.py', 'scripts/test-velopack.py', 'scripts/update-test-signing.py', 'scripts/fetch-sparkle.py', 'scripts/build-sparkle-core.py', 'tools/native-update-fixture/**', 'apps/desktop/src/updates/**', '.github/workflows/update-probes.yml']
   push:
-    branches: [main]
-    paths:
-      - 'tools/update-engine-probe/**'
-      - '.github/workflows/update-probes.yml'
-
+    branches: [main, 'codex/**']
+    paths: ['native/**', 'scripts/test-sparkle.py', 'scripts/test-velopack.py', 'scripts/update-test-signing.py', 'scripts/fetch-sparkle.py', 'scripts/build-sparkle-core.py', 'tools/native-update-fixture/**', 'apps/desktop/src/updates/**', '.github/workflows/update-probes.yml']
 permissions:
   contents: read
-
 jobs:
-  development-guards:
-    name: Development guards (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  sparkle:
+    runs-on: macos-latest
     timeout-minutes: 15
-    env:
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target/update-engine-probe
     steps:
       - uses: actions/checkout@v4
-      - name: Pinned toolchain
-        run: rustup show
-      - name: Compile and run non-installing probes
-        run: cargo run --locked --manifest-path tools/update-engine-probe/Cargo.toml
-
-# These jobs do not publish, install or prove an installed-app upgrade. They
-# deliberately have no signing secrets and no write permission to releases.
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - run: python3 scripts/build-sparkle-core.py
+      - name: Compile actual Sparkle bridge
+        run: >-
+          xcrun swiftc -swift-version 5 -warnings-as-errors -parse-as-library -D UPDATER_TESTING
+          -F target/tools/sparkle/core -framework Sparkle -framework AppKit
+          -Xlinker -rpath -Xlinker '@executable_path/../../../../Frameworks'
+          native/macos/CalmfoldUpdater.swift -o target/tools/sparkle/CalmfoldUpdater
+      - name: Installed upgrade, relaunch and signature rejection
+        run: python3 scripts/test-sparkle.py
+  velopack:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/native-update-fixture
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - uses: actions/setup-dotnet@v4
+        with: {dotnet-version: '8.0.x'}
+      - run: rustup show
+      - run: cargo fmt --manifest-path tools/native-update-fixture/Cargo.toml --check
+      - run: cargo clippy --locked --manifest-path tools/native-update-fixture/Cargo.toml --all-targets -- -D warnings
+      - run: cargo build --locked --release --manifest-path tools/native-update-fixture/Cargo.toml
+      - name: Build real native fixtures
+        shell: pwsh
+        run: |
+          dotnet tool install --tool-path "$env:RUNNER_TEMP/vpk" vpk --version 1.2.161
+          New-Item -ItemType Directory -Force target/native-release-test/payload | Out-Null
+          Copy-Item target/native-update-fixture/release/calmfold-native-update-fixture.exe target/native-release-test/payload/Calmfold.exe
+          Set-Content -NoNewline target/native-release-test/payload/sibling.txt 'old sibling'
+          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion 1.0.0 --packDir target/native-release-test/payload --mainExe Calmfold.exe --outputDir target/native-release-test/old --channel win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Set-Content -NoNewline target/native-release-test/payload/sibling.txt 'new sibling'
+          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion 1.0.1 --packDir target/native-release-test/payload --mainExe Calmfold.exe --outputDir target/native-release-test/new --channel win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Installed upgrade, relaunch and authenticated rejection
+        run: python scripts/test-velopack.py target/native-release-test/old target/native-release-test/new

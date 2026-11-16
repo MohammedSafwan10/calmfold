@@ -223,6 +223,14 @@ impl AppShell {
     /// Updating is optional: a failed save must leave the running app and its
     /// drafts intact. Unlike the OS quit callback, this path can refuse exit.
     pub fn prepare_update_restart(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.focus_ctrl.read(cx).timer().is_idle() {
+            calmfold_ui::feedback::error_toast(
+                "Finish or reset your timer before restarting to update.",
+                window,
+                cx,
+            );
+            return false;
+        }
         // Sheets own their own autosave/error state (including task details).
         // Do not close one implicitly or quit before its draft can be reviewed.
         if window.has_active_sheet(cx) || window.has_active_dialog(cx) {
@@ -1323,8 +1331,10 @@ fn update_notice(status: &crate::updates::Status, window: &mut Window, cx: &mut 
             })
             .autohide(false),
         Status::Available { version } => Notification::new().message(format!(
-            "Calmfold {version} is out. Download it from calmfold.nexdark.com."
+            "Calmfold {version} is available. Install the latest GitHub release once to enable in-app updates."
         )),
+        Status::Unsupported if crate::updates::manual_pending(cx) => Notification::new()
+            .message("Automatic updates aren't available for this platform."),
         Status::UpToDate if crate::updates::manual_pending(cx) => Notification::new().message(
             format!("Calmfold {} is up to date.", env!("CARGO_PKG_VERSION")),
         ),
@@ -1510,8 +1520,19 @@ pub fn register_commands(cx: &mut App) {
             if !s.prepare_update_restart(w, cx) {
                 return;
             }
+            let snapshot = crate::updates::snapshot_path(cx)
+                .and_then(|path| s.library.read(cx).backup_for_update(&path));
+            if snapshot.is_err() {
+                calmfold_ui::feedback::error_toast(
+                    "Couldn't create a recovery snapshot. The update was not installed.",
+                    w,
+                    cx,
+                );
+                return;
+            }
             match crate::updates::apply(cx) {
-                Ok(()) => cx.quit(),
+                Ok(true) => cx.quit(),
+                Ok(false) => {}
                 Err(err) => calmfold_ui::feedback::error_toast(format!("{err:#}"), w, cx),
             }
         })

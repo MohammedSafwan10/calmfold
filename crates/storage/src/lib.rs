@@ -29,6 +29,28 @@ pub struct Store {
 }
 
 impl Store {
+    /// Consistent SQLite snapshot, including committed WAL pages. Never copy a
+    /// live .sqlite3 file directly or overwrite an existing recovery snapshot.
+    pub fn backup_for_update(&self, path: &Path) -> StorageResult<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let file = options.open(path).map_err(StorageError::Io)?;
+        let result = self
+            .conn
+            .backup(rusqlite::MAIN_DB, path, None)
+            .map_err(StorageError::from)
+            .and_then(|()| file.sync_all().map_err(StorageError::Io));
+        if result.is_err() {
+            _ = std::fs::remove_file(path);
+        }
+        result
+    }
+
     /// Opens (or creates) the database at `path` and migrates it to the latest schema.
     pub fn open(path: &Path) -> StorageResult<Self> {
         if let Some(parent) = path.parent() {
@@ -58,5 +80,47 @@ impl Store {
         Ok(self
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))?)
+    }
+}
+
+#[cfg(test)]
+mod update_backup_tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_includes_wal_data_and_search_without_overwriting_existing_files() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut store = Store::open(&dir.path().join("live.sqlite3")).expect("store");
+        let note = calmfold_core::Note::new(
+            "Recovery",
+            "recently committed text",
+            calmfold_core::clock::now(),
+        )
+        .expect("note");
+        store.save_note(&note).expect("save");
+        let path = dir.path().join("snapshot.sqlite3");
+        store.backup_for_update(&path).expect("snapshot");
+        assert!(
+            store.backup_for_update(&path).is_err(),
+            "never overwrite a recovery file"
+        );
+        let backup = Store::open(&path).expect("backup");
+        assert_eq!(backup.note(note.id()).expect("read"), Some(note));
+        assert_eq!(
+            backup.search_notes("recently", 10).expect("search").len(),
+            1
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                std::fs::metadata(path)
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
     }
 }

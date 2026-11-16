@@ -34,6 +34,12 @@ struct App {
 fn launch(cx: &mut TestAppContext) -> App {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = AppPaths::in_dir(dir.path().to_path_buf());
+    std::fs::create_dir_all(dir.path().join("updates")).expect("update prefs directory");
+    std::fs::write(
+        dir.path().join("updates/prefs.json"),
+        br#"{"automatic":false}"#,
+    )
+    .expect("offline test prefs");
     let store = Store::open_in_memory().expect("store");
     let (window, shell) =
         cx.update(|cx| calmfold_desktop::start(&paths, store, cx).expect("start"));
@@ -511,6 +517,52 @@ fn update_restart_flushes_a_pending_note_before_autosave(cx: &mut TestAppContext
             .to_owned()
     });
     assert!(saved.contains("Keep this pending edit"));
+}
+
+#[gpui_kit::test]
+fn update_status_refreshes_in_settings_without_navigation(cx: &mut TestAppContext) {
+    use calmfold_desktop::updates::{Status, Updates};
+    use gpui_kit::BorrowAppContext as _;
+    let app = launch(cx);
+    dispatch(&app, cx, GoSettings);
+    cx.update_window(app.window, |_, w, cx| {
+        w.within("settings-sidebar").click("0-6", cx);
+    })
+    .expect("About");
+    cx.run_until_parked();
+    for theme in [false, true] {
+        if theme {
+            dispatch(&app, cx, UseLightTheme);
+        } else {
+            dispatch(&app, cx, UseDarkTheme);
+        }
+        for (status, expected) in [
+            (
+                Status::Downloading {
+                    version: "0.1.2".into(),
+                },
+                "Downloading 0.1.2…",
+            ),
+            (Status::UpToDate, "Up to date"),
+        ] {
+            cx.update(|cx| cx.update_global::<Updates, _>(|updates, _| updates.status = status));
+            cx.run_until_parked();
+            cx.update_window(app.window, |_, w, cx| {
+                w.render_frame(cx);
+                assert!(
+                    gpui_kit::base::test_support::texts(w)
+                        .iter()
+                        .any(|t| t.text() == expected),
+                    "live update status: {expected}; rendered: {:?}",
+                    gpui_kit::base::test_support::texts(w)
+                        .iter()
+                        .map(|t| t.text().to_owned())
+                        .collect::<Vec<_>>()
+                );
+            })
+            .expect("status text");
+        }
+    }
 }
 
 #[gpui_kit::test]

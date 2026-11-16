@@ -35,6 +35,7 @@ use crate::shell::AppShell;
 
 pub fn run() -> Result<()> {
     let paths = AppPaths::resolve()?;
+    let _instance = updates::InstanceLock::acquire(&paths.data_dir)?;
     // Open the database before the event loop so a broken data folder fails
     // fast with a readable message instead of an empty window.
     let store = Store::open(&paths.database)

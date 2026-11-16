@@ -86,6 +86,19 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 
 ## Log
 
+### 2026-11-16: Adopt native update engines (release work in progress)
+
+- Replace the custom installer and obsolete unbundled probes with Sparkle 2.10.1
+  and Velopack 1.2.161. Shared signed metadata, bounded authenticated downloads,
+  OS instance locks, retry backoff, save guards and SQLite recovery snapshots.
+- Mac real installed fixture upgrades and relaunches; modified archives are
+  rejected while the original stays running. Production nested-helper layout
+  passes too. Build Sparkle without UI bits; verify no WebKit dependency.
+- Add equivalent Windows installed-package, relaunch, sibling replacement,
+  instance lock and catalog/package rejection checks in native CI. Windows
+  results and release publication remain pending; do not claim completion.
+
+
 ### 2026-11-16: Start production updater plan and harden existing boundaries
 
 - Added plan 13 and ADR 0008, with explicit installed-app/native-OS gates and

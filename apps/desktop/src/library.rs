@@ -58,6 +58,10 @@ pub struct Library {
 impl EventEmitter<LibraryEvent> for Library {}
 
 impl Library {
+    pub fn backup_for_update(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        self.store.backup_for_update(path)?;
+        Ok(())
+    }
     #[must_use]
     pub fn new(store: Store) -> Self {
         let vault = VaultSession::load(&store).unwrap_or_else(|err| {

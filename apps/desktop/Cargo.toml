@@ -33,11 +33,15 @@ mermaid-rs-renderer.workspace = true
 os-spellcheck.workspace = true
 anyhow.workspace = true
 ureq.workspace = true
+async-channel.workspace = true
 directories.workspace = true
 jiff.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+velopack.workspace = true
 
 [features]
 # Frame/input-latency recording for scripts/perf.sh. Never in shipped builds.

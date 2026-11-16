@@ -1,0 +1,20 @@
+[package]
+name = "calmfold-native-update-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+calmfold-core = { path = "../../crates/core" }
+velopack = { version = "=1.2.161", features = ["public-utils"] }
+ureq = { version = "=3.5.2", default-features = false, features = ["rustls", "gzip"] }
+serde_json = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"

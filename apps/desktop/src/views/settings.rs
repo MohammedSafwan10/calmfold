@@ -36,6 +36,7 @@ pub struct SettingsView {
     generation: u64,
     initial_page: usize,
     _layout_observer: Subscription,
+    _updates_observer: Subscription,
     data_dir: PathBuf,
     focus: FocusHandle,
     /// Created on first render (it needs a window).
@@ -49,6 +50,7 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Self {
         let observer = cx.observe(&layout, |_, _, cx| cx.notify());
+        let updates_observer = cx.observe_global::<crate::updates::Updates>(|_, cx| cx.notify());
         Self {
             reorder_focus: crate::nav::entries()
                 .map(|e| (e.id, (cx.focus_handle(), cx.focus_handle())))
@@ -57,6 +59,7 @@ impl SettingsView {
             generation: 0,
             initial_page: 0,
             _layout_observer: observer,
+            _updates_observer: updates_observer,
             data_dir,
             focus: cx.focus_handle(),
             holiday_pickers: None,
@@ -781,12 +784,18 @@ impl SettingsView {
                 let (text, busy) = match crate::updates::status(cx) {
                     Status::Checking => ("Checking…".to_owned(), true),
                     Status::Downloading { version } => (format!("Downloading {version}…"), true),
+                    Status::Verifying { version } => (format!("Verifying {version}…"), true),
+                    Status::Installing { version } => (format!("Installing {version}…"), true),
                     Status::Ready { version, .. } => {
                         (format!("{version} installs when you restart"), false)
                     }
                     Status::Available { version } => (format!("{version} is available"), false),
                     Status::UpToDate => ("Up to date".to_owned(), false),
-                    Status::Failed { .. } => ("Couldn't check".to_owned(), false),
+                    Status::Unsupported => (
+                        "Automatic updates aren't available for this platform".to_owned(),
+                        false,
+                    ),
+                    Status::Failed { message } => (message, false),
                     Status::Idle => (String::new(), false),
                 };
                 let ready = matches!(crate::updates::status(cx), Status::Ready { .. });
@@ -795,9 +804,13 @@ impl SettingsView {
                     .items_center()
                     .child(
                         div()
+                            .id("set-update-status")
+                            .test_support()
+                            .flex_1()
+                            .min_w_0()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child(text),
+                            .child(gpui_kit::component::label::Label::new(text)),
                     )
                     .child(if ready {
                         Button::new("set-update-restart")

@@ -1,6 +1,6 @@
 # Build output
 /target/
-/tools/update-engine-probe/target/
+/tools/native-update-fixture/target/
 **/*.rs.bk
 *.pdb
 
@@ -48,3 +48,6 @@ lcov.info
 /website/.astro/
 /website/.taste-skill/
 /website/shots/
+
+__pycache__/
+*.pyc
