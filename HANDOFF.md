@@ -25,59 +25,53 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 - Website is a scaffold/assets snapshot, not a finished site: no pages yet,
   and the release-fetch build step needs a published feed or saved release.json.
   Astro is patched to 7.4.12; npm audit reports zero known vulnerabilities.
-- Production updates: native Sparkle/Velopack adapters replace the legacy installer.
-  Mac installed upgrade/relaunch and tampered archive tests pass locally and CI.
-  Windows native installed upgrade/relaunch and catalog/package rejection pass.
-  Owner made the source repo public; v0.1.2 candidate run 43872632747 is running;
-  full local gate passes 346 tests (77 UI). No public release yet. See
-  `docs/plans/13-production-updates.md` and ADR 0008 for exact gates/limits.
+- Production updates: native Sparkle/Velopack replace the legacy installer.
+  Final GPL candidate run **43918679795**, source **7d9b04f**, passes every job:
+  Mac 346 tests, Windows 345, real installed upgrades/relaunch and tamper
+  rejection, native packaging and production-key signature verification.
+  Full local gate passes; changed Settings/What's new UI was reviewed in both
+  themes. See `docs/plans/13-production-updates.md` and ADR 0008 for limits.
+- Public project guidance: refreshed README with real sample-data screenshot,
+  GPL-3.0-only LICENSE/NOTICE, package dependency notices, CONTRIBUTING,
+  SECURITY, CODE_OF_CONDUCT and concise PR template. Private vulnerability
+  reporting enabled. Shared `.kiro/skills` remains tracked; local state ignored.
 
 ## Next steps (in order)
 
-Owner explicitly asked us to continue while taking the Mac home. All gates of run
-43872632747 passed: Mac 346 tests, Windows 345, real Sparkle/Velopack installed
-upgrade/relaunch + tamper rejection, both packages and production signature checks.
-It is not published yet. Owner subsequently chose **GPLv3**, so root metadata now
-uses GPL-3.0-only and LICENSE/NOTICE/dependency notices are being added to packages.
-Rebuild the final v0.1.2 candidate with the licensing/community-doc changes before
-publication; do not accidentally publish the older pre-license artifacts.
+**v0.1.2 is published and immutable:**
+https://github.com/MohammedSafwan10/calmfold-releases/releases/tag/v0.1.2
 
-Current extra work: refreshed README with a real sample-data screenshot,
-CONTRIBUTING.md, SECURITY.md, short CODE_OF_CONDUCT.md and PR/security issue links.
-Private vulnerability reporting is enabled. GPL private-use/commercial-use rights
-and copyright-based enforcement have been explained; the owner chose GPLv3.
+Final build source: 7d9b04f672bd66bcfab85d88c5523c5b44d3ea8e; successful run
+43918679795. All 11 uploaded assets match verified local SHA-256/size values.
+Public feed/signature/appcast/checksum bytes match; pinned feed signature passes.
+All five large package/source URLs are publicly reachable with correct lengths
+(HEAD checks, not complete public re-downloads). Exact application source TAR is
+attached; GitHub's automatic source archive in the downloads-only repo is metadata.
+The old v0.1.0/v0.1.1 source-repo release entries are removed as requested;
+tags/history retained. The downloads repository README now explains installation,
+source archives, license and signing boundaries. No further publication step is
+needed for this version. Never clobber immutable assets; use a new version.
 
-After final verified publication, delete old v0.1.0 and v0.1.1 release entries in
-MohammedSafwan10/calmfold as requested. Keep tags and source history. Publish
-canonical signed assets to MohammedSafwan10/calmfold-releases, immutable policy on.
-All original changes remain authorized; do not stop at another partial milestone.
+Both pinned signing keys are proven by final CI and local verification. The
+protected Sparkle seed lives outside the repo at
+~/.config/calmfold/release-keys/sparkle.key; never print or commit it. No system
+keychain or publisher signing identity was used. Release packages include GPL,
+third-party notices and exact source references. Actual packaged Mac launch and
+fresh isolated database creation pass; real user data was untouched.
 
-Everything in `docs/TASKS.md` is done except the
-500 KB+ editor item in §1.
-Developer's first release is implemented. General utilities, environment
-comparison, CLI injection and server/sync integrations remain explicitly deferred.
-Workspace customization is complete. Finish website pages and release metadata
-before deploying; do not treat the scaffold as a deployable website.
-Current priority: finish Windows native upgrade proof and publish v0.1.2.
-Mac installed upgrade/relaunch and archive rejection pass locally and in CI;
-the production-key archive/appcast signing script also verifies locally.
-Windows native upgrade/relaunch, sibling replacement, instance lock and catalog/
-package tampering tests pass in run 43872632747. The missing fixture file was fixed
-by explicit absolute-path preparation with assertions. The Windows Setup.exe
-first-install path has not been exercised; native upgrade proof uses a real
-portable installation. Owner made the source repo PUBLIC; new jobs start now.
-Earlier billing-blocked run 43870246438 remains historical. No budget was changed.
-No public release yet. MINISIGN_KEY correspondence still awaits candidate CI.
-SPARKLE_KEY is configured; protected recovery seed is outside the repo at
-~/.config/calmfold/release-keys/sparkle.key. Never print or commit it.
-Public calmfold-releases immutable releases are enabled; upload a complete draft
-and verify before publishing. Candidate workflow builds all native assets and
-signs/verifies both metadata formats; it never clobbers published assets.
+Install the official release once manually for native updates. Debug data remains
+separate; do not automatically migrate it. Windows portable installed upgrade is
+proven; Setup.exe per-user first install is not. Apple notarization/Windows
+publisher signing, remaining failure scenarios, metadata expiry/key rotation and
+automatic database rollback are not claimed complete. See plan 13.
 
-What's new is implemented with native version navigation, narrow-window dropdown,
-offline grouped notes and back/Escape. Small emoji section headers; no media
-renderer yet. Media research and future policy are in plan 14. No Coolify needed
-for bundled release notes or GitHub-hosted updates. Website remains a scaffold.
+Everything in `docs/TASKS.md` is done except the 500 KB+ editor item in §1.
+Developer's first release and Workspace customization are implemented. General
+utilities, environment comparison, CLI injection and sync remain deferred.
+What's new has native version navigation, narrow-window dropdown, offline grouped
+notes and back/Escape; no media renderer yet (plan 14). No Coolify needed for
+bundled notes or GitHub-hosted updates. Website is still a scaffold: finish its
+pages/release metadata before deployment.
 
 ## Known issues / risks
 
@@ -119,6 +113,22 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 ```
 
 ## Log
+
+### 2026-11-16: Publish verified GPLv3 native release
+
+- Publish complete v0.1.2 draft in calmfold-releases only after all 11 uploaded
+  asset digests/sizes match local verified files. GitHub confirms latest and
+  immutable; public metadata/signature checks and all package HEAD checks pass.
+- Final source 7d9b04f; run 43918679795 passes Mac/Windows quality, real native
+  installed upgrades/tamper rejection, packaging and signing. Local full gate
+  passes 346 tests; final Mac package launches with a fresh isolated database.
+- Attach exact application source TAR, LICENSE/NOTICE and SHA256SUMS; update
+  downloads README. Old source release entries v0.1.0/v0.1.1 removed only after
+  public verification; retain tags/history. No real user data changed.
+- First official installation remains manual; future native in-app updates use
+  Settings → About. Setup.exe first-install and publisher signing remain open,
+  along with the explicitly unchecked production-hardening gates in plan 13.
+
 
 ### 2026-11-16: Repair cached native SDK packaging and Windows text decoding
 

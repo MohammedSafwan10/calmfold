@@ -1,7 +1,8 @@
 # Production updates and distribution
 
-Status: native engines adopted and installed upgrade tests pass on both OSes;
-v0.1.2 final packaging/signing verification is running before publication.
+Status: native engines adopted; v0.1.2 quality, installed upgrades, packaging and
+production-key signature checks pass on both OSes in run 43918679795.
+Verified assets are published as immutable v0.1.2 in calmfold-releases.
 This checklist is evidence-based: a compiling adapter or
 unit test does not count as a successful installed-app upgrade.
 
@@ -62,10 +63,10 @@ unit test does not count as a successful installed-app upgrade.
 
 ## 3. Publish releases atomically
 
-- [ ] CI runs quality checks and verifies version/tag/package agreement.
-- [ ] Build on native Mac/Windows runners, package, sign update artifacts, verify
+- [x] CI runs quality checks and verifies version/tag/package agreement.
+- [x] Build on native Mac/Windows runners, package, sign update artifacts, verify
       signatures with pinned public keys, then upload all assets to a draft.
-- [ ] Enable GitHub immutable releases and publish the complete draft last;
+- [x] Enable GitHub immutable releases and publish the complete draft last;
       never use `--clobber` on published release assets.
 - [ ] Configure stable/beta channels and minimum compatible versions. Add signed
       metadata expiry/replay protection with operational refresh/key rotation.
@@ -93,12 +94,12 @@ unit test does not count as a successful installed-app upgrade.
 
 ## Completion gate
 
-- [ ] Full local quality gate, engine tests and light/dark native UI review.
-- [ ] Real old-to-new installed-app upgrade on both supported platforms.
+- [x] Full local quality gate, engine tests and light/dark native UI review.
+- [x] Real old-to-new installed-app upgrade on both supported platforms.
 - [ ] Failures: offline, truncation, corrupt signature/hash, disk full, denied
       permissions, interrupted install, double instance, failed save/relaunch.
 - [ ] Test current and older supported releases, then private → beta → stable.
-- [ ] Update HANDOFF and security/release runbook with verified results and limits.
+- [x] Update HANDOFF and security/release guidance with verified results and limits.
 
 ## Primary references checked 2026-11-16
 
@@ -159,3 +160,30 @@ layout and core-only framework. Full candidate app checks and packaging follow.
 
 Owner made the source repository public, and this new run starts successfully.
 The previous billing-blocked runs remain historical; no spending limit was raised.
+
+## Final GPL candidate evidence (2026-11-16)
+
+Run 43918679795, source 7d9b04f672bd66bcfab85d88c5523c5b44d3ea8e, passes
+all seven jobs: Mac 346 tests, Windows 345, both real installed-upgrade/tamper
+suites, native packages and production-key catalog/appcast signing verification.
+This supersedes the pre-license candidate above. Run 43915646801 caught an
+incomplete native framework restored by the Cargo cache and Windows text
+decoding; the final candidate repairs both without weakening verification.
+
+The downloaded CI artifact matches GitHub's SHA-256. Local verification checks
+the pinned Minisign signature, signed platform package hashes/sizes, Sparkle's
+archive and appcast signatures, GPL license/notices and exact source references.
+The actual final Mac package passes strict bundle verification, launches and
+creates a fresh isolated database without touching the owner's data. Its process
+remains running before test termination. Windows Setup.exe first installation
+and the unchecked failure cases above remain unproven; do not equate a green
+candidate with exhaustive OS/security certification.
+
+The complete 11-asset draft was verified against local SHA-256/size values before
+publication. GitHub confirms v0.1.2 is the latest immutable release. Public catalog,
+signature, appcast and checksum files match local bytes; the public catalog's
+pinned signature passes. See the release's explicit application source archive;
+GitHub's automatic source archive in the downloads-only repo is just metadata.
+All five public package/source URLs return the expected length in HEAD checks;
+large files were not downloaded a second time. Old source-repository v0.1.0 and
+v0.1.1 release entries were removed after verification; their tags/history remain.
