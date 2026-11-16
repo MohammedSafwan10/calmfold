@@ -455,6 +455,15 @@ fn failed_save_keeps_the_editor_open(cx: &mut TestAppContext) {
             .update(cx, |lib, cx| lib.delete_note_permanently(first, cx))
             .expect("delete");
     });
+    // An optional update must refuse exit for the same failure, preserving the
+    // draft before attempting any installer operation.
+    let can_restart = cx
+        .update_window(app.window, |_, window, cx| {
+            app.shell
+                .update(cx, |shell, cx| shell.prepare_update_restart(window, cx))
+        })
+        .expect("window");
+    assert!(!can_restart, "a failed save must block an update restart");
     // Switching must refuse rather than discard the typing.
     cx.update_window(app.window, |_, window, cx| {
         app.shell
@@ -467,6 +476,41 @@ fn failed_save_keeps_the_editor_open(cx: &mut TestAppContext) {
         body.contains("unsaved words"),
         "editor kept the typing: {body:?}"
     );
+}
+
+#[gpui_kit::test]
+fn update_restart_flushes_a_pending_note_before_autosave(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    let id = create_and_open_note(&app, cx, "Update draft");
+    cx.update_window(app.window, |_, window, cx| {
+        app.shell
+            .read(cx)
+            .notes()
+            .clone()
+            .update(cx, |notes, cx| notes.focus_body(window, cx));
+    })
+    .expect("window");
+    cx.run_until_parked();
+    type_text(&app, cx, "Keep this pending edit");
+    let can_restart = cx
+        .update_window(app.window, |_, window, cx| {
+            app.shell
+                .update(cx, |shell, cx| shell.prepare_update_restart(window, cx))
+        })
+        .expect("window");
+    assert!(can_restart);
+    let saved = cx.read(|cx| {
+        app.shell
+            .read(cx)
+            .library()
+            .read(cx)
+            .note(id)
+            .expect("load")
+            .expect("note")
+            .body()
+            .to_owned()
+    });
+    assert!(saved.contains("Keep this pending edit"));
 }
 
 #[gpui_kit::test]
@@ -596,6 +640,14 @@ fn task_detail_edits_status_due_notes_and_title(cx: &mut TestAppContext) {
         .expect("window")
     };
     assert!(sheet_open(cx), "clicking a task opens its detail panel");
+    let can_restart = cx
+        .update_window(app.window, |_, window, cx| {
+            app.shell
+                .update(cx, |shell, cx| shell.prepare_update_restart(window, cx))
+        })
+        .expect("window");
+    assert!(!can_restart, "an update cannot close an open task editor");
+    assert!(sheet_open(cx), "update refusal keeps the editor open");
 
     let task = |cx: &mut TestAppContext| {
         cx.read(|cx| {
@@ -2496,6 +2548,17 @@ fn passwords_navigation_preserves_invalid_environment_drafts(cx: &mut TestAppCon
             type_text(&app, cx, "BAD-KEY");
         }
         assert!(cx.read(|cx| editor.read(cx).document(cx).is_err()));
+        let can_restart = cx
+            .update_window(app.window, |_, w, cx| {
+                app.shell
+                    .update(cx, |shell, cx| shell.prepare_update_restart(w, cx))
+            })
+            .expect("window");
+        assert!(
+            !can_restart,
+            "pending imports and invalid secrets block update restart"
+        );
+        assert!(cx.read(|cx| pane.read(cx).is_editing()));
         cx.update_window(app.window, |_, w, cx| {
             passwords.update(cx, |p, cx| p.select_for_dev("Other", w, cx))
         })

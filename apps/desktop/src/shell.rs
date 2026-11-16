@@ -220,6 +220,42 @@ impl AppShell {
         }
     }
 
+    /// Updating is optional: a failed save must leave the running app and its
+    /// drafts intact. Unlike the OS quit callback, this path can refuse exit.
+    pub fn prepare_update_restart(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // Sheets own their own autosave/error state (including task details).
+        // Do not close one implicitly or quit before its draft can be reviewed.
+        if window.has_active_sheet(cx) || window.has_active_dialog(cx) {
+            calmfold_ui::feedback::error_toast(
+                "Close the open editor or dialog before restarting to update.",
+                window,
+                cx,
+            );
+            return false;
+        }
+        if self
+            .notes
+            .update(cx, |notes, cx| notes.save_pending(cx))
+            .is_err()
+        {
+            calmfold_ui::feedback::error_toast(
+                "Your note couldn't be saved. The update was not installed.",
+                window,
+                cx,
+            );
+            return false;
+        }
+        if !self.developer.update(cx, |view, cx| view.flush(window, cx))
+            || !self
+                .passwords
+                .update(cx, |view, cx| view.flush_edit(window, cx))
+        {
+            return false;
+        }
+        self.layout.update(cx, |layout, _| layout.save_now());
+        true
+    }
+
     fn refresh_badges(&mut self, cx: &mut Context<Self>) {
         let counts = self.library.read(cx).task_counts().unwrap_or_default();
         self.due_now = counts.due_today + counts.overdue;
@@ -1471,7 +1507,9 @@ pub fn register_commands(cx: &mut App) {
     cx.on_action(|_: &CheckForUpdates, cx| crate::updates::check(true, cx));
     cx.on_action(|_: &RestartToUpdate, cx| {
         with_shell(cx, |s, w, cx| {
-            s.save_everything(cx);
+            if !s.prepare_update_restart(w, cx) {
+                return;
+            }
             match crate::updates::apply(cx) {
                 Ok(()) => cx.quit(),
                 Err(err) => calmfold_ui::feedback::error_toast(format!("{err:#}"), w, cx),

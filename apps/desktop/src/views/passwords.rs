@@ -419,7 +419,7 @@ impl PasswordsView {
     }
 
     // Navigation must keep an invalid draft open so the user can correct it.
-    fn flush_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn flush_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.pane.read(cx).is_editing() {
             self.pane.update(cx, |p, cx| p.save(window, cx));
         }

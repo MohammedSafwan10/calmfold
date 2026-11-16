@@ -12,11 +12,12 @@
 //!
 //! Files (`<data>/updates/`): `prefs.json` (automatic on/off, last check),
 //! `.lock` (one check or download at a time, across running copies),
-//! `<version>/download.zip` and `<version>/staged/` (the unpacked app),
+//! a private temporary archive and `<version>/staged/` (the unpacked app),
 //! `ready.json` (written last: a staged update is complete only once it exists).
 //! The running app is never touched until the user restarts, and a failed
 //! swap is rolled back.
 
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -143,7 +144,15 @@ pub fn set_automatic(on: bool, cx: &mut App) {
     let mut prefs = u.prefs.clone();
     prefs.automatic = on;
     let dir = u.dir.clone();
-    write_json(&dir.join("prefs.json"), &prefs);
+    if write_json(&dir.join("prefs.json"), &prefs).is_err() {
+        set_status(
+            Status::Failed {
+                message: "Couldn't save update preferences. Try again.".into(),
+            },
+            cx,
+        );
+        return;
+    }
     cx.update_global::<Updates, _>(|u, _| u.prefs = prefs);
     if on && matches!(status(cx), Status::Idle) {
         check(false, cx);
@@ -169,7 +178,6 @@ pub fn check(manual: bool, cx: &mut App) {
         return;
     }
     let dir = u.dir.clone();
-    let mut prefs = u.prefs.clone();
     let before = u.status.clone();
     cx.update_global::<Updates, _>(|u, _| u.manual = manual);
     set_status(Status::Checking, cx);
@@ -182,10 +190,10 @@ pub fn check(manual: bool, cx: &mut App) {
                 async move { fetch_feed(&dir) }
             })
             .await;
-        prefs.last_check = Some(jiff::Timestamp::now().as_millisecond());
-        write_json(&dir.join("prefs.json"), &prefs);
-        cx.update_global::<Updates, _>(|u, _| u.prefs = prefs);
-        let feed = match feed {
+        // Read the latest preferences: the user may have toggled automatic
+        // checks while this request was waiting on the network.
+        cx.update(|cx| record_check(&dir, calmfold_core::clock::now(), cx));
+        let (feed, _lock) = match feed {
             Ok(f) => f,
             Err(err) => {
                 eprintln!("calmfold: update check failed: {err:#}");
@@ -260,6 +268,14 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
+fn record_check(dir: &Path, now: jiff::Timestamp, cx: &mut App) {
+    let mut prefs = cx.global::<Updates>().prefs.clone();
+    prefs.last_check = Some(now.as_millisecond());
+    if write_json(&dir.join("prefs.json"), &prefs).is_ok() {
+        cx.update_global::<Updates, _>(|u, _| u.prefs = prefs);
+    }
+}
+
 fn get(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>> {
     let mut res = agent.get(url).call().context("request failed")?;
     res.body_mut()
@@ -269,39 +285,73 @@ fn get(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>> {
         .context("read failed")
 }
 
-fn fetch_feed(dir: &Path) -> Result<Feed> {
-    let _lock = Lock::take(dir)?;
+fn fetch_feed(dir: &Path) -> Result<(Feed, Lock)> {
+    let lock = Lock::take(dir)?;
     let agent = agent();
     let bytes = get(&agent, update::FEED_URL, update::MAX_FEED_BYTES as u64)?;
     let sig = get(&agent, &format!("{}.minisig", update::FEED_URL), 4096)?;
     let sig = String::from_utf8(sig).context("signature is not text")?;
-    Ok(Feed::verified(&bytes, &sig, update::RELEASE_KEY)?)
+    Ok((Feed::verified(&bytes, &sig, update::RELEASE_KEY)?, lock))
+}
+
+/// Fixed-memory transfer. Verification runs before each write, so even an
+/// endless response cannot grow the file beyond the authenticated size.
+fn copy_verified(mut reader: impl Read, mut writer: impl Write, expected: &Download) -> Result<()> {
+    let mut verifier = update::DownloadVerifier::new(expected)?;
+    let mut chunk = [0_u8; 32 * 1024];
+    loop {
+        let size = match reader.read(&mut chunk) {
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result.context("couldn't read the update")?,
+        };
+        if size == 0 {
+            break;
+        }
+        verifier.update(&chunk[..size])?;
+        writer
+            .write_all(&chunk[..size])
+            .context("couldn't store the update")?;
+    }
+    verifier.finish()?;
+    writer.flush().context("couldn't flush the update")?;
+    Ok(())
+}
+
+fn download_to(dir: &Path, expected: &Download) -> Result<tempfile::NamedTempFile> {
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
+    let mut response = agent()
+        .get(&expected.url)
+        .call()
+        .context("request failed")?;
+    copy_verified(response.body_mut().as_reader(), &mut file, expected)?;
+    file.as_file().sync_all()?;
+    Ok(file)
 }
 
 /// Downloads, verifies and unpacks the release; writes `ready.json` last.
 fn stage(dir: &Path, feed: &Feed, download: &Download) -> Result<Vec<String>> {
-    let _lock = Lock::take(dir)?;
+    // The caller holds the check's lock through staging; no inter-process gap.
+    if update::parse_version(&feed.version).is_none() {
+        bail!("invalid release version");
+    }
     let vdir = dir.join(&feed.version);
     _ = std::fs::remove_dir_all(&vdir);
     std::fs::create_dir_all(&vdir)?;
-    let bytes = get(&agent(), &download.url, update::MAX_DOWNLOAD_BYTES)?;
-    update::verify_download(&bytes, download)?;
-    let zip = vdir.join("download.zip");
-    std::fs::write(&zip, &bytes)?;
+    let zip = download_to(&vdir, download)?;
     let staged = vdir.join("staged");
     std::fs::create_dir_all(&staged)?;
-    unpack(&zip, &staged)?;
+    unpack(zip.path(), &staged)?;
     if staged_app(dir, &feed.version).is_none() {
         bail!("the download doesn't contain Calmfold");
     }
-    _ = std::fs::remove_file(&zip);
+    // NamedTempFile removes the archive on success and on every error path.
     write_json(
         &dir.join("ready.json"),
         &ReadyFile {
             version: feed.version.clone(),
             notes: feed.notes.clone(),
         },
-    );
+    )?;
     Ok(feed.notes.clone())
 }
 
@@ -329,6 +379,8 @@ fn unpack(zip: &Path, into: &Path) -> Result<()> {
 
 /// The new app inside a staged update.
 fn staged_app(dir: &Path, version: &str) -> Option<PathBuf> {
+    // ready.json is local mutable state, not authenticated release metadata.
+    update::parse_version(version)?;
     let staged = dir.join(version).join("staged");
     let path = if cfg!(target_os = "macos") {
         staged.join("Calmfold.app")
@@ -462,17 +514,16 @@ fn read_json<T: for<'a> Deserialize<'a>>(path: &Path) -> Option<T> {
 }
 
 /// Atomic write (temp file + rename) so a crash never leaves half a file.
-fn write_json<T: Serialize>(path: &Path, value: &T) {
-    let Some(dir) = path.parent() else { return };
-    let tmp = path.with_extension("json.tmp");
-    let ok = std::fs::create_dir_all(dir).is_ok()
-        && serde_json::to_vec_pretty(value)
-            .ok()
-            .is_some_and(|b| std::fs::write(&tmp, b).is_ok())
-        && std::fs::rename(&tmp, path).is_ok();
-    if !ok {
-        eprintln!("calmfold: couldn't save {}", path.display());
-    }
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let dir = path.parent().context("missing update state directory")?;
+    std::fs::create_dir_all(dir)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    serde_json::to_writer_pretty(&mut tmp, value)?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|e| e.error)?;
+    #[cfg(unix)]
+    std::fs::File::open(dir)?.sync_all()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -505,7 +556,8 @@ mod tests {
                 version: "9.0.0".into(),
                 notes: vec![],
             },
-        );
+        )
+        .expect("ready state");
         clear_staged(dir.path());
         assert!(!dir.path().join("ready.json").exists());
         assert!(!dir.path().join("9.0.0").exists());
@@ -515,5 +567,111 @@ mod tests {
     fn development_runs_never_replace_themselves() {
         // Tests are debug builds.
         assert_eq!(install_target(), None);
+    }
+
+    fn expected_hello() -> Download {
+        Download {
+            url: "https://example.com/app.zip".into(),
+            sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824".into(),
+            size: 5,
+        }
+    }
+
+    #[test]
+    fn transfers_verify_before_writing_and_reject_truncated_or_corrupt_bodies() {
+        let expected = expected_hello();
+        let mut out = Vec::new();
+        copy_verified(b"hello".as_slice(), &mut out, &expected).expect("valid");
+        assert_eq!(out, b"hello");
+        for bad in [b"hell".as_slice(), b"hellO", b"hello!"] {
+            let mut out = Vec::new();
+            assert!(copy_verified(bad, &mut out, &expected).is_err());
+            assert!(out.len() <= expected.size as usize);
+        }
+    }
+
+    #[test]
+    fn transfer_errors_leave_no_persistent_partial_file() {
+        struct BrokenReader;
+        impl Read for BrokenReader {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("connection interrupted"))
+            }
+        }
+        struct FullDisk;
+        impl Write for FullDisk {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("disk full"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let dir = tempfile::tempdir().expect("dir");
+        let path = {
+            let mut file = tempfile::NamedTempFile::new_in(dir.path()).expect("file");
+            let path = file.path().to_path_buf();
+            assert!(copy_verified(BrokenReader, &mut file, &expected_hello()).is_err());
+            assert!(copy_verified(b"hello".as_slice(), FullDisk, &expected_hello()).is_err());
+            path
+        };
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn state_writes_are_atomic_replaceable_and_report_failures() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("prefs.json");
+        write_json(&path, &Prefs::default()).expect("initial");
+        let prefs = Prefs {
+            automatic: false,
+            last_check: Some(123),
+        };
+        write_json(&path, &prefs).expect("replace");
+        let saved: Prefs = read_json(&path).expect("saved");
+        assert!(!saved.automatic);
+        assert_eq!(saved.last_check, Some(123));
+        let blocked = dir.path().join("blocked");
+        std::fs::create_dir(&blocked).expect("directory");
+        assert!(write_json(&blocked, &prefs).is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).expect("entries").count(), 2);
+    }
+
+    #[test]
+    fn local_ready_versions_cannot_escape_the_update_cache() {
+        let dir = tempfile::tempdir().expect("dir");
+        for version in [
+            "../escape",
+            "/tmp/escape",
+            "1.2.3/../../escape",
+            "v../escape",
+        ] {
+            assert!(staged_app(dir.path(), version).is_none());
+        }
+    }
+
+    #[gpui_kit::test]
+    fn check_completion_preserves_a_preference_changed_during_the_request(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().expect("dir");
+        cx.update(|cx| {
+            cx.set_global(Updates {
+                dir: dir.path().to_path_buf(),
+                prefs: Prefs::default(),
+                status: Status::Checking,
+                manual: false,
+            });
+            set_automatic(false, cx);
+            record_check(
+                dir.path(),
+                "2026-11-16T09:00:00Z".parse().expect("time"),
+                cx,
+            );
+            assert!(!automatic(cx));
+            let saved: Prefs = read_json(&dir.path().join("prefs.json")).expect("saved");
+            assert!(!saved.automatic);
+            assert!(saved.last_check.is_some());
+        });
     }
 }

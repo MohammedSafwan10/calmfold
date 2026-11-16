@@ -39,6 +39,72 @@ pub struct Download {
     pub size: u64,
 }
 
+impl Download {
+    /// Validate signed metadata before starting network or filesystem work.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        let url_ok = url::Url::parse(&self.url).is_ok_and(|url| {
+            url.scheme() == "https"
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.fragment().is_none()
+        });
+        url_ok
+            && self.size > 0
+            && self.size <= MAX_DOWNLOAD_BYTES
+            && self.sha256.len() == 64
+            && self.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+}
+
+/// Incremental verification keeps archive-sized buffers out of the desktop app.
+/// Call `update` before writing each chunk and `finish` before unpacking anything.
+pub struct DownloadVerifier {
+    digest: Sha256,
+    size: u64,
+    expected: Download,
+    failed: bool,
+}
+
+impl DownloadVerifier {
+    pub fn new(expected: &Download) -> Result<Self, UpdateError> {
+        if !expected.is_valid() {
+            return Err(UpdateError::BadFeed);
+        }
+        Ok(Self {
+            digest: Sha256::new(),
+            size: 0,
+            expected: expected.clone(),
+            failed: false,
+        })
+    }
+
+    pub fn update(&mut self, chunk: &[u8]) -> Result<(), UpdateError> {
+        let size = self.size.saturating_add(chunk.len() as u64);
+        if self.failed || size > self.expected.size {
+            self.failed = true;
+            return Err(UpdateError::BadDownload);
+        }
+        self.digest.update(chunk);
+        self.size = size;
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<(), UpdateError> {
+        let digest = self.digest.finalize();
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        if !self.failed
+            && self.size == self.expected.size
+            && hex.eq_ignore_ascii_case(&self.expected.sha256)
+        {
+            Ok(())
+        } else {
+            Err(UpdateError::BadDownload)
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Feed {
     pub version: String,
@@ -70,7 +136,10 @@ impl Feed {
         key.verify(bytes, &sig, false)
             .map_err(|_| UpdateError::BadSignature)?;
         let feed: Self = serde_json::from_slice(bytes).map_err(|_| UpdateError::BadFeed)?;
-        if parse_version(&feed.version).is_none() {
+        if parse_version(&feed.version).is_none()
+            || feed.platforms.is_empty()
+            || feed.platforms.values().any(|d| !d.is_valid())
+        {
             return Err(UpdateError::BadFeed);
         }
         Ok(feed)
@@ -83,14 +152,22 @@ impl Feed {
         is_newer(&self.version, current)
             .then(|| self.platforms.get(platform))
             .flatten()
-            .filter(|d| d.url.starts_with("https://") && d.size <= MAX_DOWNLOAD_BYTES)
+            .filter(|d| d.is_valid())
     }
 }
 
 /// `major.minor.patch` of a plain release version ("0.1.2", "v1.0.0").
 #[must_use]
 pub fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = v.trim().trim_start_matches('v').split('.');
+    let plain = v.strip_prefix('v').unwrap_or(v);
+    if plain.split('.').any(|part| {
+        part.is_empty()
+            || !part.bytes().all(|b| b.is_ascii_digit())
+            || (part.len() > 1 && part.starts_with('0'))
+    }) {
+        return None;
+    }
+    let mut parts = plain.split('.');
     let out = (
         parts.next()?.parse().ok()?,
         parts.next()?.parse().ok()?,
@@ -117,13 +194,9 @@ pub fn check_due(last: Option<Timestamp>, now: Timestamp) -> bool {
 
 /// Checks a downloaded file against the feed's size and SHA-256.
 pub fn verify_download(bytes: &[u8], expected: &Download) -> Result<(), UpdateError> {
-    let digest = Sha256::digest(bytes);
-    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-    if bytes.len() as u64 == expected.size && hex.eq_ignore_ascii_case(&expected.sha256) {
-        Ok(())
-    } else {
-        Err(UpdateError::BadDownload)
-    }
+    let mut verifier = DownloadVerifier::new(expected)?;
+    verifier.update(bytes)?;
+    verifier.finish()
 }
 
 /// The feed key for this build: `windows-x64`, `macos-arm64`, … or `None`
@@ -199,5 +272,83 @@ mod tests {
         assert!(!check_due(Some(t), later));
         assert!(check_due(Some(t), t + SignedDuration::from_hours(24)));
         assert!(check_due(Some(later), t), "clock went back");
+    }
+
+    #[test]
+    fn streaming_verification_is_exact_and_rejection_is_sticky() {
+        let feed = Feed::verified(FEED, SIG, TEST_KEY.trim()).expect("feed");
+        let expected = &feed.platforms["windows-x64"];
+        let mut verifier = DownloadVerifier::new(expected).expect("verifier");
+        for chunk in [b"he".as_slice(), b"", b"llo"] {
+            verifier.update(chunk).expect("chunk");
+        }
+        assert_eq!(verifier.finish(), Ok(()));
+        let mut truncated = DownloadVerifier::new(expected).expect("verifier");
+        truncated.update(b"hell").expect("chunk");
+        assert_eq!(truncated.finish(), Err(UpdateError::BadDownload));
+        let mut oversized = DownloadVerifier::new(expected).expect("verifier");
+        oversized.update(b"hello").expect("chunk");
+        assert_eq!(oversized.update(b"!"), Err(UpdateError::BadDownload));
+        assert_eq!(oversized.finish(), Err(UpdateError::BadDownload));
+    }
+
+    #[test]
+    fn release_metadata_rejects_unsafe_paths_and_unbounded_downloads() {
+        for version in [
+            "../1.2.3",
+            "/1.2.3",
+            "v../1.2.3",
+            "1.2.3/..",
+            " 1.2.3",
+            "vv1.2.3",
+            "+1.2.3",
+            "01.2.3",
+        ] {
+            assert!(parse_version(version).is_none(), "{version}");
+        }
+        let feed = Feed::verified(FEED, SIG, TEST_KEY.trim()).expect("feed");
+        let good = feed.platforms["windows-x64"].clone();
+        for url in [
+            "http://example.com/app.zip",
+            "https://",
+            "https://user:password@example.com/app.zip",
+            "https://example.com/app.zip#fragment",
+            "file:///app.zip",
+        ] {
+            let bad = Download {
+                url: url.into(),
+                ..good.clone()
+            };
+            assert!(!bad.is_valid());
+            assert!(matches!(
+                DownloadVerifier::new(&bad),
+                Err(UpdateError::BadFeed)
+            ));
+        }
+        for size in [0, MAX_DOWNLOAD_BYTES + 1, u64::MAX] {
+            assert!(
+                !Download {
+                    size,
+                    ..good.clone()
+                }
+                .is_valid()
+            );
+        }
+        for hash in ["", "abcd", &"g".repeat(64)] {
+            assert!(
+                !Download {
+                    sha256: hash.into(),
+                    ..good.clone()
+                }
+                .is_valid()
+            );
+        }
+        assert!(
+            Download {
+                sha256: good.sha256.to_uppercase(),
+                ..good
+            }
+            .is_valid()
+        );
     }
 }
