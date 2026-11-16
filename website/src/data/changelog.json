@@ -1,0 +1,23 @@
+[
+  {
+    "version": "0.1.1",
+    "date": "2026-11-14",
+    "items": [
+      "Windows: the sidebar and note-list buttons in the title bar now respond to the mouse.",
+      "Windows: the empty notes hint on Today says Ctrl+N instead of ⌘N.",
+      "Smaller and faster development builds."
+    ]
+  },
+  {
+    "version": "0.1.0",
+    "date": "2026-11-09",
+    "items": [
+      "First release for Windows and macOS.",
+      "Notes with live Markdown, links between notes, tags, math and diagrams.",
+      "Tasks with quick add, repeats, subtasks and projects.",
+      "Calendar with month, week, day and agenda views, .ics import, holidays for about 245 countries, birthdays and anniversaries.",
+      "Habits with streaks and insights.",
+      "An encrypted password vault with one-time codes, a generator, a recovery key and encrypted backups."
+    ]
+  }
+]
