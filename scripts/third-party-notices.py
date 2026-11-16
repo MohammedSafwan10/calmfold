@@ -10,8 +10,8 @@ import subprocess
 import sys
 
 output = Path(sys.argv[1])
-host = next(line.split(': ', 1)[1] for line in subprocess.check_output(['rustc','-vV'],text=True).splitlines() if line.startswith('host: '))
-metadata = json.loads(subprocess.check_output(['cargo','metadata','--locked','--format-version','1','--filter-platform',host],text=True))
+host = next(line.split(': ', 1)[1] for line in subprocess.check_output(['rustc','-vV'],encoding='utf-8').splitlines() if line.startswith('host: '))
+metadata = json.loads(subprocess.check_output(['cargo','metadata','--locked','--format-version','1','--filter-platform',host],encoding='utf-8'))
 active = {node['id'] for node in metadata['resolve']['nodes']}
 own = set(metadata['workspace_members'])
 texts = {}

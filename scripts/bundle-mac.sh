@@ -15,11 +15,12 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "target/$profile/calmfold" "$app/Contents/MacOS/Calmfold"
 cp assets/brand/Calmfold.icns "$app/Contents/Resources/Calmfold.icns"
+sparkle_dir="${CALMFOLD_SPARKLE_DIR:-target/tools/sparkle}"
 python3 scripts/build-sparkle-core.py
 mkdir -p "$app/Contents/Frameworks" "$app/Contents/Helpers/CalmfoldUpdater.app/Contents/MacOS"
-ditto target/tools/sparkle/core/Sparkle.framework "$app/Contents/Frameworks/Sparkle.framework"
+ditto "$sparkle_dir/core/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 xcrun swiftc -swift-version 5 -warnings-as-errors -parse-as-library -O \
-  -target arm64-apple-macos12.0 -F target/tools/sparkle/core -framework Sparkle -framework AppKit \
+  -target arm64-apple-macos12.0 -F "$sparkle_dir/core" -framework Sparkle -framework AppKit \
   -Xlinker -rpath -Xlinker '@executable_path/../../../../Frameworks' \
   native/macos/CalmfoldUpdater.swift -o "$app/Contents/Helpers/CalmfoldUpdater.app/Contents/MacOS/CalmfoldUpdater"
 python3 - "$app" "$version" <<'PYINFO'
@@ -44,7 +45,7 @@ PYINFO
 cp LICENSE NOTICE "$app/Contents/Resources/"
 python3 scripts/release-source.py "$app/Contents/Resources"
 python3 scripts/third-party-notices.py "$app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
-cp target/tools/sparkle/LICENSE "$app/Contents/Resources/Sparkle-LICENSE.txt"
+cp "$sparkle_dir/LICENSE" "$app/Contents/Resources/Sparkle-LICENSE.txt"
 # Ad-hoc sealing is required for bundle integrity, uses no identity or Keychain,
 # and does not claim Developer ID signing or Apple notarization.
 codesign --force --sign - "$app/Contents/Helpers/CalmfoldUpdater.app"

@@ -17,6 +17,8 @@ permissions:
 jobs:
   sparkle:
     runs-on: macos-latest
+    env:
+      CALMFOLD_SPARKLE_DIR: ${{ github.workspace }}/.native-tools/sparkle
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -26,9 +28,9 @@ jobs:
       - name: Compile actual Sparkle bridge
         run: >-
           xcrun swiftc -swift-version 5 -warnings-as-errors -parse-as-library -D UPDATER_TESTING
-          -F target/tools/sparkle/core -framework Sparkle -framework AppKit
+          -F "$CALMFOLD_SPARKLE_DIR/core" -framework Sparkle -framework AppKit
           -Xlinker -rpath -Xlinker '@executable_path/../../../../Frameworks'
-          native/macos/CalmfoldUpdater.swift -o target/tools/sparkle/CalmfoldUpdater
+          native/macos/CalmfoldUpdater.swift -o "$CALMFOLD_SPARKLE_DIR/CalmfoldUpdater"
       - name: Installed upgrade, relaunch and signature rejection
         run: python3 scripts/test-sparkle.py
   velopack:

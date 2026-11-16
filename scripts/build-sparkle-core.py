@@ -19,6 +19,16 @@ def build():
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
     sdk = module.fetch()
     output = sdk / "core/Sparkle.framework"
+    # Cargo cache cleanup can leave a framework directory with missing bundle
+    # resources or symlinks. Rebuild from checksum-pinned source; never re-sign
+    # an incomplete cached framework or relax verification to make it usable.
+    if output.exists() or output.is_symlink():
+        verified = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(output)], capture_output=True)
+        if verified.returncode:
+            print("Rebuilding incomplete Sparkle cache")
+            for stale in [output, sdk / "core-build", sdk / "source"]:
+                if stale.is_symlink(): stale.unlink()
+                elif stale.exists(): shutil.rmtree(stale)
     if not output.exists():
         archive = sdk / "Sparkle-source.tar.gz"
         if not archive.exists():

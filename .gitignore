@@ -55,3 +55,6 @@ __pycache__/
 # Kiro: retain shared project skills, exclude local machine/session state.
 /.kiro/*
 !/.kiro/skills/
+
+# Native SDK tools stay outside Cargo caches in CI.
+/.native-tools/

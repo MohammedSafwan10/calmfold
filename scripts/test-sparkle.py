@@ -19,7 +19,7 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
-SDK = ROOT / "target/tools/sparkle"
+SDK = Path(os.environ.get("CALMFOLD_SPARKLE_DIR", ROOT / "target/tools/sparkle")).resolve()
 
 
 def run(*args, **kwargs):

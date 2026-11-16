@@ -17,10 +17,6 @@ Calmfold brings everyday personal tools into one quiet workspace. Your notes and
 plans live on your device. There is no required account, cloud subscription or
 telemetry. The interface is built in Rust with GPUI Kit.
 
-> **Early release:** v0.1.2 is completing its final release checks. The packages
-> below will be available when publication finishes. Previous builds remain
-> available in [the source repository's releases](https://github.com/MohammedSafwan10/calmfold/releases).
-
 ## Download
 
 Get official builds from [Calmfold Releases](https://github.com/MohammedSafwan10/calmfold-releases/releases/latest).

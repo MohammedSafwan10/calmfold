@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Sign native Mac metadata with explicit file credentials; never use Keychain."""
 import base64
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -9,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 version, directory, key = sys.argv[1:]
 root = Path(directory)
-signer = Path('target/tools/sparkle/bin/sign_update').resolve()
+signer = Path(os.environ.get('CALMFOLD_SPARKLE_DIR','target/tools/sparkle')).resolve() / 'bin/sign_update'
 public = base64.b64decode(Path('native/macos/sparkle-public-key.txt').read_text(), validate=False)
 with tempfile.TemporaryDirectory() as tmp:
     secret = base64.b64decode(Path(key).read_text().strip(), validate=True)

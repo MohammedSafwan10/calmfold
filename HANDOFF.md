@@ -120,6 +120,20 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 
 ## Log
 
+### 2026-11-16: Repair cached native SDK packaging and Windows text decoding
+
+- GPL candidate run 43915646801 passes all app/native tests, but packaging caught
+  an incomplete Sparkle framework restored from the Rust cache and Windows
+  cp1252 decoding of Cargo's UTF-8 JSON. Nothing was published.
+- Put CI SDKs in ignored .native-tools outside Cargo target caches. Scope the
+  release Rust cache to target/release. Validate cached framework signatures;
+  rebuild incomplete cached output/derived/source from checksum-pinned archives.
+- Reproduced an incomplete framework locally in an isolated cache; builder
+  repaired it, verified signatures and confirmed no WebKit linkage.
+- Decode Cargo metadata explicitly as UTF-8 for dependency notice generation.
+  Final publication still requires a fresh candidate containing these fixes.
+
+
 ### 2026-11-16: Adopt GPLv3 and refresh public project documentation
 
 - Owner chose GPLv3 after discussion of private use, commercial redistribution

@@ -35,6 +35,8 @@ jobs:
       - shell: bash
         run: scripts/check.sh
   build:
+    env:
+      CALMFOLD_SPARKLE_DIR: ${{ github.workspace }}/.native-tools/sparkle
     # Do not spend time packaging a candidate whose quality/native gates failed.
     needs: [engines, quality]
     strategy:
