@@ -28,7 +28,8 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 - Production updates: native Sparkle/Velopack adapters replace the legacy installer.
   Mac installed upgrade/relaunch and tampered archive tests pass locally and CI.
   Windows native checks caught a boxed SDK type mismatch, corrected for rerun.
-  Version 0.1.2 candidate packaging/signing is in progress; no public release yet. See
+  Version 0.1.2 candidate packaging/signing is blocked by GitHub billing;
+  full local gate passes 346 tests (77 UI). No public release yet. See
   `docs/plans/13-production-updates.md` and ADR 0008 for exact gates/limits.
 
 ## Next steps (in order)
@@ -39,11 +40,25 @@ Developer's first release is implemented. General utilities, environment
 comparison, CLI injection and server/sync integrations remain explicitly deferred.
 Workspace customization is complete. Finish website pages and release metadata
 before deploying; do not treat the scaffold as a deployable website.
-Current priority: native installed-app updater prototypes (Mac first, Windows on
-its native runner), then engine adoption and atomic signed release publishing.
-The available Sparkle bridge currently uses standard Sparkle UI; GPUI-only UI
-needs a tested bridge/helper. MINISIGN_KEY exists in GitHub but its correspondence
-to the embedded public key has not been verified. No production release published.
+Current priority: finish Windows native upgrade proof and publish v0.1.2.
+Mac installed upgrade/relaunch and archive rejection pass locally and in CI;
+the production-key archive/appcast signing script also verifies locally.
+Windows native build/SDK adapter compiles; the test package lacks its sibling
+fixture file before startup, so full runtime update proof has NOT passed.
+Fixture preparation now writes an explicit absolute path with assertions; rerun.
+GitHub blocked new jobs before execution: account payment/spending-limit error
+(run 43870246438). User action in GitHub billing is required before retrying.
+No public release yet. MINISIGN_KEY correspondence still awaits candidate CI.
+SPARKLE_KEY is configured; protected recovery seed is outside the repo at
+~/.config/calmfold/release-keys/sparkle.key. Never print or commit it.
+Public calmfold-releases immutable releases are enabled; upload a complete draft
+and verify before publishing. Candidate workflow builds all native assets and
+signs/verifies both metadata formats; it never clobbers published assets.
+
+What's new is implemented with native version navigation, narrow-window dropdown,
+offline grouped notes and back/Escape. Small emoji section headers; no media
+renderer yet. Media research and future policy are in plan 14. No Coolify needed
+for bundled release notes or GitHub-hosted updates. Website remains a scaffold.
 
 ## Known issues / risks
 

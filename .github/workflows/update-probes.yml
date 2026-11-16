@@ -51,10 +51,12 @@ jobs:
           dotnet tool install --tool-path "$env:RUNNER_TEMP/vpk" vpk --version 1.2.161
           New-Item -ItemType Directory -Force target/native-release-test/payload | Out-Null
           Copy-Item target/native-update-fixture/release/calmfold-native-update-fixture.exe target/native-release-test/payload/Calmfold.exe
-          Set-Content -NoNewline target/native-release-test/payload/sibling.txt 'old sibling'
+          [IO.File]::WriteAllText((Join-Path $PWD 'target/native-release-test/payload/sibling.txt'), 'old sibling')
+          if (!(Test-Path -LiteralPath target/native-release-test/payload/sibling.txt)) { throw 'Old fixture sibling was not written' }
           & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion 1.0.0 --packDir target/native-release-test/payload --mainExe Calmfold.exe --outputDir target/native-release-test/old --channel win --runtime win-x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Set-Content -NoNewline target/native-release-test/payload/sibling.txt 'new sibling'
+          [IO.File]::WriteAllText((Join-Path $PWD 'target/native-release-test/payload/sibling.txt'), 'new sibling')
+          if ((Get-Content -Raw -LiteralPath target/native-release-test/payload/sibling.txt) -ne 'new sibling') { throw 'New fixture sibling was not written' }
           & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion 1.0.1 --packDir target/native-release-test/payload --mainExe Calmfold.exe --outputDir target/native-release-test/new --channel win --runtime win-x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Installed upgrade, relaunch and authenticated rejection
