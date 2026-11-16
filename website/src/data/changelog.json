@@ -2,33 +2,69 @@
   {
     "version": "0.1.2",
     "date": "2026-11-16",
-    "items": [
-      "Native in-app updates with Sparkle on Mac and Velopack on Windows, authenticated downloads and save-before-restart protection.",
-      "Developer workspace with project links, setup notes, tasks and encrypted environment sets.",
-      "Focus timer with task linking and reliable mode switching.",
-      "Choose which features appear in the sidebar, their order and your startup page.",
-      "Vault and environment editing improvements, with safer imports, exports and draft preservation."
+    "title": "More room for your work",
+    "summary": "Projects, focused sessions and a workspace that fits the way you work.",
+    "sections": [
+      {
+        "title": "New",
+        "emoji": "✨",
+        "items": [
+          "Developer workspace with project links, setup notes, tasks and encrypted environment sets.",
+          "Focus timer with task linking and reliable mode switching.",
+          "Choose which features appear in the sidebar, their order and your startup page."
+        ]
+      },
+      {
+        "title": "Improved",
+        "emoji": "◈",
+        "items": [
+          "Native in-app updates with Sparkle on Mac and Velopack on Windows, authenticated downloads and save-before-restart protection."
+        ]
+      },
+      {
+        "title": "Fixed",
+        "emoji": "🔧",
+        "items": [
+          "Vault and environment editing improvements, with safer imports, exports and draft preservation."
+        ]
+      }
     ]
   },
   {
     "version": "0.1.1",
     "date": "2026-11-14",
-    "items": [
-      "Windows: the sidebar and note-list buttons in the title bar now respond to the mouse.",
-      "Windows: the empty notes hint on Today says Ctrl+N instead of ⌘N.",
-      "Smaller and faster development builds."
+    "title": "Small details, smoother days",
+    "summary": "A few refinements for everyday use.",
+    "sections": [
+      {
+        "title": "Fixed",
+        "emoji": "🔧",
+        "items": [
+          "Windows: the sidebar and note-list buttons in the title bar now respond to the mouse.",
+          "Windows: the empty notes hint on Today says Ctrl+N instead of ⌘N.",
+          "Smaller and faster development builds."
+        ]
+      }
     ]
   },
   {
     "version": "0.1.0",
     "date": "2026-11-09",
-    "items": [
-      "First release for Windows and macOS.",
-      "Notes with live Markdown, links between notes, tags, math and diagrams.",
-      "Tasks with quick add, repeats, subtasks and projects.",
-      "Calendar with month, week, day and agenda views, .ics import, holidays for about 245 countries, birthdays and anniversaries.",
-      "Habits with streaks and insights.",
-      "An encrypted password vault with one-time codes, a generator, a recovery key and encrypted backups."
+    "title": "A quieter daily companion",
+    "summary": "The beginning of Calmfold.",
+    "sections": [
+      {
+        "title": "New",
+        "emoji": "✨",
+        "items": [
+          "First release for Windows and macOS.",
+          "Notes with live Markdown, links between notes, tags, math and diagrams.",
+          "Tasks with quick add, repeats, subtasks and projects.",
+          "Calendar with month, week, day and agenda views, .ics import, holidays for about 245 countries, birthdays and anniversaries.",
+          "Habits with streaks and insights.",
+          "An encrypted password vault with one-time codes, a generator, a recovery key and encrypted backups."
+        ]
+      }
     ]
   }
 ]

@@ -44,6 +44,7 @@ actions!(
         GoSettings,
         CustomizeSidebar,
         CheckForUpdates,
+        ShowChangelog,
         RestartToUpdate,
         ToggleSidebar,
         ToggleListPanel,

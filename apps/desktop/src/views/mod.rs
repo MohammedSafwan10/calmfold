@@ -4,6 +4,7 @@
 pub mod calendar;
 pub mod calendar_grid;
 pub mod calendar_layout;
+pub mod changelog;
 pub mod code_highlight;
 pub mod developer;
 pub mod diagram;

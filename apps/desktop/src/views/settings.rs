@@ -35,6 +35,8 @@ pub struct SettingsView {
     layout: Entity<crate::ui_state::LayoutStore>,
     generation: u64,
     initial_page: usize,
+    show_changelog: bool,
+    changelog_version: usize,
     _layout_observer: Subscription,
     _updates_observer: Subscription,
     data_dir: PathBuf,
@@ -58,6 +60,8 @@ impl SettingsView {
             layout,
             generation: 0,
             initial_page: 0,
+            show_changelog: false,
+            changelog_version: 0,
             _layout_observer: observer,
             _updates_observer: updates_observer,
             data_dir,
@@ -66,8 +70,23 @@ impl SettingsView {
         }
     }
     pub fn open_workspace(&mut self, cx: &mut Context<Self>) {
+        self.show_changelog = false;
         self.initial_page = 1;
         self.generation = self.generation.wrapping_add(1);
+        cx.notify();
+    }
+
+    pub fn open_changelog(&mut self, cx: &mut Context<Self>) {
+        self.show_changelog = true;
+        self.changelog_version = 0;
+        cx.notify();
+    }
+
+    fn close_changelog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_changelog = false;
+        self.initial_page = 6;
+        self.generation = self.generation.wrapping_add(1);
+        self.focus.focus(window, cx);
         cx.notify();
     }
 
@@ -836,6 +855,19 @@ impl SettingsView {
         )
         .description("New versions are signed by Nexdark Labs and checked before they install.")
         .keywords(["update", "upgrade", "new version", "version"]);
+        let changelog = SettingItem::new(
+            "What’s new",
+            SettingField::render(|_, _, _| {
+                Button::new("set-whats-new")
+                    .small()
+                    .label("Read release notes")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(crate::actions::ShowChangelog), cx)
+                    })
+            }),
+        )
+        .description("New features, improvements and fixes, across every release.")
+        .keywords(["changelog", "release notes", "changes", "what’s new"]);
         let automatic = SettingItem::new(
             "Check for updates automatically",
             SettingField::switch(crate::updates::automatic, crate::updates::set_automatic),
@@ -846,7 +878,7 @@ impl SettingsView {
         .keywords(["update", "automatic", "background"]);
         SettingPage::new("About").icon(Lucide::Info).group(
             SettingGroup::new().title("Calmfold").items(vec![
-                header, version, updates, automatic, maker, fonts, icons,
+                header, version, updates, automatic, changelog, maker, fonts, icons,
             ]),
         )
     }
@@ -1006,6 +1038,30 @@ impl Focusable for SettingsView {
 
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.show_changelog {
+            return super::changelog::render(
+                &self.focus,
+                self.changelog_version,
+                f32::from(window.viewport_size().width) / f32::from(window.rem_size()) < 72.,
+                {
+                    let view = cx.entity().downgrade();
+                    move |index, _, cx| {
+                        _ = view.update(cx, |this, cx| {
+                            this.changelog_version = index;
+                            cx.notify();
+                        });
+                    }
+                },
+                cx.listener(|this, _, window, cx| this.close_changelog(window, cx)),
+                cx.listener(|this, event: &gpui_kit::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "escape" {
+                        this.close_changelog(window, cx);
+                        cx.stop_propagation();
+                    }
+                }),
+                cx,
+            );
+        }
         match &mut self.holiday_pickers {
             Some(p) => p.sync(window, cx),
             None => {

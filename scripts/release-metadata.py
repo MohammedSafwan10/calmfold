@@ -33,5 +33,5 @@ for platform, artifact in [('macos-arm64', mac), ('windows-x64', windows[0])]:
     assert 0 < size <= 300 * 1024 * 1024, 'package exceeds client size limit'
     platforms[platform] = dict(url=f'{base}/{artifact.name}', sha256=digest, size=size)
 assert (root/'appcast.xml').exists() and list(root.glob('*Setup.exe')) and list(root.glob('*Portable.zip'))
-(root/'stable.json').write_text(json.dumps(dict(version=version,date=notes['date'],notes=notes['items'],platforms=platforms), indent=2)+'\n')
+(root/'stable.json').write_text(json.dumps(dict(version=version,date=notes['date'],notes=[item for section in notes['sections'] for item in section['items']],platforms=platforms), indent=2)+'\n')
 print('Verified package versions and generated complete release catalog')

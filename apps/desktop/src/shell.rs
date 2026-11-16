@@ -17,7 +17,7 @@ use gpui_kit::component::sidebar::{
     Sidebar, SidebarCollapsible, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Selectable as _, Sizable as _, TitleBar, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Icon, Sizable as _, TitleBar, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -819,7 +819,6 @@ impl AppShell {
                 .ghost()
                 .small()
                 .icon(Lucide::Settings)
-                .selected(self.route == Route::Settings)
                 .tooltip_with_action("Settings", &GoSettings, None)
                 .on_click(
                     cx.listener(|this, _, window, cx| this.navigate(Route::Settings, window, cx)),
@@ -1237,6 +1236,12 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["vault", "old vault", "restore"],
         ),
         cmd(
+            "What’s new",
+            Lucide::Info,
+            Box::new(crate::actions::ShowChangelog),
+            &["changelog", "release notes", "changes", "updates"],
+        ),
+        cmd(
             "Check for updates",
             Lucide::RefreshCw,
             Box::new(CheckForUpdates),
@@ -1534,6 +1539,15 @@ pub fn register_commands(cx: &mut App) {
                 Ok(true) => cx.quit(),
                 Ok(false) => {}
                 Err(err) => calmfold_ui::feedback::error_toast(format!("{err:#}"), w, cx),
+            }
+        })
+    });
+    cx.on_action(|_: &crate::actions::ShowChangelog, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.navigate(Route::Settings, w, cx);
+            if s.route() == Route::Settings {
+                s.settings
+                    .update(cx, |settings, cx| settings.open_changelog(cx));
             }
         })
     });

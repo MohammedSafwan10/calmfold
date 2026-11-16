@@ -520,6 +520,93 @@ fn update_restart_flushes_a_pending_note_before_autosave(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
+fn release_history_opens_from_about_and_returns_by_button_or_escape(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    dispatch(&app, cx, GoSettings);
+    cx.update_window(app.window, |_, w, cx| {
+        w.within("settings-sidebar").click("0-6", cx);
+    })
+    .expect("About");
+    cx.run_until_parked();
+    for light in [false, true] {
+        if light {
+            dispatch(&app, cx, UseLightTheme);
+        } else {
+            dispatch(&app, cx, UseDarkTheme);
+        }
+        cx.update_window(app.window, |_, w, cx| {
+            w.click("set-whats-new", cx);
+        })
+        .expect("open release notes");
+        cx.run_until_parked();
+        cx.update_window(app.window, |_, w, cx| {
+            w.render_frame(cx);
+            let texts = gpui_kit::base::test_support::texts(w);
+            assert!(texts.iter().any(|t| t.text() == "What’s new"));
+            assert!(texts.iter().any(|t| t.text() == "More room for your work"));
+            assert!(texts.iter().any(|t| t.text() == "Installed"));
+            w.click("release-0.1.1", cx);
+        })
+        .expect("older release");
+        cx.run_until_parked();
+        cx.update_window(app.window, |_, w, cx| {
+            w.render_frame(cx);
+            let texts = gpui_kit::base::test_support::texts(w);
+            assert!(
+                texts
+                    .iter()
+                    .any(|t| t.text() == "Small details, smoother days")
+            );
+            assert!(!texts.iter().any(|t| t.text() == "More room for your work"));
+            w.click("release-0.1.2", cx);
+        })
+        .expect("current release");
+        cx.run_until_parked();
+        cx.update_window(app.window, |_, w, cx| {
+            w.click("whats-new-back", cx);
+        })
+        .expect("read and return");
+        cx.run_until_parked();
+        dispatch(&app, cx, calmfold_desktop::actions::ShowChangelog);
+        press(&app, cx, "escape");
+        cx.run_until_parked();
+        cx.update_window(app.window, |_, w, cx| {
+            w.render_frame(cx);
+            assert!(
+                !gpui_kit::base::test_support::texts(w)
+                    .iter()
+                    .any(|t| t.text() == "More room for your work")
+            );
+            w.click("set-whats-new", cx);
+        })
+        .expect("Escape restores About");
+        cx.run_until_parked();
+        cx.update_window(app.window, |_, w, cx| {
+            w.click("whats-new-back", cx);
+        })
+        .expect("return again");
+        cx.run_until_parked();
+    }
+    dispatch(&app, cx, calmfold_desktop::actions::ShowChangelog);
+    cx.simulate_window_resize(
+        app.window,
+        gpui_kit::size(gpui_kit::px(800.), gpui_kit::px(650.)),
+    );
+    cx.run_until_parked();
+    click(&app, cx, "release-version-picker");
+    click_label(&app, cx, "Version 0.1.0");
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(
+            gpui_kit::base::test_support::texts(w)
+                .iter()
+                .any(|t| t.text() == "A quieter daily companion")
+        );
+    })
+    .expect("narrow release selection");
+}
+
+#[gpui_kit::test]
 fn update_status_refreshes_in_settings_without_navigation(cx: &mut TestAppContext) {
     use calmfold_desktop::updates::{Status, Updates};
     use gpui_kit::BorrowAppContext as _;

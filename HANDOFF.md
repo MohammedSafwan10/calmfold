@@ -86,6 +86,19 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 
 ## Log
 
+### 2026-11-16: Native offline release history
+
+- Settings → About → Read release notes and command-palette What’s new open
+  a full content-area reading view. Back/Escape returns to About; app navigation
+  remains present. Bundled JSON provides version/date, installed marker, concise
+  introductions and New/Improved/Fixed sections, shared with signed feed notes.
+- Version rail shows one release at a time; a native dropdown replaces it on
+  narrow windows. Tests cover old/current selection and dropdown navigation.
+  Settings gear has no persistent filled tile; hover/focus remain native.
+- Native flow passes opening, back and Escape in both themes. No WebView, remote
+  HTML, startup popup or new permanent sidebar entry. Plan 14 tracks review.
+
+
 ### 2026-11-16: Adopt native update engines (release work in progress)
 
 - Replace the custom installer and obsolete unbundled probes with Sparkle 2.10.1

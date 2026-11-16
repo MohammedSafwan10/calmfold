@@ -127,6 +127,13 @@ pub fn start(
                 w.dispatch_action(Box::new(actions::CustomizeSidebar), cx)
             })?;
         }
+        if route == views::Route::Settings
+            && std::env::var("CALMFOLD_DEV_SETTINGS").is_ok_and(|v| v == "changelog")
+        {
+            window.update(cx, |_, w, cx| {
+                w.dispatch_action(Box::new(actions::ShowChangelog), cx)
+            })?;
+        }
         // CALMFOLD_DEV_SOURCE=1 with route=notes: open the first note as Markdown source.
         if route == views::Route::Notes && std::env::var_os("CALMFOLD_DEV_SOURCE").is_some() {
             window.update(cx, |_, window, cx| {
