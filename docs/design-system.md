@@ -64,6 +64,28 @@ Lucide (1,800+ icons, one consistent stroke style, ISC). Use
 - Resizable by dragging its edge (180–360 px); double-click the edge resets.
   Width and collapsed state persist.
 - Settings lives in the footer.
+- Settings → Workspace controls sidebar visibility and order with switches
+  and direct up/down buttons. Keyboard focus stays on a moved control. No drag
+  handles or row overflow menus. Reset offers Undo and does not change startup.
+- Hidden features appear under an inline More entry immediately after the
+  visible features; omit More when everything is shown. Search and Settings
+  remain available even when every feature is hidden. Hiding is presentation
+  only: commands, data, drafts, vault locking and running timers stay intact.
+- Feature metadata lives in `nav.rs`; `navigation.rs` resolves stable saved IDs
+  against that catalog. Fresh installations show Today/Notes/Tasks/Calendar;
+  upgrades preserve prior entries and the legacy Developer preference. Newly
+  introduced features go to More until selected. Save order, visibility and
+  startup in `layout.json`, independently of theme preferences.
+
+## Settings organization
+
+General (startup), Workspace (sidebar), Appearance, Features (existing Notes,
+Today, Calendar/holiday preferences), Privacy & data (vault security, backups,
+storage), Keyboard, About. Keep future feature preferences under Features;
+only add controls for implemented behavior. Native search spans all categories,
+including preferences for features hidden from the main sidebar. Customize
+sidebar (palette or More) opens Workspace directly. The selected startup page
+may be hidden without being pinned or opening it immediately.
 
 ## Feedback rules (`calmfold_ui::feedback`)
 

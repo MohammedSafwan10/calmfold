@@ -2,20 +2,38 @@
 
 Overwrite **Current state** and **Next steps** every session. Append to the log.
 
-## Current state (2026-11-09)
+## Current state (2026-11-16)
 
 - App: **Calmfold by Nexdark Labs** (renamed from Keepstone). Branch `main`,
   repo `MohammedSafwan10/calmfold`. `scripts/check.sh` passes; CI runs on
   macOS and Windows.
 - Done: notes editor, tasks, Today, calendar (exceptions, ends, ICS import,
   deleted events, holidays for ~245 countries + states, birthdays), habits,
-  password vault (recovery, backups), app icon, release workflow
-  (`release.yml`, unsigned Windows + macOS zips on `v*` tags).
+  focus/pomodoro timer (task-linked, header pill when active), password vault
+  (recovery, backups), app icon, release workflow (`release.yml`, unsigned
+  Windows + macOS zips on `v*` tags).
+- Developer workspace: optional sidebar destination with searchable projects,
+  links/folder references, real setup Notes and project Tasks, archive/restore,
+  and encrypted environment sets shared with Passwords. Migration 0011 and
+  item-data v2 for environments only; crypto envelope/KDF unchanged. See
+  `docs/plans/11-developer.md` and `docs/security.md` for limits and export policy.
+- Developer/environment audit follow-up and Workspace customization are fixed
+  and verified; the latest quality gate passes 337 tests (74 UI tests).
+  Settings → Workspace controls sidebar order/visibility with direct arrows,
+  switches and reset/Undo. Hidden features live in inline More; keyboard and
+  command access remain available. General selects the startup page.
+- Website is a scaffold/assets snapshot, not a finished site: no pages yet,
+  and the release-fetch build step needs a published feed or saved release.json.
+  Astro is patched to 7.4.12; npm audit reports zero known vulnerabilities.
 
 ## Next steps (in order)
 
 Everything in `docs/TASKS.md` is done except the
 500 KB+ editor item in §1.
+Developer's first release is implemented. General utilities, environment
+comparison, CLI injection and server/sync integrations remain explicitly deferred.
+Workspace customization is complete. Finish website pages and release metadata
+before deploying; do not treat the scaffold as a deployable website.
 
 ## Known issues / risks
 
@@ -57,6 +75,174 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 ```
 
 ## Log
+
+### 2026-11-16: Finish Workspace customization and organize pending work
+
+- Persist sidebar order, visibility and startup route in layout.json, independent
+  of appearance reset. Preserve old installations; fresh installs start with
+  Today, Notes, Tasks and Calendar. Unknown/new features remain reachable in More.
+- Replace confusing drag controls with direct keyboard-accessible arrows and
+  switches. Place More after visible features only when something is hidden;
+  leave Settings alone in the footer. Reset supports Undo without changing startup.
+- Organize Settings into General, Workspace, Appearance, Features, Privacy & data,
+  Keyboard and About. Search reaches hidden-feature preferences. Customize sidebar
+  opens Workspace directly. Stable focus survives reordered native settings rows.
+- Quality gate passes 337 tests including 74 UI flows: migration/persistence,
+  order/hide/all-hidden, startup, reset/Undo, appearance independence, draft/vault
+  preservation and running timers. Reviewed window-only light/dark screenshots;
+  closed review copies and reopened one real-data app. Windows was not run.
+- Review pending work for separate commits. Credential/private-key pattern scan
+  found no matches; this is not a formal security audit. Patch website Astro to
+  7.4.12 (npm audit: zero known vulnerabilities). Website build remains blocked
+  by unpublished release metadata and missing pages; document that explicitly.
+
+### 2026-11-16: Resolve Developer/environment audit findings
+
+- Verified the external review against current code. Preserve failed-validation
+  and unapplied-import drafts when changing Passwords items, filters, tags or
+  starting another item; the shared pane also refuses to replace a failed draft.
+  Correcting the error allows normal save-and-switch behavior.
+- Reveal now renders literal values (including multiline content); only the
+  masked editing representation is escaped. Single/all-value copies update
+  Recently used. Keys trim accidental edge whitespace; values are untouched.
+- New Project forms exit on selection, archived-view changes, New environment
+  and Escape. The locked Secrets view owns unlock guidance, so no stale banner
+  survives unlock. Preserve genuine validation errors instead of clearing all
+  errors on every data event.
+- Export snapshots while unlocked after confirmation/location selection, then
+  writes/syncs in the background. It reports safe specific errors, prevents
+  simultaneous exports and still refuses overwrites with private Unix files.
+  Lock before the path picker returns prevents the export; an already-started
+  explicitly approved export completes its snapshot.
+- Remove the extra Developer Secrets scroll container, constrain the pane to
+  its available height, size variable lists to their content (six-row cap), and
+  expand revealed multiline rows within bounds. Measure actual escaped UTF-8
+  output size instead of rejecting ordinary files above approximately 512 KiB.
+- Archive-view menu is a real checkable app action (including unchecked native
+  accessibility state), settings have Developer search keywords, and project
+  deletion emits DeveloperChanged. Sidebar hiding intentionally preserves
+  command/shortcut access; it is a visibility setting, not authorization.
+- `scripts/check.sh` passes: 329 tests, including 69 native UI integration
+  tests. New regressions cover failed navigation, pending imports, key trimming,
+  literal multiline reveal, compact one-variable layout, copy usage tracking,
+  export collisions/locked pickers, form navigation and archive menu state.
+
+### 2026-11-16: Add Developer projects and encrypted environment sets
+
+- Reuse task ProjectIds and real setup Notes; no second project or vault
+  system. Projects can be created or promoted from Tasks, edited, archived
+  with Undo, and restored. Hiding Developer in General settings keeps data.
+- Add a shared masked variable editor to Developer and Passwords: searchable
+  virtual rows, file/paste import with key-only preview, individual/all copy,
+  deliberate plaintext export with a location prompt and no overwrite.
+  Async imports cannot repopulate a locked or replaced draft.
+- Domain parser accepts literal assignments, comments, quotes, multiline
+  values and optional export prefixes. Rejects duplicates and oversized
+  input with safe errors. Limits: 1 MiB, 512 variables, 64 KiB/value.
+- UI testing caught the kit stripping newlines in masked inputs. Values now
+  use a documented reversible escaped representation; pasted values escape
+  automatically, and copy/export decode them. An 81-variable UI regression
+  preserves multiline values through imports, edits, saves and export.
+- Ordinary items remain item format v1; environment records use v2 and are
+  tested through encryption/reload and encrypted backup recovery. Upgrade
+  older clients before using environment items. No crypto primitive changes.
+- Owner's visual feedback: replace centered spaced-out project buttons with
+  compact left-aligned icon rows, clearer selected state, a narrower list,
+  compact tabs and grouped resources. Reviewed native light/dark layouts.
+- `scripts/check.sh` passes (324 tests, including 65 UI tests). Tests cover
+  v10 upgrades, file persistence/corruption, project navigation/edit/archive,
+  literal limits, backup compatibility, export confirmation/0600/no overwrite,
+  clipboard clearing, lock cleanup and stale-dialog results. Real clicking
+  was unavailable while the Mac's windows were off-screen; flows use real
+  native components in headless UI tests.
+- `seed_developer` creates a disposable visual-review fixture and refuses
+  existing databases. Screenshot/click scripts accept `CALMFOLD_WINDOW_PID`
+  so review windows can be targeted without capturing another Calmfold app.
+
+### 2026-11-16: Simplify locked mode control after visual feedback
+
+- Removed the always-visible helper sentence and the native per-tab disabled
+  styling that created three separate dark blocks. Keep one standard
+  segmented strip, subtly dimmed while active, with the explanation on hover
+  only. Domain guards still reject mode changes without resetting the timer.
+- The repeated-click regression verifies no toasts, no persistent helper text
+  and preserved running/paused state in both themes. `scripts/check.sh` passes
+  (309 tests). The owner's running timer was not restarted.
+
+### 2026-11-16: Stop notification stacking on locked focus modes
+
+- Removed the per-click mode-lock toast. Other modes are now disabled while
+  running or paused, with a single quiet inline hint; the current mode stays
+  selected. Mode choices re-enable and the hint disappears after Finish/Reset.
+  Native TabBar uses `FocusKind::ALL` and its labels as the source of truth.
+- Extended the real tab-click regression to repeat mode clicks 24 times per
+  theme and verify zero notifications, preserved state and hint removal.
+  `scripts/check.sh` passes (309 tests). Real-input automation remains
+  unreliable here; the changed interaction is covered by the UI test in both
+  light and dark. The owner's running session was deliberately left intact.
+
+### 2026-11-16: Quieter focus controls and searchable task selection
+
+- Transport controls (including Start) are icon-only, transparent at rest,
+  retaining native hover/focus treatment and shortcut tooltips. Duration is
+  one compact menu above the task link and controls, with mode-specific
+  presets and inline custom minutes; invalid custom values leave the timer
+  unchanged and show the permitted range from core constants.
+- Replaced the first-15-task popup with the existing GPUI Kit searchable
+  single-select Combobox, a bounded scrollable menu, stable TaskId values,
+  task-title truncation, keyboard navigation and explicit empty/error states.
+  Selection follows linking, unlinking and task reloads without writes on
+  programmatic synchronization. Tasks are filtered in memory; no search IO.
+- Added UI tests searching 301 tasks and selecting outside the previous
+  cutoff, unlinking, duration presets and invalid/valid custom input.
+- `scripts/check.sh` passes: 309 tests including 62 UI tests. Ran the app
+  against throwaway data and inspected light/dark Focus screenshots. Real
+  scripted clicks still did not activate controls; keyboard and picker flows
+  were verified with headless UI tests. Windows was not run on-device.
+
+### 2026-11-16: Protect active focus timers from mode-tab resets
+
+- Mode selection now changes an idle timer only. Running and paused sessions
+  retain their countdown, original start, cycle and task link; selecting the
+  current tab is a no-op. Attempting another mode explains that Finish or
+  Reset is needed. Starting focus from another task cannot overwrite an
+  active block either.
+- Added a core mode/state matrix regression test and real tab-click UI
+  coverage in both themes, plus a real SQLite foreign-key save-failure/retry
+  test proving that progress is retained and exactly one session is saved.
+- Fixed Focus task-completion Undo to restore InProgress via the legal
+  reopen transition; added a UI regression. Cleared existing lint errors in
+  the custom-duration blur handler and updater (no updater behavior changes).
+- `scripts/check.sh` passes (format, strict Clippy, all workspace tests).
+  Headless UI coverage includes running/paused modes, Reset, task linking,
+  navigation, save retry and completion Undo.
+- Ran the app with throwaway data and visually checked Focus in light and
+  dark using window-only screenshots. Closed the review instances; the
+  owner's existing app process was left running. Windows was not tested.
+
+### 2026-11-16: Focus / Pomodoro timer
+
+- `core::focus` (`FocusTimer`, `FocusKind`, `FocusPreset`, `FocusSession`,
+  `TaskFocusStats`): wall-clock drift-free state machine (`Idle`, `Running`,
+  `Paused`) tracking `session_started_at` separately from `segment_started_at`
+  so pauses never skew logged start times, plus Pomodoro cycle tracking and
+  duration formatting.
+- Migration `0010_focus.sql` + `storage::focus`: `focus_sessions` table
+  (`ON DELETE SET NULL` on `task_id`), range queries, and per-task focus
+  aggregations (Focus blocks only).
+- `apps/desktop/src/focus.rs` (`FocusController`): app-wide entity spawning a
+  1s tick only while `Running`, registered as a global so task rows and task
+  details can start focus directly.
+- `views/focus.rs`: calm `ProgressCircle` countdown, 4 cycle dots, linked task
+  picker, duration presets (`15m`, `25m`, `50m`, `90m`), gentle completion
+  banner (`Start break`, `Mark task done`), and Today's log with undo delete.
+- `shell.rs`: quiet title-bar pill (`● 18:42 · Task`) shown only while active
+  off the Focus screen, `GoFocus` (`⌘7`), `FocusToggle`, `FocusReset`,
+  `FocusFinish`, `FOCUS_SHORTCUTS` in Settings → Keyboard, and midnight reload.
+- `task_row.rs` & `task_detail.rs`: `"Start focus"` action and live-updating
+  per-task focus totals (`LibraryEvent::FocusChanged`).
+- Verified with `cargo fmt --check`, `cargo clippy` (0 warnings in Focus files),
+  and `cargo test --workspace` (including `focus_timer` UI test in `ui.rs`).
 
 ### 2026-11-11: Build disk fixed
 

@@ -15,6 +15,8 @@ usable app, passing `scripts/check.sh`, and an updated `HANDOFF.md`.
 | 08 | [Finance and subscriptions](plans/08-finance.md) | Not started |
 | 09 | [Packaging and releases](plans/09-packaging.md) | Icon, unsigned macOS/Windows release workflow done; signing, installers, auto-update open |
 | 10 | [Mobile](plans/10-mobile.md) | Not started |
+| 11 | [Developer workspace](plans/11-developer.md) | Projects, linked setup notes/tasks and encrypted environment sets done; broader developer tools deferred |
+| 12 | [Workspace customization](plans/12-workspace-customization.md) | Sidebar visibility/order, inline More, startup choice and organized settings implemented |
 
 Cross-cutting ideas to schedule later: global quick-capture hotkey, links
 between any objects (note ↔ task ↔ vault item), import from Obsidian/markdown

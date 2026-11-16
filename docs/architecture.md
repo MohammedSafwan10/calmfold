@@ -63,9 +63,25 @@ Data folder (`Settings → General → Data folder`):
 - `vault.json`: vault preferences (auto-lock, clipboard); `vault-archives/*.cfvault`: archived vaults.
 - `appearance.json`: appearance settings.
 - `layout.json`: sidebar width/collapsed.
+- Its `navigation` object stores stable catalog IDs for sidebar order,
+  visibility and startup. Initialize it once before first-launch defaults are
+  written; an existing database or preferences preserves legacy navigation,
+  while fresh installations get a smaller preset. One LayoutStore owns writes.
+  Appearance reset cannot reset workspace choices. Unknown or repeated IDs
+  are resolved safely; missing/new catalog entries remain accessible in More.
 
 Debug builds use a separate `Calmfold Dev` folder; `CALMFOLD_DATA_DIR` overrides.
 A Keepstone folder from before the rename is moved here on first launch (`paths.rs`).
+
+Developer extends existing task projects with `developer_projects` metadata
+(migration 0011), rather than creating a second project system. Setup notes
+are real Notes; archive hides the workspace without deleting linked data.
+Environment sets are optional structured fields inside existing encrypted vault
+items (item-data v2, ordinary items stay v1). Developer and Passwords share the
+same masked editor; the encryption envelope and KDF have not changed. File IO
+goes through Library, and late file-dialog results are invalidated by draft
+generations. See [the feature plan](plans/11-developer.md) and
+[security policy](security.md#developer-projects-and-environment-secrets).
 
 ## Sync (planned, not built)
 

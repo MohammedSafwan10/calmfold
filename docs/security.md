@@ -69,6 +69,42 @@ compromised OS, physical attacks on unlocked RAM.
   Restore needs an unlocked vault, adds copies with new IDs, and skips items
   identical to live ones.
 
+## Developer projects and environment secrets
+
+- Developer project names, links, local folder references and setup notes are
+  ordinary **unencrypted** local app data, like tasks and notes. HTTP(S) links
+  reject embedded usernames/passwords. Do not put credentials in those fields.
+- Environment sets reuse Passwords' vault key, encrypted items, auto-lock,
+  clipboard clearing, recovery and encrypted backups. Variable names, values,
+  project association and environment labels are inside the encrypted item;
+  neither SQLite metadata nor FTS receives them.
+- Environment items use item-data format v2; regular items stay v1. The vault
+  encryption envelope/KDF are unchanged. Older clients must be upgraded to read
+  v2 items. Edits and backup recovery are tested with more than 30 variables.
+- Import is bounded to 1 MiB, 512 variables and 64 KiB per value; duplicate
+  names and malformed input are rejected with safe line-number errors.
+  Parsing never executes commands or expands references. Canonical export
+  preserves literal values in Calmfold's documented dialect; other dotenv
+  runtimes can differ. Comments and original file layout are not preserved.
+- The masked single-line editor represents line breaks as `\n`, returns as
+  `\r`, tabs as `\t` and backslashes as `\\`. Pasting a value escapes these
+  automatically. Copy/export decode the literal value; multiline imports are
+  tested through UI editing and saving.
+- File-picker results carry a draft generation. Closing/replacing a draft or
+  locking invalidates late results. Lock clears rows, previews and reveals;
+  the existing GPUI input-memory limitations above still apply.
+- Plaintext export needs confirmation and a chosen location. A temporary file
+  is written/synced and published without overwriting an existing file; Unix
+  permissions are 0600. This exported file is no longer protected by the vault.
+  Prefer encrypted `.cfvault` backups for storage/transfer.
+- Export takes an unlocked snapshot only after confirmation/path selection;
+  disk writing and sync run in the background. Locking before a picker returns
+  prevents the export. Once an approved write starts, it completes that snapshot;
+  locking cannot recall plaintext the user has chosen to export.
+- Revealing a value displays literal characters (including multiline content).
+  The escaped representation is for masked editing only. Failed validation or
+  an unapplied import keeps the draft open when switching Passwords items.
+
 ## Keychain policy
 
 - Unsigned `cargo run` binaries change their code signature on every build,
