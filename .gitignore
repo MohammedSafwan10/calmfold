@@ -1,5 +1,6 @@
 # Build output
 /target/
+/tools/update-engine-probe/target/
 **/*.rs.bk
 *.pdb
 

@@ -24,6 +24,25 @@ compromised OS, physical attacks on unlocked RAM.
 - User search input is escaped before FTS5 (`codec::fts_query`); all SQL uses
   bound parameters.
 
+## Update boundary
+
+The current updater verifies a minisign signature over release metadata with a
+pinned public key, then enforces the signed size and SHA-256 before unpacking.
+Archives stream through a fixed 32 KiB buffer into private temporary files; failed
+transfers remove the archive. Cache versions are validated before path creation.
+Ready state is written atomically and synced before the UI reports success.
+
+Update restart refuses failed note/Developer/Passwords saves, pending secret
+imports and open editors/dialogs. This protects drafts; it is not a complete
+installed-app recovery guarantee. The legacy installer has no confirmed-startup
+handshake or database rollback and has not passed native Mac/Windows upgrade
+tests. Update signatures are separate from Apple/Windows platform code signing.
+
+Native engine probes are isolated from the shipping dependency graph. See
+[plan 13](plans/13-production-updates.md) and [ADR 0008](decisions/0008-updater-engines.md)
+for prototype, publication, credential, replay protection and data recovery gates.
+Do not describe those gates as implemented until their verification passes.
+
 ## Vault design
 
 - Master password → **Argon2id** v1.3, default m=64 MiB, t=3, p=4 (RFC 9106

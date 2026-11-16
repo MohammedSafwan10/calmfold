@@ -18,13 +18,18 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
   item-data v2 for environments only; crypto envelope/KDF unchanged. See
   `docs/plans/11-developer.md` and `docs/security.md` for limits and export policy.
 - Developer/environment audit follow-up and Workspace customization are fixed
-  and verified; the latest quality gate passes 337 tests (74 UI tests).
+  and verified; the latest quality gate passes 345 tests (75 UI tests).
   Settings → Workspace controls sidebar order/visibility with direct arrows,
   switches and reset/Undo. Hidden features live in inline More; keyboard and
   command access remain available. General selects the startup page.
 - Website is a scaffold/assets snapshot, not a finished site: no pages yet,
   and the release-fetch build step needs a published feed or saved release.json.
   Astro is patched to 7.4.12; npm audit reports zero known vulnerabilities.
+- Production updates: first hardening milestone complete. Fixed-memory verified
+  downloads, durable ready state, preference race/lock fixes and save-before-
+  restart guards pass. Isolated Sparkle/Velopack probes compile/run on Mac;
+  native CI probes are configured. No engine migration or live feed yet. See
+  `docs/plans/13-production-updates.md` and ADR 0008 for exact gates/limits.
 
 ## Next steps (in order)
 
@@ -34,6 +39,11 @@ Developer's first release is implemented. General utilities, environment
 comparison, CLI injection and server/sync integrations remain explicitly deferred.
 Workspace customization is complete. Finish website pages and release metadata
 before deploying; do not treat the scaffold as a deployable website.
+Current priority: native installed-app updater prototypes (Mac first, Windows on
+its native runner), then engine adoption and atomic signed release publishing.
+The available Sparkle bridge currently uses standard Sparkle UI; GPUI-only UI
+needs a tested bridge/helper. MINISIGN_KEY exists in GitHub but its correspondence
+to the embedded public key has not been verified. No production release published.
 
 ## Known issues / risks
 
@@ -75,6 +85,25 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 ```
 
 ## Log
+
+### 2026-11-16: Start production updater plan and harden existing boundaries
+
+- Added plan 13 and ADR 0008, with explicit installed-app/native-OS gates and
+  staged publishing/data-recovery requirements. Keep experimental engine deps
+  isolated from the app. Reviewed primary docs and actual crate APIs.
+- Stream downloads with a 32 KiB buffer into private temporary files. Enforce
+  signed size before writes and hash before unpacking. Reject unsafe release
+  paths, malformed hashes, zero/oversized payloads and credential-bearing URLs.
+- Atomically sync/persist ready state and propagate failure instead of reporting
+  Ready. Hold the interprocess lock from feed fetch through staging. Preserve
+  automatic-update preference changes made during a network request.
+- Refuse update restart for failed Notes/Developer/Passwords saves, pending
+  environment imports and open task sheets/dialogs. Preserve drafts/editors.
+- Full gate: 345 tests including 75 UI tests. Native Settings shell reviewed
+  light/dark; window was off-screen for real input, so flows use UI tests.
+- Isolated Mac engine probes pass development guards; dependency tree has no
+  direct GPUI/webview. Added read-only/no-secret Mac/Windows probe workflow.
+  This is not a signature/download/install/relaunch test or a production engine.
 
 ### 2026-11-16: Finish Workspace customization and organize pending work
 

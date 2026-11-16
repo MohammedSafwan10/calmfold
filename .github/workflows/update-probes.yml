@@ -1,0 +1,37 @@
+name: Native updater probes
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'tools/update-engine-probe/**'
+      - '.github/workflows/update-probes.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/update-engine-probe/**'
+      - '.github/workflows/update-probes.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  development-guards:
+    name: Development guards (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/update-engine-probe
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pinned toolchain
+        run: rustup show
+      - name: Compile and run non-installing probes
+        run: cargo run --locked --manifest-path tools/update-engine-probe/Cargo.toml
+
+# These jobs do not publish, install or prove an installed-app upgrade. They
+# deliberately have no signing secrets and no write permission to releases.
