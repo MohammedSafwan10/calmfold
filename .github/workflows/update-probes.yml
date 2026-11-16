@@ -3,10 +3,15 @@ on:
   workflow_dispatch:
   workflow_call:
   pull_request:
-    paths: ['native/**', 'scripts/test-sparkle.py', 'scripts/test-velopack.py', 'scripts/update-test-signing.py', 'scripts/fetch-sparkle.py', 'scripts/build-sparkle-core.py', 'tools/native-update-fixture/**', 'apps/desktop/src/updates/**', '.github/workflows/update-probes.yml']
+    paths: ['native/**', 'scripts/test-sparkle.py', 'scripts/test-velopack.py', 'scripts/update-test-signing.py', 'scripts/fetch-sparkle.py', 'scripts/build-sparkle-core.py', 'scripts/bundle-mac.sh', 'tools/native-update-fixture/**', 'apps/desktop/src/updates.rs', 'apps/desktop/src/updates/**', 'apps/desktop/src/main.rs', 'apps/desktop/Cargo.toml', 'crates/core/src/update.rs', 'crates/core/Cargo.toml', 'crates/core/src/lib.rs', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/update-probes.yml']
   push:
-    branches: [main, 'codex/**']
-    paths: ['native/**', 'scripts/test-sparkle.py', 'scripts/test-velopack.py', 'scripts/update-test-signing.py', 'scripts/fetch-sparkle.py', 'scripts/build-sparkle-core.py', 'tools/native-update-fixture/**', 'apps/desktop/src/updates/**', '.github/workflows/update-probes.yml']
+    branches: [main]
+    paths: ['native/**', 'scripts/test-sparkle.py', 'scripts/test-velopack.py', 'scripts/update-test-signing.py', 'scripts/fetch-sparkle.py', 'scripts/build-sparkle-core.py', 'scripts/bundle-mac.sh', 'tools/native-update-fixture/**', 'apps/desktop/src/updates.rs', 'apps/desktop/src/updates/**', 'apps/desktop/src/main.rs', 'apps/desktop/Cargo.toml', 'crates/core/src/update.rs', 'crates/core/Cargo.toml', 'crates/core/src/lib.rs', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/update-probes.yml']
+# A reusable release invocation must not cancel a branch's native checks.
+concurrency:
+  group: native-updates-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
+
 permissions:
   contents: read
 jobs:

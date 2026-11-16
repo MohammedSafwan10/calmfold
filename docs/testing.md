@@ -34,3 +34,26 @@ fn my_flow(cx: &mut TestAppContext) {
 
 `CALMFOLD_DATA_DIR=/tmp/ks cargo run`, then `scripts/screenshot.sh /tmp/k.png`
 captures only the Calmfold window. Check light and dark mode.
+
+## CI scope and cost
+
+- CI runs the full `scripts/check.sh` on macOS and Windows for application,
+  workspace, vendored, asset/theme and quality-workflow changes. Documentation
+  and unrelated website changes skip these expensive app jobs. The bundled
+  `website/src/data/changelog.json` explicitly counts as app input. Manual
+  workflow dispatch remains available for a complete check of any revision.
+- Native updater integration runs for updater code, signed-catalog rules,
+  native entry points, packaging scripts and dependency/toolchain changes.
+  It runs on main pushes or PRs, rather than both a feature-branch push and PR.
+  Release candidates always run both native engine suites, regardless of paths.
+- A newer branch/PR check cancels superseded checks. Reusable native invocations
+  are scoped by their calling workflow so release checks do not cancel ordinary
+  CI. Release candidates are queued by version, never canceled mid-signing.
+- Release packaging waits for full quality and native gates. Both Mac and
+  Windows suites remain mandatory. Raw candidate artifacts are retained three
+  days and complete verified candidates seven days; published release downloads
+  have their own permanent lifecycle. Caches accelerate compilation and do not
+  replace verification. No cache was deleted as part of this optimization.
+- If branch protection later requires the CI status for documentation-only PRs,
+  use an always-running lightweight routing job instead of workflow-level path
+  filtering, to avoid a required check remaining pending for skipped workflows.

@@ -101,6 +101,22 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 
 ## Log
 
+### 2026-11-16: Reduce repeated CI work without weakening release gates
+
+- Restrict expensive app checks to app/build inputs, explicitly preserving the
+  bundled release-history JSON. Native checks also include controller, signed
+  catalog, packaging and dependency/toolchain inputs that were missing before.
+- Cancel superseded branch/PR runs, avoid duplicate native feature-push + PR
+  runs, retain useful caches after failures, bound runtime and artifact retention.
+  Packaging now waits for both full quality and native engine gates.
+- Cancel duplicate CI run 43869388968: its application source matched the
+  successful Mac/Windows run 43868080626; only fixture/workflow files differed.
+- Validate workflows with upstream actionlint 1.7.12. Full local gate remains
+  required. New hosted execution is still blocked by account billing.
+- Current local Mac ZIP is approximately 17 MiB; build caches are not the
+  installed/download size. No repository visibility or billing setting changed.
+
+
 ### 2026-11-16: Native offline release history
 
 - Settings → About → Read release notes and command-palette What’s new open

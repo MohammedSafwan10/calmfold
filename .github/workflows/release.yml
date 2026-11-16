@@ -9,6 +9,11 @@ on:
       version:
         description: 'Workspace version to build (for example 0.1.2)'
         required: true
+# Never interrupt an installation/signing candidate with a second dispatch.
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 jobs:
@@ -20,17 +25,21 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - shell: bash
         run: scripts/check.sh
   build:
+    # Do not spend time packaging a candidate whose quality/native gates failed.
+    needs: [engines, quality]
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -88,6 +97,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ runner.os }}
+          retention-days: 3
           path: |
             dist/*.zip
             dist/*.exe
@@ -97,6 +107,7 @@ jobs:
   catalog:
     needs: [engines, quality, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -123,5 +134,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: verified-release
+          retention-days: 7
           path: dist/*
           if-no-files-found: error

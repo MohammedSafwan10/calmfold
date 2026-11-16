@@ -3,7 +3,26 @@ name: CI
 on:
   push:
     branches: [main]
+    paths: &app-paths
+      - 'apps/**'
+      - 'crates/**'
+      - 'vendor/**'
+      - 'assets/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - 'website/src/data/changelog.json'
+      - 'scripts/check.sh'
+      - '.github/workflows/ci.yml'
   pull_request:
+    paths: *app-paths
+  workflow_dispatch:
+
+# Keep the newest check for each branch/PR; release jobs use a separate group.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -15,9 +34,12 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Rust toolchain (from rust-toolchain.toml)
         run: rustup show
       - name: Check
