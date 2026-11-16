@@ -9,9 +9,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(target_os = "macos")]
     {
-        let rejected = std::thread::spawn(|| SparkleDriver::load(SparkleOptions::new()).is_err())
-            .join()
-            .map_err(|_| "Sparkle worker panicked")?;
+        let rejected = std::thread::spawn(|| {
+            matches!(
+                SparkleDriver::load(SparkleOptions::new()),
+                Err(gpui_updater_sparkle::Error::NotMainThread)
+            )
+        })
+        .join()
+        .map_err(|_| "Sparkle worker panicked")?;
         if !rejected {
             return Err("Sparkle must reject loading off the main thread".into());
         }
@@ -19,8 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let source = velopack::sources::HttpSource::new("https://example.invalid/calmfold-probe");
     // Construction only locates installation metadata. No feed request is made.
-    if velopack::UpdateManager::new(source, None, None).is_ok() {
-        return Err("Run this probe outside a Velopack installation".into());
+    match velopack::UpdateManager::new(source, None, None) {
+        Err(velopack::Error::NotInstalled(_)) => {}
+        Err(err) => return Err(err.into()),
+        Ok(_) => return Err("Run this probe outside a Velopack installation".into()),
     }
     println!("PASS: Velopack declines an uninstalled development process");
     println!("Not tested: downloading, signatures, installation, relaunch or Windows execution");
