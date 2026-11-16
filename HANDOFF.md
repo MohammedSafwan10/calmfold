@@ -25,10 +25,10 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 - Website is a scaffold/assets snapshot, not a finished site: no pages yet,
   and the release-fetch build step needs a published feed or saved release.json.
   Astro is patched to 7.4.12; npm audit reports zero known vulnerabilities.
-- Production updates: first hardening milestone complete. Fixed-memory verified
-  downloads, durable ready state, preference race/lock fixes and save-before-
-  restart guards pass. Isolated Sparkle/Velopack probes compile/run on Mac;
-  native CI probes are configured. No engine migration or live feed yet. See
+- Production updates: native Sparkle/Velopack adapters replace the legacy installer.
+  Mac installed upgrade/relaunch and tampered archive tests pass locally and CI.
+  Windows native checks caught a boxed SDK type mismatch, corrected for rerun.
+  Version 0.1.2 candidate packaging/signing is in progress; no public release yet. See
   `docs/plans/13-production-updates.md` and ADR 0008 for exact gates/limits.
 
 ## Next steps (in order)

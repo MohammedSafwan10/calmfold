@@ -1,90 +1,127 @@
-name: Release
-
-# Push a tag like `v0.1.0` (or run by hand) to build Calmfold and publish a
-# GitHub release with:
-#   Calmfold-<version>-windows-x64.zip   calmfold.exe (icon embedded)
-#   Calmfold-<version>-macos-arm64.zip   Calmfold.app
-# Builds are not code-signed (AGENTS.md rule 11): Windows SmartScreen and
-# macOS Gatekeeper will warn on first launch.
-
+name: Release candidate
+# Produces a complete, verified candidate. Publication to the separate public
+# artifacts repository is a final draft-to-published operation by the owner/agent.
 on:
   push:
-    tags: ["v*"]
+    tags: ['v*']
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Tag to release (e.g. v0.1.0)"
+      version:
+        description: 'Workspace version to build (for example 0.1.2)'
         required: true
-
 permissions:
-  contents: write
-
+  contents: read
 jobs:
-  build:
+  engines:
+    uses: ./.github/workflows/update-probes.yml
+  quality:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            target: windows-x64
-          - os: macos-latest
-            target: macos-arm64
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-        with:
-          key: release
-      - name: Rust toolchain (from rust-toolchain.toml)
-        run: rustup show
-      - name: Version
+      - shell: bash
+        run: scripts/check.sh
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - uses: Swatinem/rust-cache@v2
+        with: {key: release}
+      - name: Validate requested version against source
         shell: bash
+        env:
+          REQUESTED: ${{ inputs.version || github.ref_name }}
         run: |
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "TAG=$tag" >> "$GITHUB_ENV"
-          echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          cargo build --release -p calmfold-desktop --bin calmfold
-          mkdir -p dist/Calmfold
-          cp target/release/calmfold.exe dist/Calmfold/Calmfold.exe
-          cp README.md dist/Calmfold/README.md
-          cd dist && 7z a "Calmfold-${VERSION}-${{ matrix.target }}.zip" Calmfold
-      - name: Build (macOS)
+          python3 - <<'PY'
+          import os,re,tomllib
+          version=tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version']
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version)
+          assert os.environ['REQUESTED'].removeprefix('v') == version, 'source/version mismatch'
+          with open(os.environ['GITHUB_ENV'],'a') as file: file.write('VERSION='+version+'\n')
+          PY
+      - name: Build Mac native bundle
         if: runner.os == 'macOS'
         shell: bash
         run: |
           scripts/bundle-mac.sh
           mkdir -p dist
-          ditto -c -k --keepParent target/release/Calmfold.app "dist/Calmfold-${VERSION}-${{ matrix.target }}.zip"
+          ditto -c -k --keepParent target/release/Calmfold.app "dist/Calmfold-${VERSION}-macos-arm64.zip"
+      - name: Sign and verify Sparkle archive and appcast
+        if: runner.os == 'macOS'
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_KEY }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os,pathlib,subprocess
+          key=pathlib.Path(os.environ['RUNNER_TEMP'])/'sparkle.key'
+          try:
+              key.write_text(os.environ['SPARKLE_KEY']); key.chmod(0o600)
+              subprocess.run(['python3','scripts/sign-appcast.py',os.environ['VERSION'],'dist',str(key)],check=True)
+          finally: key.unlink(missing_ok=True)
+          PY
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows'
+        with: {dotnet-version: '8.0.x'}
+      - name: Build Windows native packages
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build --locked --release -p calmfold-desktop --bin calmfold
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet tool install --tool-path "$env:RUNNER_TEMP/vpk" vpk --version 1.2.161
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force target/release-payload | Out-Null
+          Copy-Item target/release/calmfold.exe target/release-payload/Calmfold.exe
+          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion $env:VERSION --packDir target/release-payload --mainExe Calmfold.exe --outputDir dist --channel win --icon assets/brand/calmfold.ico
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
-          path: dist/*.zip
-
-  publish:
-    needs: build
+          name: native-${{ runner.os }}
+          path: |
+            dist/*.zip
+            dist/*.exe
+            dist/*-full.nupkg
+            dist/appcast.xml
+          if-no-files-found: error
+  catalog:
+    needs: [engines, quality, build]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
       - uses: actions/download-artifact@v4
         with:
+          pattern: native-*
           path: dist
           merge-multiple: true
-      - name: Publish the release
+      - run: sudo apt-get update && sudo apt-get install -y minisign
+      - name: Sign and verify complete catalog
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
         run: |
-          gh release create "$TAG" dist/*.zip \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Calmfold $TAG" \
-            --notes "Calmfold by Nexdark Labs.
-
-          **Windows:** download the windows-x64 zip, unzip, run Calmfold.exe. The build isn't signed yet, so Windows SmartScreen may say \"Windows protected your PC\": click **More info → Run anyway**.
-
-          **macOS (Apple Silicon):** unzip, move Calmfold.app to Applications, then right-click → **Open** the first time.
-
-          Your data stays on your computer (no account, no server)." \
-            || gh release upload "$TAG" dist/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+          python3 - <<'PY'
+          import os,pathlib,subprocess,tomllib
+          version=tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version']
+          key=pathlib.Path(os.environ['RUNNER_TEMP'])/'minisign.key'
+          try:
+              key.write_text(os.environ['MINISIGN_KEY']); key.chmod(0o600)
+              subprocess.run(['scripts/make-feed.sh',version,'dist',str(key)],check=True)
+          finally: key.unlink(missing_ok=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-release
+          path: dist/*
+          if-no-files-found: error

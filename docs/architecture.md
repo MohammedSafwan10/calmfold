@@ -89,3 +89,12 @@ Local-first stays the source of truth. A small Rust server (axum) on the
 Oracle VPS via Coolify will store only end-to-end encrypted change blobs.
 The schema already has UUID v7 IDs, `updated_at`, and soft deletes for this.
 See `docs/plans/06-sync.md`.
+
+## Native updates
+
+`updates` owns scheduling, signed catalog validation, preferences and GPUI status.
+macOS delegates to a UI-free Swift SPUUserDriver in a nested helper app and the
+core-only Sparkle framework. Windows delegates to Velopack with a signed catalog
+UpdateSource. Native engines own extraction/replacement/relaunch; the app owns
+draft guards and a SQLite online-backup snapshot before explicit restart. Neither
+engine changes the vault encryption format. See ADR 0008 for packaging boundaries.

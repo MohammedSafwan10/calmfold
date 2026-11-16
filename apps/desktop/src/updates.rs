@@ -171,7 +171,7 @@ pub fn check(manual: bool, cx: &mut App) {
         if !update::is_newer(&feed.version, CURRENT) { cx.update(|cx| set_status(Status::UpToDate, cx)); return; }
         #[cfg(target_os = "macos")]
         {
-            let result = cx.update(sparkle::check);
+            let result = cx.update(|cx| sparkle::check(&feed, cx));
             match result {
                 Ok(true) => {},
                 Ok(false) => cx.update(|cx| set_status(Status::Available { version: feed.version }, cx)),

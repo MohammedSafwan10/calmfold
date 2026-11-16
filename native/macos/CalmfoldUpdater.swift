@@ -16,6 +16,8 @@ final class Driver: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     var installReply: ((SPUUserUpdateChoice) -> Void)?
     var installNow: (() -> Void)?
     var installing = false
+    var pinnedFeed: String?
+    var expectedVersion: String?
     func failure(_ error: Error) {
         let outer = error as NSError
         #if UPDATER_TESTING
@@ -37,6 +39,18 @@ final class Driver: NSObject, SPUUserDriver, SPUUpdaterDelegate {
         try? FileHandle.standardOutput.write(contentsOf: data + Data([10]))
     }
     func command(_ line: String) {
+        if line.hasPrefix("check ") {
+            let parts = line.split(separator: " ")
+            guard parts.count == 3, let url = URL(string: String(parts[1])),
+                  url.user == nil, url.password == nil else { return }
+            #if UPDATER_TESTING
+            guard url.scheme == "https" || (url.scheme == "http" && url.host == "127.0.0.1") else { return }
+            #else
+            guard url.scheme == "https" else { return }
+            #endif
+            pinnedFeed = String(parts[1]); expectedVersion = String(parts[2])
+            command("check"); return
+        }
         switch line {
         case "check":
             if updater.canCheckForUpdates { emit("checking"); updater.checkForUpdates() }
@@ -60,6 +74,9 @@ final class Driver: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) { cancel = cancellation; emit("checking") }
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
         version = appcastItem.displayVersionString
+        if let expectedVersion, version != expectedVersion {
+            reply(.dismiss); emit("failed", ["message": "The update catalogs disagree. Try again later."]); return
+        }
         if appcastItem.isInformationOnlyUpdate { reply(.dismiss); emit("failed", ["message": "This update requires a manual installation."]); return }
         emit("found", ["version": version])
         if state.stage == .installing { installReply = reply; emit("ready", ["version": version]) }
@@ -87,6 +104,7 @@ final class Driver: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     }
     func dismissUpdateInstallation() { cancel = nil; emit("settled") }
     func updater(_ updater: SPUUpdater, shouldDownloadReleaseNotesForUpdate updateItem: SUAppcastItem) -> Bool { false }
+    func feedURLString(for updater: SPUUpdater) -> String? { pinnedFeed }
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
         failure(error)
     }

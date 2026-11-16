@@ -32,7 +32,7 @@ pub fn bundled_app() -> Option<PathBuf> {
         .map(|p| p.to_path_buf())
 }
 
-pub fn check(cx: &mut App) -> Result<bool> {
+pub fn check(feed: &calmfold_core::update::Feed, cx: &mut App) -> Result<bool> {
     let Some(app) = bundled_app() else {
         return Ok(false);
     };
@@ -128,7 +128,13 @@ pub fn check(cx: &mut App) -> Result<bool> {
         })
         .detach();
     }
-    command("check", cx)?;
+    command(
+        &format!(
+            "check https://github.com/MohammedSafwan10/calmfold-releases/releases/download/v{}/appcast.xml {}",
+            feed.version, feed.version
+        ),
+        cx,
+    )?;
     Ok(true)
 }
 

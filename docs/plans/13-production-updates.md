@@ -43,13 +43,13 @@ unit test does not count as a successful installed-app upgrade.
 - [x] Compile reproducible isolated probes without changing the production app.
       Mac development guards pass for pinned bridge 0.4.4 / Velopack 1.2.161.
       Native Windows/Mac CI is configured; this does not prove installation.
-- [ ] macOS: package two disposable app versions, signed with temporary update
+- [x] macOS: package two disposable app versions, signed with temporary update
       keys only; prove check, download, install and relaunch. No real app/data.
 - [ ] Windows host: prove per-user install, update with app running, locked files,
       two instances and relaunch. A macOS cross-check is not a Windows runtime test.
 - [ ] Confirm no webview is used in our update UI and verify engine signature
       checks, cancellation, permissions and minimum OS/architecture handling.
-- [ ] Velopack: authenticated catalog source (verify signed bytes before parse,
+- [x] Velopack: authenticated catalog source (verify signed bytes before parse,
       mandatory SHA-256/size), without the default per-install staging ID query.
       Its 1.2.161 HttpSource quick start is not a signed-catalog implementation.
 - [ ] Record adapter decision and replace the legacy file-swap installer only
@@ -70,7 +70,7 @@ unit test does not count as a successful installed-app upgrade.
 
 ## 4. Data safety and recovery
 
-- [ ] Save every relevant draft before relaunch, including open task sheets.
+- [x] Save every relevant draft before relaunch, including open task sheets.
 - [ ] Back up data before incompatible database migrations, with a documented
       restore policy. Binary rollback alone cannot undo a schema migration.
 - [ ] Prove behavior for interrupted install and new-version early crash. Keep
@@ -80,7 +80,7 @@ unit test does not count as a successful installed-app upgrade.
 
 ## 5. Calm UX and performance
 
-- [ ] Check after startup without delaying the first window; daily checks with
+- [x] Check after startup without delaying the first window; daily checks with
       backoff/jitter, one notification, manual retry and clear offline behavior.
 - [ ] Native progress/cancel/retry, Restart now/Later, plain-text release notes.
 - [ ] Add verified delta updates with full-package fallback after full upgrades
@@ -126,3 +126,20 @@ unit test does not count as a successful installed-app upgrade.
   publishing or signature/key correspondence verified from secret presence.
 - Native Settings shell viewed in light and dark. Real window clicks remain
   unavailable while off-screen; changed restart behavior is proven headlessly.
+
+## Native implementation evidence (2026-11-16)
+
+- Legacy installer and old unbundled probes removed. Swift Sparkle custom driver
+  and Velopack authenticated source now drive the production app. Mac packages
+  use a core-only framework whose Mach-O linkage is checked for absence of WebKit.
+- Real Mac installed upgrade/relaunch and archive tampering tests pass locally,
+  including the nested helper layout. Windows native runner exercises real vpk
+  packages, catalog/package tampering, second-instance lock and unchanged data.
+  Windows result and release publication are pending at this checkpoint.
+- Save guards now include active Focus; private SQLite online backup includes
+  WAL state and refuses overwrite. Settings status regression runs in both themes.
+- Historical probe paths above describe the first milestone only; those tools
+  were deleted. Ready/staging persistence now belongs to the native engines.
+- Candidate workflow requires both full quality gates and installed-engine tests,
+  then verifies update signing keys, packages and catalog. Public publication is
+  a separate final draft operation; no clobber of published assets.

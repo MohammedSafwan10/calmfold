@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.1.2",
+    "date": "2026-11-16",
+    "items": [
+      "Native in-app updates with Sparkle on Mac and Velopack on Windows, authenticated downloads and save-before-restart protection.",
+      "Developer workspace with project links, setup notes, tasks and encrypted environment sets.",
+      "Focus timer with task linking and reliable mode switching.",
+      "Choose which features appear in the sidebar, their order and your startup page.",
+      "Vault and environment editing improvements, with safer imports, exports and draft preservation."
+    ]
+  },
+  {
     "version": "0.1.1",
     "date": "2026-11-14",
     "items": [

@@ -19,29 +19,45 @@ compromised OS, physical attacks on unlocked RAM.
 
 - Notes and tasks are stored **unencrypted** in SQLite in the user data folder,
   like Obsidian. Users should rely on FileVault/BitLocker for at-rest protection.
-- No network access (holiday data is built in). No telemetry. No `unsafe` code.
+- Holiday data and personal content stay local. Updates contact GitHub; opening
+  external links uses the system browser. No telemetry. No `unsafe` code.
 - Errors and logs never include note bodies or passwords.
 - User search input is escaped before FTS5 (`codec::fts_query`); all SQL uses
   bound parameters.
 
 ## Update boundary
 
-The current updater verifies a minisign signature over release metadata with a
-pinned public key, then enforces the signed size and SHA-256 before unpacking.
-Archives stream through a fixed 32 KiB buffer into private temporary files; failed
-transfers remove the archive. Cache versions are validated before path creation.
-Ready state is written atomically and synced before the UI reports success.
+The shared catalog is minisign-verified with a pinned public key before parse.
+Windows packages stream through a 32 KiB buffer with signed length/SHA-256
+validation before Velopack installs them. macOS Sparkle separately verifies its
+inline-signed XML appcast and Ed25519 archive before extraction. The appcast is
+pinned to the same release as the common catalog. Persisted highest verified
+version rejects older catalog replay; this is not signed metadata expiration.
 
-Update restart refuses failed note/Developer/Passwords saves, pending secret
-imports and open editors/dialogs. This protects drafts; it is not a complete
-installed-app recovery guarantee. The legacy installer has no confirmed-startup
-handshake or database rollback and has not passed native Mac/Windows upgrade
-tests. Update signatures are separate from Apple/Windows platform code signing.
+Automatic checks/downloads default on. Checks start after the first window and
+retry with bounded backoff. Restart refuses failed note/Developer/Passwords saves,
+unapplied secret imports, open task sheets and active focus timers. A private
+SQLite online-backup snapshot includes WAL data before the handoff. Notes/tasks
+in that snapshot are unencrypted, like the original database; vault rows remain
+encrypted. There is no automatic database rollback or new-version health monitor.
 
-Native engine probes are isolated from the shipping dependency graph. See
-[plan 13](plans/13-production-updates.md) and [ADR 0008](decisions/0008-updater-engines.md)
-for prototype, publication, credential, replay protection and data recovery gates.
-Do not describe those gates as implemented until their verification passes.
+Sparkle owns Mac installation/relaunch; Velopack owns Windows installation/relaunch.
+The old custom extraction/swap installer is removed. A per-data-directory OS lock
+prevents two application processes; locks release on crash without stale-timeout
+heuristics. A stale legacy cache is not trusted or executed.
+
+Update keys are separate from publisher identities. The Sparkle private seed is
+stored outside the repo in the owner's protected release-key directory and as a
+GitHub Actions secret; only its public key ships. CI verifies both private/public
+key correspondences before generating the complete candidate. No existing signing
+identity or system Keychain is used. Mac bundles use ad-hoc sealing, not Developer
+ID/notarization; Windows has no Authenticode certificate. Initial OS warnings
+remain. Compromised release credentials can authorize malicious updates.
+
+See [plan 13](plans/13-production-updates.md) and
+[ADR 0008](decisions/0008-updater-engines.md) for verified tests and remaining
+publication/recovery gates. Interrupted-install and early-crash recovery must not
+be described as proven merely because a clean upgrade passed.
 
 ## Vault design
 

@@ -119,7 +119,10 @@ pub fn download(feed: &Feed) -> Result<Option<Ready>> {
         return Ok(None);
     };
     manager.download_updates(&info, None)?;
-    Ok(Some(Ready { manager, info }))
+    Ok(Some(Ready {
+        manager,
+        info: *info,
+    }))
 }
 
 pub fn restart(ready: &Ready) -> Result<()> {

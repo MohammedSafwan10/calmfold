@@ -82,7 +82,7 @@ fn windows() -> Result<()> {
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
                 manager.wait_exit_then_apply_updates(
-                    &info,
+                    &*info,
                     true,
                     true,
                     ["--test-root", root.to_str().context("fixture path")?],

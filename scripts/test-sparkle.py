@@ -131,7 +131,7 @@ def smoke(tamper):
                 event = json.loads(line); events.append(event)
                 print(json.dumps({"tamper": tamper, **event}), flush=True)
                 if event["event"] == "initialized" and not checked:
-                    bridge.stdin.write("check\n"); bridge.stdin.flush(); checked = True
+                    bridge.stdin.write(f"check {base}/appcast.xml 0.1.1\n"); bridge.stdin.flush(); checked = True
                 if event["event"] == "failed":
                     assert tamper, f"valid update rejected: {event}"
                     assert old.poll() is None, "tampered update terminated old app"

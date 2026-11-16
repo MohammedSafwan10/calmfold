@@ -898,7 +898,7 @@ dependencies = [
 
 [[package]]
 name = "calmfold-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "csv",
  "jiff",
@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "calmfold-crypto"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "calmfold-desktop"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "calmfold-storage"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "calmfold-core",
  "jiff",
@@ -971,7 +971,7 @@ dependencies = [
 
 [[package]]
 name = "calmfold-ui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "gpui-kit",
  "serde",
