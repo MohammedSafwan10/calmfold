@@ -35,7 +35,10 @@ def smoke(old_dir, new_dir, tamper):
         web = root / "web"; web.mkdir()
         portable = next(old_dir.glob("*Portable.zip"))
         install = root / "installation"; install.mkdir()
-        with zipfile.ZipFile(portable) as archive: archive.extractall(install)
+        with zipfile.ZipFile(portable) as archive:
+            print("Portable contents:", archive.namelist(), flush=True)
+            archive.extractall(install)
+        assert (install / "current/sibling.txt").exists(), "fixture sibling missing before startup"
         executable = install / "current/Calmfold.exe"
         if not executable.exists():
             raise AssertionError("Velopack portable package is missing its real app executable")

@@ -37,6 +37,10 @@ jobs:
         with: {python-version: '3.13'}
       - uses: actions/setup-dotnet@v4
         with: {dotnet-version: '8.0.x'}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/native-update-fixture -> ../../target/native-update-fixture
+          cache-on-failure: true
       - run: rustup show
       - run: cargo fmt --manifest-path tools/native-update-fixture/Cargo.toml --check
       - run: cargo clippy --locked --manifest-path tools/native-update-fixture/Cargo.toml --all-targets -- -D warnings
@@ -48,10 +52,10 @@ jobs:
           New-Item -ItemType Directory -Force target/native-release-test/payload | Out-Null
           Copy-Item target/native-update-fixture/release/calmfold-native-update-fixture.exe target/native-release-test/payload/Calmfold.exe
           Set-Content -NoNewline target/native-release-test/payload/sibling.txt 'old sibling'
-          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion 1.0.0 --packDir target/native-release-test/payload --mainExe Calmfold.exe --outputDir target/native-release-test/old --channel win
+          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion 1.0.0 --packDir target/native-release-test/payload --mainExe Calmfold.exe --outputDir target/native-release-test/old --channel win --runtime win-x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Set-Content -NoNewline target/native-release-test/payload/sibling.txt 'new sibling'
-          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion 1.0.1 --packDir target/native-release-test/payload --mainExe Calmfold.exe --outputDir target/native-release-test/new --channel win
+          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion 1.0.1 --packDir target/native-release-test/payload --mainExe Calmfold.exe --outputDir target/native-release-test/new --channel win --runtime win-x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Installed upgrade, relaunch and authenticated rejection
         run: python scripts/test-velopack.py target/native-release-test/old target/native-release-test/new

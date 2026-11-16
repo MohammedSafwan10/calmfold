@@ -83,7 +83,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Force target/release-payload | Out-Null
           Copy-Item target/release/calmfold.exe target/release-payload/Calmfold.exe
-          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion $env:VERSION --packDir target/release-payload --mainExe Calmfold.exe --outputDir dist --channel win --icon assets/brand/calmfold.ico
+          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion $env:VERSION --packDir target/release-payload --mainExe Calmfold.exe --outputDir dist --channel win --runtime win-x64 --icon assets/brand/calmfold.ico
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
