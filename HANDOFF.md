@@ -27,12 +27,30 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
   Astro is patched to 7.4.12; npm audit reports zero known vulnerabilities.
 - Production updates: native Sparkle/Velopack adapters replace the legacy installer.
   Mac installed upgrade/relaunch and tampered archive tests pass locally and CI.
-  Windows native checks caught a boxed SDK type mismatch, corrected for rerun.
-  Version 0.1.2 candidate packaging/signing is blocked by GitHub billing;
+  Windows native installed upgrade/relaunch and catalog/package rejection pass.
+  Owner made the source repo public; v0.1.2 candidate run 43872632747 is running;
   full local gate passes 346 tests (77 UI). No public release yet. See
   `docs/plans/13-production-updates.md` and ADR 0008 for exact gates/limits.
 
 ## Next steps (in order)
+
+Owner explicitly asked us to continue while taking the Mac home. All gates of run
+43872632747 passed: Mac 346 tests, Windows 345, real Sparkle/Velopack installed
+upgrade/relaunch + tamper rejection, both packages and production signature checks.
+It is not published yet. Owner subsequently chose **GPLv3**, so root metadata now
+uses GPL-3.0-only and LICENSE/NOTICE/dependency notices are being added to packages.
+Rebuild the final v0.1.2 candidate with the licensing/community-doc changes before
+publication; do not accidentally publish the older pre-license artifacts.
+
+Current extra work: refreshed README with a real sample-data screenshot,
+CONTRIBUTING.md, SECURITY.md, short CODE_OF_CONDUCT.md and PR/security issue links.
+Private vulnerability reporting is enabled. GPL private-use/commercial-use rights
+and copyright-based enforcement have been explained; the owner chose GPLv3.
+
+After final verified publication, delete old v0.1.0 and v0.1.1 release entries in
+MohammedSafwan10/calmfold as requested. Keep tags and source history. Publish
+canonical signed assets to MohammedSafwan10/calmfold-releases, immutable policy on.
+All original changes remain authorized; do not stop at another partial milestone.
 
 Everything in `docs/TASKS.md` is done except the
 500 KB+ editor item in §1.
@@ -43,11 +61,12 @@ before deploying; do not treat the scaffold as a deployable website.
 Current priority: finish Windows native upgrade proof and publish v0.1.2.
 Mac installed upgrade/relaunch and archive rejection pass locally and in CI;
 the production-key archive/appcast signing script also verifies locally.
-Windows native build/SDK adapter compiles; the test package lacks its sibling
-fixture file before startup, so full runtime update proof has NOT passed.
-Fixture preparation now writes an explicit absolute path with assertions; rerun.
-GitHub blocked new jobs before execution: account payment/spending-limit error
-(run 43870246438). User action in GitHub billing is required before retrying.
+Windows native upgrade/relaunch, sibling replacement, instance lock and catalog/
+package tampering tests pass in run 43872632747. The missing fixture file was fixed
+by explicit absolute-path preparation with assertions. The Windows Setup.exe
+first-install path has not been exercised; native upgrade proof uses a real
+portable installation. Owner made the source repo PUBLIC; new jobs start now.
+Earlier billing-blocked run 43870246438 remains historical. No budget was changed.
 No public release yet. MINISIGN_KEY correspondence still awaits candidate CI.
 SPARKLE_KEY is configured; protected recovery seed is outside the repo at
 ~/.config/calmfold/release-keys/sparkle.key. Never print or commit it.
@@ -101,6 +120,30 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 
 ## Log
 
+### 2026-11-16: Adopt GPLv3 and refresh public project documentation
+
+- Owner chose GPLv3 after discussion of private use, commercial redistribution
+  and copyright enforcement. Set GPL-3.0-only, add canonical LICENSE and original
+  copyright NOTICE; preserve third-party licenses and no trademark grant.
+- Add license/dependency notices to Mac resources and Windows payload before
+  sealing/packaging. This requires a fresh candidate before publication.
+- Refresh README around the product, a real sample-data screenshot, downloads,
+  supported tools and clear local-data boundaries. Add contribution/security/
+  conduct guidance and concise PR template. Enable private vulnerability reports.
+
+
+### 2026-11-16: Resume public release and prove Windows native updates
+
+- Source repository visibility confirmed PUBLIC. Run 43872632747 starts with
+  full app checks and both native engine jobs; both engine jobs pass.
+- Windows 1.0.0 → 1.0.1 actual startup, sibling replacement, two-instance lock,
+  unchanged external user data and catalog/package rejection verified.
+- Owner requests old releases removed only after new v0.1.2 publication and
+  download verification. Old source releases: v0.1.0 and v0.1.1. Keep tags/history.
+- README now points to the canonical calmfold-releases repository and describes
+  native packages and the complete draft-before-publication procedure.
+
+
 ### 2026-11-16: Keep shared Kiro guides, ignore local state
 
 - `.kiro/skills` contains the checked-in, licensed GPUI reference guides required
@@ -122,7 +165,8 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 - Cancel duplicate CI run 43869388968: its application source matched the
   successful Mac/Windows run 43868080626; only fixture/workflow files differed.
 - Validate workflows with upstream actionlint 1.7.12. Full local gate remains
-  required. New hosted execution is still blocked by account billing.
+  required. New hosted execution was blocked at that checkpoint; owner subsequently made
+  the repository public and candidate run 43872632747 started successfully.
 - Current local Mac ZIP is approximately 17 MiB; build caches are not the
   installed/download size. No repository visibility or billing setting changed.
 

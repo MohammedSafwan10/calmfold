@@ -53,7 +53,9 @@ captures only the Calmfold window. Check light and dark mode.
   Windows suites remain mandatory. Raw candidate artifacts are retained three
   days and complete verified candidates seven days; published release downloads
   have their own permanent lifecycle. Caches accelerate compilation and do not
-  replace verification. No cache was deleted as part of this optimization.
+  replace verification. Ordinary CI and release quality jobs share the same
+  per-OS dependency cache; release compilation keeps its separate profile cache.
+  No cache was deleted as part of this optimization.
 - If branch protection later requires the CI status for documentation-only PRs,
   use an always-running lightweight routing job instead of workflow-level path
   filtering, to avoid a required check remaining pending for skipped workflows.

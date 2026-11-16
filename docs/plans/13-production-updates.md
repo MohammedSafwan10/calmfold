@@ -1,6 +1,7 @@
 # Production updates and distribution
 
-Status: first hardening milestone complete; engine migration in progress.
+Status: native engines adopted and installed upgrade tests pass on both OSes;
+v0.1.2 final packaging/signing verification is running before publication.
 This checklist is evidence-based: a compiling adapter or
 unit test does not count as a successful installed-app upgrade.
 
@@ -45,14 +46,17 @@ unit test does not count as a successful installed-app upgrade.
       Native Windows/Mac CI is configured; this does not prove installation.
 - [x] macOS: package two disposable app versions, signed with temporary update
       keys only; prove check, download, install and relaunch. No real app/data.
-- [ ] Windows host: prove per-user install, update with app running, locked files,
-      two instances and relaunch. A macOS cross-check is not a Windows runtime test.
+- [x] Windows host: real portable installation upgrades with the old app running,
+      sibling replacement, OS instance lock, actual new-version startup and
+      unchanged external user data. Catalog/package tampering is rejected.
+- [ ] Separately exercise the Setup.exe per-user installer on supported Windows
+      versions; portable SDK upgrade proof does not cover every installer path.
 - [ ] Confirm no webview is used in our update UI and verify engine signature
       checks, cancellation, permissions and minimum OS/architecture handling.
 - [x] Velopack: authenticated catalog source (verify signed bytes before parse,
       mandatory SHA-256/size), without the default per-install staging ID query.
       Its 1.2.161 HttpSource quick start is not a signed-catalog implementation.
-- [ ] Record adapter decision and replace the legacy file-swap installer only
+- [x] Record adapter decision and replace the legacy file-swap installer only
       after the corresponding platform passes. Do not leave a hidden fallback
       that installs with weaker verification.
 
@@ -143,3 +147,15 @@ unit test does not count as a successful installed-app upgrade.
 - Candidate workflow requires both full quality gates and installed-engine tests,
   then verifies update signing keys, packages and catalog. Public publication is
   a separate final draft operation; no clobber of published assets.
+
+## Native release-candidate evidence (2026-11-16)
+
+Run 43872632747 passes both native engine jobs. Windows fixture 1.0.0 → 1.0.1
+replaces a sibling file and relaunches the new app; catalog and package tampering
+leave the old app running. The missing fixture sibling came from its preparation;
+explicit file writing with assertions fixes the packaging test. Mac signed
+upgrade/relaunch and damaged-archive rejection pass with the production helper
+layout and core-only framework. Full candidate app checks and packaging follow.
+
+Owner made the source repository public, and this new run starts successfully.
+The previous billing-blocked runs remain historical; no spending limit was raised.

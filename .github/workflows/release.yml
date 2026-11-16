@@ -29,6 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: quality
+          cache-on-failure: true
       - shell: bash
         run: scripts/check.sh
   build:
@@ -92,6 +95,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Force target/release-payload | Out-Null
           Copy-Item target/release/calmfold.exe target/release-payload/Calmfold.exe
+          Copy-Item LICENSE,NOTICE target/release-payload/
+          python scripts/release-source.py target/release-payload
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/third-party-notices.py target/release-payload/THIRD_PARTY_NOTICES.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion $env:VERSION --packDir target/release-payload --mainExe Calmfold.exe --outputDir dist --channel win --runtime win-x64 --icon assets/brand/calmfold.ico
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4

@@ -41,6 +41,9 @@ helper={'CFBundleName':'Calmfold Updater','CFBundleIdentifier':'com.nexdark.calm
  'LSMinimumSystemVersion':'12.0','LSBackgroundOnly':True}
 (app/'Contents/Helpers/CalmfoldUpdater.app/Contents/Info.plist').write_bytes(plistlib.dumps(helper))
 PYINFO
+cp LICENSE NOTICE "$app/Contents/Resources/"
+python3 scripts/release-source.py "$app/Contents/Resources"
+python3 scripts/third-party-notices.py "$app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
 cp target/tools/sparkle/LICENSE "$app/Contents/Resources/Sparkle-LICENSE.txt"
 # Ad-hoc sealing is required for bundle integrity, uses no identity or Keychain,
 # and does not claim Developer ID signing or Apple notarization.
