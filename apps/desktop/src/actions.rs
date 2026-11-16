@@ -20,6 +20,18 @@ actions!(
         ImportCalendar,
         GoHabits,
         NewHabit,
+        GoFocus,
+        GoDeveloper,
+        NewDeveloperProject,
+        ToggleArchivedDeveloperProjects,
+        NewProjectSecrets,
+        ImportProjectEnvironment,
+        PasteProjectEnvironment,
+        CopyProjectEnvironment,
+        ExportProjectEnvironment,
+        FocusToggle,
+        FocusReset,
+        FocusFinish,
         GoPasswords,
         LockVault,
         NewLogin,
@@ -30,6 +42,9 @@ actions!(
         ExportVaultBackup,
         RestoreVaultBackup,
         GoSettings,
+        CustomizeSidebar,
+        CheckForUpdates,
+        RestartToUpdate,
         ToggleSidebar,
         ToggleListPanel,
         ToggleMarkdownSource,
@@ -122,6 +137,9 @@ pub const VAULT_CONTEXT: &str = "VaultList";
 /// Key context set on the habit list.
 pub const HABITS_CONTEXT: &str = "HabitList";
 
+/// Key context set on the focus screen.
+pub const FOCUS_CONTEXT: &str = "FocusView";
+
 /// Key context set on the note editor; format shortcuts only work there.
 pub const NOTE_EDITOR_CONTEXT: &str = "NoteEditor";
 
@@ -203,6 +221,8 @@ pub const SHORTCUTS: &[Shortcut] = shortcuts![
     Navigate, "4", "Calendar", GoCalendar;
     Navigate, "5", "Habits", GoHabits;
     Navigate, "6", "Passwords", GoPasswords;
+    Navigate, "7", "Focus", GoFocus;
+    Navigate, "8", "Developer", GoDeveloper;
     General, "ctrl-l", "Lock vault", LockVault;
     View, "\\", "Toggle sidebar", ToggleSidebar;
     View, "shift-l", "Toggle note list", ToggleListPanel;
@@ -292,6 +312,11 @@ pub const VAULT_SHORTCUTS: &[Shortcut] = &[
     }),
 ];
 
+pub const FOCUS_SHORTCUTS: &[Shortcut] = &[
+    plain("space", "Start / pause", || Box::new(FocusToggle)),
+    plain("r", "Reset timer", || Box::new(FocusReset)),
+];
+
 /// Built-in editing keys of the note editor (zorite-editor), shown for reference only.
 pub const EDITING_SHORTCUTS: &[(&str, &str)] = &[
     (shortcut!("z"), "Undo"),
@@ -348,6 +373,14 @@ pub fn bind(cx: &mut App) {
             KeyBinding::load(s.keys, s.action(), vault.clone(), false, None, cx).ok()
         }),
     );
+    let focus = gpui_kit::KeyBindingContextPredicate::parse(FOCUS_CONTEXT)
+        .ok()
+        .map(std::rc::Rc::new);
+    bindings.extend(
+        FOCUS_SHORTCUTS.iter().filter_map(|s| {
+            KeyBinding::load(s.keys, s.action(), focus.clone(), false, None, cx).ok()
+        }),
+    );
     // Quitting by shortcut is a macOS convention; Windows and Linux close the window.
     if cfg!(target_os = "macos") {
         bindings.push(KeyBinding::new("cmd-q", Quit, None));
@@ -360,6 +393,7 @@ pub fn set_menus(cx: &mut App) {
     cx.set_menus([
         Menu::new("Calmfold").items([
             MenuItem::action("Settings…", GoSettings),
+            MenuItem::action("Check for Updates…", CheckForUpdates),
             MenuItem::separator(),
             MenuItem::action("Quit Calmfold", Quit),
         ]),
@@ -387,6 +421,7 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::action("Tasks", GoTasks),
             MenuItem::action("Calendar", GoCalendar),
             MenuItem::action("Habits", GoHabits),
+            MenuItem::action("Focus", GoFocus),
             MenuItem::action("Passwords", GoPasswords),
             MenuItem::action("Lock Vault", LockVault),
             MenuItem::separator(),
@@ -426,7 +461,12 @@ mod tests {
                 s.keys
             );
         }
-        for table in [CALENDAR_SHORTCUTS, HABIT_SHORTCUTS, VAULT_SHORTCUTS] {
+        for table in [
+            CALENDAR_SHORTCUTS,
+            HABIT_SHORTCUTS,
+            VAULT_SHORTCUTS,
+            FOCUS_SHORTCUTS,
+        ] {
             let mut calendar_keys = std::collections::HashSet::new();
             for s in table {
                 assert!(

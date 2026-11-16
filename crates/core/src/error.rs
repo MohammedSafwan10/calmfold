@@ -7,6 +7,12 @@ use crate::task::TaskStatus;
 pub enum DomainError {
     #[error("Title can't be empty.")]
     EmptyTitle,
+    #[error(
+        "Check the environment variables for duplicate names, invalid keys or oversized values."
+    )]
+    InvalidEnvironment,
+    #[error("Use a valid http or https link without embedded credentials.")]
+    InvalidProjectLink,
     #[error("Title is longer than {max} characters.")]
     TitleTooLong { max: usize },
     #[error("Content is larger than {max_bytes} bytes.")]

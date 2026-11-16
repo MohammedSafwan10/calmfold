@@ -11,6 +11,7 @@ guard args.count >= 3, let x = Double(args[1]), let y = Double(args[2]) else {
     exit(2)
 }
 let double = args.count > 3 && args[3] == "double"
+let targetPID = ProcessInfo.processInfo.environment["CALMFOLD_WINDOW_PID"].flatMap(Int.init)
 
 let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 // The main window is the largest layer-0 window (menu-bar helpers are 33 px tall).
@@ -21,6 +22,7 @@ func area(_ w: [String: Any]) -> Double {
 guard let window = windows.filter({
     ($0[kCGWindowOwnerName as String] as? String)?.lowercased() == "calmfold"
         && ($0[kCGWindowLayer as String] as? Int) == 0
+        && (targetPID == nil || ($0[kCGWindowOwnerPID as String] as? Int) == targetPID)
 }).max(by: { area($0) < area($1) }), let bounds = window[kCGWindowBounds as String] as? [String: Double] else {
     FileHandle.standardError.write("Calmfold window not found on screen\n".data(using: .utf8)!)
     exit(1)

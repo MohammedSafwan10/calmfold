@@ -4,7 +4,7 @@
 //! else is a template: a kind plus suggested custom fields. A Wi-Fi password
 //! is a secure note with "Network" and "Password" fields, an API key a note
 //! with "Key" and "Website", and so on. Adding a template never changes the
-//! storage format.
+//! storage envelope. Structured environment sets opt into item-data v2.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,7 @@ pub enum Template {
     Wifi,
     License,
     ApiKey,
+    Environment,
     SshKey,
     Identity,
     /// A login that only holds a one-time code (no password).
@@ -29,11 +30,12 @@ impl Template {
     /// The main three, shown first in "New".
     pub const PRIMARY: [Self; 3] = [Self::Login, Self::Card, Self::Note];
     /// Under "More" in "New".
-    pub const MORE: [Self; 6] = [
+    pub const MORE: [Self; 7] = [
         Self::Authenticator,
         Self::Wifi,
         Self::License,
         Self::ApiKey,
+        Self::Environment,
         Self::SshKey,
         Self::Identity,
     ];
@@ -47,6 +49,7 @@ impl Template {
             Self::Wifi => "Wi-Fi",
             Self::License => "Software licence",
             Self::ApiKey => "API key",
+            Self::Environment => "Project secrets",
             Self::SshKey => "SSH key",
             Self::Identity => "Identity",
             Self::Authenticator => "Authenticator",
@@ -104,6 +107,8 @@ impl Template {
         };
         ItemFields {
             custom,
+            environment: (self == Self::Environment)
+                .then(crate::vault::environment::EnvironmentSecrets::default),
             template: Some(self),
             ..ItemFields::new(self.kind())
         }

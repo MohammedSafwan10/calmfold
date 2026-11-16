@@ -38,6 +38,7 @@ use gpui_kit::{
     rems,
 };
 
+use super::environment::EnvironmentEditor;
 use crate::library::Library;
 use crate::vault_prefs;
 use crate::views::passwords::{kind_icon, strength_meter, unix_now};
@@ -233,6 +234,7 @@ impl Form {
             tags: v(&self.tags).split(',').map(str::to_owned).collect(),
             custom: Vec::new(),
             template: None,
+            environment: None,
         }
     }
 
@@ -244,6 +246,8 @@ impl Form {
 }
 
 pub struct VaultItemPane {
+    environment: Entity<EnvironmentEditor>,
+    environment_enabled: bool,
     library: Entity<Library>,
     id: Option<VaultItemId>,
     item: Option<VaultItem>,
@@ -265,12 +269,15 @@ impl EventEmitter<PaneEvent> for VaultItemPane {}
 impl VaultItemPane {
     pub fn new(library: Entity<Library>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let form = Form::new(window, cx);
+        let environment = cx.new(|cx| EnvironmentEditor::new(library.clone(), window, cx));
         let password_changed = cx.subscribe_in(&form.password, window, |_, _, e, _, cx| {
             if matches!(e, InputEvent::Change) {
                 cx.notify();
             }
         });
         Self {
+            environment,
+            environment_enabled: false,
             library,
             id: None,
             item: None,
@@ -294,11 +301,14 @@ impl VaultItemPane {
         self.id
     }
 
-    /// Shows `id` (or nothing). Keeps an in-progress edit of the same item.
+    /// Shows `id` (or nothing). Saving must succeed before replacing a draft.
     pub fn show(&mut self, id: Option<VaultItemId>, window: &mut Window, cx: &mut Context<Self>) {
         let same = id == self.id;
         if !same && self.is_editing() {
-            self.cancel(window, cx);
+            self.save(window, cx);
+            if self.is_editing() {
+                return;
+            }
         }
         if matches!(self.mode, Mode::New(_)) && id.is_none() {
             // A new item stays open while the list refreshes behind it.
@@ -316,6 +326,16 @@ impl VaultItemPane {
             self.revealed.clear();
             self.history_open = false;
             self.error = None;
+        }
+        if self.mode == Mode::Read {
+            let env = self
+                .item
+                .as_ref()
+                .and_then(|i| i.fields().environment.as_ref());
+            self.environment_enabled = env.is_some();
+            self.environment.update(cx, |editor, cx| {
+                editor.fill(env, self.id, false, window, cx)
+            });
         }
         self.update_ticker(window, cx);
         cx.notify();
@@ -342,6 +362,9 @@ impl VaultItemPane {
     /// Forgets everything shown or typed (the vault locked). Unlike
     /// `show(None)`, this also throws away an unsaved new item.
     pub fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.environment
+            .update(cx, |editor, cx| editor.clear(window, cx));
+        self.environment_enabled = false;
         self.form.clear(window, cx);
         self.clear_custom(window, cx);
         self.mode = Mode::Read;
@@ -425,6 +448,7 @@ impl VaultItemPane {
             && self.custom.is_empty()
             && f.notes.read(cx).value().is_empty()
             && f.urls.read(cx).value().is_empty()
+            && self.environment.read(cx).draft_is_empty(cx)
     }
 
     #[doc(hidden)]
@@ -437,6 +461,43 @@ impl VaultItemPane {
         self.form
             .password
             .update(cx, |i, cx| i.set_value(value.to_owned(), window, cx));
+    }
+
+    pub fn environment_editor(&self) -> &Entity<EnvironmentEditor> {
+        &self.environment
+    }
+
+    pub fn start_environment(
+        &mut self,
+        project: calmfold_core::ProjectId,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_template(Template::Environment, window, cx);
+        let env = calmfold_core::vault::environment::EnvironmentSecrets::new(
+            Some(project),
+            "Development",
+            vec![],
+        );
+        if let Ok(env) = env {
+            self.environment.update(cx, |editor, cx| {
+                editor.fill(Some(&env), None, true, window, cx)
+            });
+        }
+        self.form.title.update(cx, |input, cx| {
+            let title = format!("{name} · Development");
+            input.set_value(
+                if title.chars().count() <= calmfold_core::MAX_TITLE_CHARS {
+                    title
+                } else {
+                    name.to_owned()
+                },
+                window,
+                cx,
+            )
+        });
+        cx.notify();
     }
 
     pub fn start_new(&mut self, kind: ItemKind, window: &mut Window, cx: &mut Context<Self>) {
@@ -462,6 +523,10 @@ impl VaultItemPane {
         self.error = None;
         self.form.clear(window, cx);
         let fields = template.fields();
+        self.environment_enabled = fields.environment.is_some();
+        self.environment.update(cx, |editor, cx| {
+            editor.fill(fields.environment.as_ref(), None, true, window, cx)
+        });
         self.set_custom(&fields.custom, window, cx);
         self.form.title.update(cx, |i, cx| i.focus(window, cx));
         self.update_ticker(window, cx);
@@ -473,6 +538,16 @@ impl VaultItemPane {
             return;
         };
         self.form.fill(item.fields(), window, cx);
+        self.environment_enabled = item.fields().environment.is_some();
+        self.environment.update(cx, |editor, cx| {
+            editor.fill(
+                item.fields().environment.as_ref(),
+                Some(item.id()),
+                true,
+                window,
+                cx,
+            )
+        });
         self.set_custom(&item.fields().custom, window, cx);
         self.template = item.fields().template;
         self.mode = Mode::Edit;
@@ -483,6 +558,14 @@ impl VaultItemPane {
     }
 
     pub fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let env = self
+            .item
+            .as_ref()
+            .and_then(|i| i.fields().environment.as_ref());
+        self.environment_enabled = env.is_some();
+        self.environment.update(cx, |editor, cx| {
+            editor.fill(env, self.id, false, window, cx)
+        });
         self.form.clear(window, cx);
         self.clear_custom(window, cx);
         self.mode = Mode::Read;
@@ -499,6 +582,16 @@ impl VaultItemPane {
             Mode::New(kind) => kind,
         };
         let mut fields = self.form.read(kind, cx);
+        if self.environment_enabled {
+            match self.environment.read(cx).document(cx) {
+                Ok(document) => fields.environment = Some(document),
+                Err(err) => {
+                    self.error = Some(err.to_string().into());
+                    cx.notify();
+                    return;
+                }
+            }
+        }
         fields.custom = self
             .custom
             .iter()
@@ -538,6 +631,14 @@ impl VaultItemPane {
                     cx.emit(PaneEvent::Created(id));
                 }
                 self.item = self.id.and_then(|id| self.library.read(cx).vault_item(id));
+                let env = self
+                    .item
+                    .as_ref()
+                    .and_then(|i| i.fields().environment.as_ref());
+                self.environment_enabled = env.is_some();
+                self.environment.update(cx, |editor, cx| {
+                    editor.fill(env, self.id, false, window, cx)
+                });
                 self.update_ticker(window, cx);
             }
             Err(err) => self.error = Some(format!("{err:#}").into()),
@@ -906,6 +1007,7 @@ impl VaultItemPane {
                             .text_color(theme.muted_foreground)
                             .truncate()
                             .child(match f.kind {
+                                _ if f.environment.is_some() => "Project secrets".into(),
                                 ItemKind::Login => f
                                     .urls
                                     .first()
@@ -1011,6 +1113,9 @@ impl VaultItemPane {
                         .overflow_hidden()
                         .children(rows),
                 )
+            })
+            .when(f.environment.is_some(), |s| {
+                s.child(self.environment.clone())
             })
             .when(!f.notes.is_empty(), |s| {
                 s.child(
@@ -1403,6 +1508,9 @@ impl VaultItemPane {
                 );
             }
             ItemKind::Note => {}
+        }
+        if self.environment_enabled {
+            rows.push(self.environment.clone().into_any_element());
         }
         rows.push(self.custom_editor(cx));
         rows.push(Self::form_row(

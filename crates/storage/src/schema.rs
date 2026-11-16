@@ -19,6 +19,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/0008_event_until.sql")),
         M::up(include_str!("../migrations/0009_event_occasion.sql")),
         M::up(include_str!("../migrations/0010_focus.sql")),
+        M::up(include_str!("../migrations/0011_developer.sql")),
     ])
 }
 
@@ -51,6 +52,29 @@ mod tests {
     #[test]
     fn migrations_are_valid() {
         migrations().validate().expect("migrations validate");
+    }
+
+    #[test]
+    fn upgrading_v10_preserves_projects_and_related_data() {
+        let mut conn = Connection::open_in_memory().expect("db");
+        migrations().to_version(&mut conn, 10).expect("v10");
+        conn.execute(
+            "INSERT INTO projects (id,name,created_at,updated_at) VALUES ('p1','Existing',0,0)",
+            [],
+        )
+        .expect("project");
+        conn.execute("INSERT INTO tasks (id,title,status,project_id,created_at,updated_at) VALUES ('t1','Build','todo','p1',0,0)", []).expect("task");
+        conn.execute("INSERT INTO notes (id,title,body,created_at,updated_at) VALUES ('n1','Setup','Keep me',0,0)", []).expect("note");
+        migrate(&mut conn).expect("upgrade");
+        let (name, project, body): (String,String,String) = conn.query_row("SELECT p.name,t.project_id,n.body FROM projects p,tasks t,notes n WHERE p.id='p1' AND t.id='t1' AND n.id='n1'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).expect("preserved");
+        assert_eq!(
+            (name.as_str(), project.as_str(), body.as_str()),
+            ("Existing", "p1", "Keep me")
+        );
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM developer_projects", [], |r| r.get(0))
+            .expect("table");
+        assert_eq!(count, 0);
     }
 
     #[test]

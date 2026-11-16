@@ -148,6 +148,8 @@ pub struct AppearanceSettings {
     /// Also show the holidays of the country you're in (from the time
     /// zone) when it isn't one of `holiday_countries`.
     pub holidays_where_you_are: bool,
+    /// Legacy sidebar preference; migrated once into layout.json navigation.
+    pub developer_tools: bool,
     /// Today dashboard: section keys in display order (unknown keys are
     /// ignored, missing ones appended) and the keys the user hid.
     pub today_order: Vec<String>,
@@ -247,6 +249,7 @@ impl Default for AppearanceSettings {
             holiday_countries: None,
             holiday_regions: Vec::new(),
             holidays_where_you_are: true,
+            developer_tools: true,
             today_order: Vec::new(),
             today_hidden: Vec::new(),
         }
@@ -373,6 +376,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("sub/appearance.json");
         let settings = AppearanceSettings {
+            developer_tools: false,
             theme: ThemePreference::Dark,
             ui_font: UiFont::System,
             ui_font_size: 17,

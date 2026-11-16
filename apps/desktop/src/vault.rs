@@ -959,6 +959,41 @@ mod tests {
     }
 
     #[test]
+    fn environment_secrets_survive_encryption_reload_and_backup() {
+        use calmfold_core::vault::environment::EnvironmentSecrets;
+        let (mut store, mut v) = unlocked();
+        let source = (0..200)
+            .map(|i| format!("K{i}=secret-value-{i}\n"))
+            .collect::<String>();
+        let fields = ItemFields {
+            title: "Project development".into(),
+            environment: Some(EnvironmentSecrets::parse(&source).expect("parse")),
+            ..ItemFields::new(ItemKind::Note)
+        };
+        let id = v.create(&mut store, &fields, now()).expect("create");
+        for row in store.vault_items().expect("rows") {
+            let text = String::from_utf8_lossy(&row.blob);
+            assert!(!text.contains("secret-value") && !text.contains("Project development"));
+        }
+        v.lock();
+        assert!(unlock(&store, &mut v, "correct horse"));
+        assert_eq!(
+            v.item(id).expect("item").fields().environment,
+            fields.environment
+        );
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("backup.cfvault");
+        write_archive(&store, &path, now()).expect("backup");
+        let archive = ArchiveFile::read(&path).expect("read");
+        let k = archive.kdf().expect("kdf");
+        let key = derive(&pw("correct horse"), &k.salt, k.params).expect("derive");
+        let items = VaultSession::open_archive(&archive, &key)
+            .expect("open")
+            .expect("items");
+        assert_eq!(items[0].fields().environment, fields.environment);
+    }
+
+    #[test]
     fn a_blob_moved_to_another_id_is_unreadable_not_fatal() {
         let (mut store, mut v) = unlocked();
         v.create(&mut store, &login("A", "a"), now()).expect("a");

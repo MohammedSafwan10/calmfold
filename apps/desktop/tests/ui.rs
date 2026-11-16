@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use calmfold_core::TaskStatus;
 use calmfold_desktop::actions::{
-    GoNotes, GoSettings, GoTasks, GoToday, NewNote, NewTask, OpenCommandPalette, ToggleSidebar,
-    UseDarkTheme, UseLightTheme,
+    FocusToggle, GoFocus, GoNotes, GoSettings, GoTasks, GoToday, NewNote, NewTask,
+    OpenCommandPalette, ToggleSidebar, UseDarkTheme, UseLightTheme,
 };
 use calmfold_desktop::paths::AppPaths;
 use calmfold_desktop::shell::AppShell;
@@ -1607,6 +1607,12 @@ fn picking_a_theme_card_applies_and_saves_it(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_reduce_motion(true));
     dispatch(&app, cx, UseDarkTheme);
     dispatch(&app, cx, GoSettings);
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        w.within("settings-sidebar").click("0-2", cx);
+    })
+    .expect("Appearance navigation");
+    cx.run_until_parked();
     let name = |cx: &mut TestAppContext| cx.read(|cx| Theme::global(cx).theme_name().to_string());
     assert_eq!(name(cx), calmfold_ui::theme::DARK);
 
@@ -2099,6 +2105,886 @@ fn unlocked_vault(cx: &mut TestAppContext) -> App {
     setup.detach();
     cx.run_until_parked();
     app
+}
+
+fn element_present(app: &App, cx: &mut TestAppContext, id: &'static str) -> bool {
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        w.try_find(id).is_some()
+    })
+    .expect("window")
+}
+
+#[gpui_kit::test]
+fn sidebar_customization_reorders_hides_persists_and_resets_with_undo(cx: &mut TestAppContext) {
+    use calmfold_desktop::actions::CustomizeSidebar;
+    use calmfold_desktop::ui_state::{LayoutState, layout_file};
+    let app = launch(cx);
+    let prefs = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            app.shell
+                .read(cx)
+                .layout(cx)
+                .navigation
+                .expect("preferences")
+        })
+    };
+    assert_eq!(prefs(cx).visible, ["today", "notes", "tasks", "calendar"]);
+    dispatch(&app, cx, CustomizeSidebar);
+    assert!(element_present(&app, cx, "sidebar-show-focus"));
+    click(&app, cx, "sidebar-show-focus");
+    assert!(prefs(cx).is_visible("focus"));
+    // Keyboard activation uses the same native move button as a pointer click.
+    let focused = |cx: &mut TestAppContext| {
+        cx.update_window(app.window, |_, w, cx| {
+            w.render_frame(cx);
+            w.find("sidebar-up-notes").focused() == Some(true)
+        })
+        .expect("focus query")
+    };
+    for _ in 0..40 {
+        if focused(cx) {
+            break;
+        }
+        press(&app, cx, "tab");
+    }
+    assert!(focused(cx), "move controls are keyboard reachable");
+    press(&app, cx, "space");
+    assert_eq!(prefs(cx).ordered()[0].id, "notes");
+    assert!(focused(cx), "keyboard focus stays with the moved control");
+    click(&app, cx, "sidebar-down-notes");
+    assert_eq!(prefs(cx).ordered()[0].id, "today");
+    click(&app, cx, "sidebar-up-notes");
+    let customized = prefs(cx);
+    cx.update(|cx| {
+        calmfold_ui::appearance::reset(cx);
+        cx.set_reduce_motion(true);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        prefs(cx),
+        customized,
+        "theme reset preserves workspace choices"
+    );
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    assert_eq!(
+        LayoutState::load(&layout_file(&app.paths.data_dir)).navigation,
+        Some(customized.clone())
+    );
+    click(&app, cx, "sidebar-reset");
+    assert_eq!(prefs(cx).visible, ["today", "notes", "tasks", "calendar"]);
+    click(&app, cx, "undo");
+    assert_eq!(prefs(cx), customized);
+}
+
+#[gpui_kit::test]
+fn sidebar_more_is_inline_and_all_hidden_still_has_navigation(cx: &mut TestAppContext) {
+    use calmfold_desktop::actions::{CustomizeSidebar, GoPasswords};
+    let app = launch(cx);
+    // More sits immediately after four default features, not in the footer.
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        let more = w.within("main-sidebar-220").find("0-0-4").bounds();
+        let settings = w.find("sidebar-settings").bounds();
+        assert!(more.top() < settings.top() / 2.);
+        w.within("main-sidebar-220").click("0-0-4", cx);
+    })
+    .expect("More");
+    cx.run_until_parked();
+    dispatch(&app, cx, CustomizeSidebar);
+    for entry in calmfold_desktop::nav::entries() {
+        let visible = cx.read(|cx| {
+            app.shell
+                .read(cx)
+                .layout(cx)
+                .navigation
+                .expect("prefs")
+                .is_visible(entry.id)
+        });
+        if visible {
+            click(&app, cx, leak(format!("sidebar-show-{}", entry.id)));
+        }
+    }
+    assert!(element_present(&app, cx, "open-palette"));
+    assert!(element_present(&app, cx, "sidebar-settings"));
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        w.within("main-sidebar-220").click("0-0-0", cx);
+    })
+    .expect("all hidden More");
+    cx.run_until_parked();
+    // Keyboard commands remain valid even with no features pinned.
+    dispatch(&app, cx, GoPasswords);
+    assert_eq!(route(&app, cx), Route::Passwords);
+    dispatch(&app, cx, CustomizeSidebar);
+    for entry in calmfold_desktop::nav::entries() {
+        click(&app, cx, leak(format!("sidebar-show-{}", entry.id)));
+    }
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(
+            w.within("main-sidebar-220").try_find("0-0-8").is_none(),
+            "no empty More when all features are visible"
+        );
+    })
+    .expect("all visible");
+}
+
+#[gpui_kit::test]
+fn hiding_focus_keeps_timer_running_and_feature_settings_are_searchable(cx: &mut TestAppContext) {
+    use calmfold_desktop::actions::CustomizeSidebar;
+    let app = launch(cx);
+    dispatch(&app, cx, GoFocus);
+    dispatch(&app, cx, FocusToggle);
+    let ctrl = cx.read(|cx| app.shell.read(cx).focus_ctrl().clone());
+    let running = cx.read(|cx| ctrl.read(cx).timer().clone());
+    dispatch(&app, cx, CustomizeSidebar);
+    click(&app, cx, "sidebar-show-focus");
+    click(&app, cx, "sidebar-show-focus");
+    assert!(cx.read(|cx| ctrl.read(cx).timer().is_running()));
+    assert_eq!(cx.read(|cx| ctrl.read(cx).timer().kind), running.kind);
+    click_placeholder(&app, cx, "Search...");
+    type_text(&app, cx, "spellcheck");
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        use gpui_kit::test::TestQueryExt as _;
+        assert!(
+            !w.elements()
+                .into_iter()
+                .filter(|e| e.role() == Some(gpui_kit::Role::Switch))
+                .collect::<Vec<_>>()
+                .is_empty(),
+            "global settings search reaches Notes preferences"
+        );
+    })
+    .expect("feature search");
+}
+
+#[gpui_kit::test]
+fn workspace_start_page_loads_and_can_be_changed_without_pinning_it(cx: &mut TestAppContext) {
+    use calmfold_desktop::{
+        navigation::SidebarPreferences,
+        ui_state::{LayoutState, layout_file},
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let paths = AppPaths::in_dir(dir.path().to_path_buf());
+    let prefs = SidebarPreferences {
+        start_page: "notes".into(),
+        visible: vec!["notes".into()],
+        ..SidebarPreferences::default()
+    };
+    LayoutState {
+        navigation: Some(prefs),
+        ..LayoutState::default()
+    }
+    .save(&layout_file(dir.path()));
+    let (window, shell) = cx.update(|cx| {
+        calmfold_desktop::start(&paths, Store::open_in_memory().expect("store"), cx).expect("start")
+    });
+    cx.run_until_parked();
+    let app = App {
+        window,
+        shell,
+        _dir: dir,
+        paths,
+    };
+    assert_eq!(route(&app, cx), Route::Notes);
+    dispatch(&app, cx, GoSettings);
+    click_label(&app, cx, "Open on startup: Notes");
+    click_label(&app, cx, "Calendar");
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    let saved = LayoutState::load(&layout_file(&app.paths.data_dir))
+        .navigation
+        .expect("prefs");
+    assert_eq!(saved.startup_route(), Route::Calendar);
+    assert!(
+        !saved.is_visible("calendar"),
+        "startup does not silently pin a hidden feature"
+    );
+    assert_eq!(
+        route(&app, cx),
+        Route::Settings,
+        "startup choice applies on next launch"
+    );
+}
+
+#[gpui_kit::test]
+fn sidebar_hiding_preserves_note_drafts_and_vault_state(cx: &mut TestAppContext) {
+    use calmfold_core::vault::lock::LockState;
+    use calmfold_desktop::actions::CustomizeSidebar;
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    dispatch(&app, cx, NewNote);
+    type_text(&app, cx, "Private workspace");
+    press(&app, cx, "enter");
+    type_text(&app, cx, "Keep this draft intact.");
+    let notes = cx.read(|cx| app.shell.read(cx).notes().clone());
+    let body = cx.read(|cx| notes.read(cx).body_text(cx));
+    dispatch(&app, cx, CustomizeSidebar);
+    click(&app, cx, "sidebar-show-notes");
+    click(&app, cx, "sidebar-show-passwords");
+    click(&app, cx, "sidebar-show-passwords");
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).vault_state()),
+        LockState::Unlocked
+    );
+    assert_eq!(cx.read(|cx| notes.read(cx).body_text(cx)), body);
+    dispatch(&app, cx, GoNotes);
+    assert_eq!(cx.read(|cx| notes.read(cx).body_text(cx)), body);
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    let note = cx.read(|cx| lib.read(cx).notes(false).expect("notes").remove(0));
+    assert_eq!(
+        cx.read(|cx| lib
+            .read(cx)
+            .note(note.id)
+            .expect("read")
+            .expect("note")
+            .body()
+            .to_owned()),
+        body
+    );
+}
+
+fn click_placeholder(app: &App, cx: &mut TestAppContext, placeholder: &str) {
+    use gpui_kit::test::{TestEventExt as _, TestQueryExt as _};
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        let inputs: Vec<_> = w
+            .elements()
+            .into_iter()
+            .filter(|e| e.placeholder() == Some(placeholder))
+            .collect();
+        assert_eq!(inputs.len(), 1, "one matching input");
+        let center = inputs[0].bounds().center();
+        w.pointer_down(center, gpui_kit::MouseButton::Left, cx);
+        w.pointer_up(center, gpui_kit::MouseButton::Left, cx);
+    })
+    .expect("window");
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn developer_forms_leave_cleanly_and_unlock_guidance_is_contextual(cx: &mut TestAppContext) {
+    use calmfold_desktop::actions::{
+        GoDeveloper, LockVault, NewDeveloperProject, NewProjectSecrets,
+    };
+    use gpui_kit::test::TestQueryExt as _;
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    let project = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.create_developer_project("Website", None, cx)
+                .expect("project")
+        })
+    });
+    dispatch(&app, cx, NewDeveloperProject);
+    assert!(element_present(&app, cx, "developer-save"));
+    press(&app, cx, "escape");
+    assert!(!element_present(&app, cx, "developer-save"));
+    dispatch(&app, cx, NewDeveloperProject);
+    click(&app, cx, leak(format!("developer-project-{project}")));
+    assert!(
+        !element_present(&app, cx, "developer-save"),
+        "selecting a project leaves create form"
+    );
+    dispatch(&app, cx, NewDeveloperProject);
+    click(&app, cx, "developer-more");
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        assert_eq!(
+            w.find_by_label("Show archived projects").checked(),
+            Some(false)
+        );
+    })
+    .expect("menu");
+    click_label(&app, cx, "Show archived projects");
+    assert!(!element_present(&app, cx, "developer-save"));
+    click(&app, cx, "developer-more");
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        assert_eq!(
+            w.find_by_label("Show archived projects").checked(),
+            Some(true)
+        );
+    })
+    .expect("menu");
+    click_label(&app, cx, "Show archived projects");
+    dispatch(&app, cx, NewDeveloperProject);
+    dispatch(&app, cx, NewProjectSecrets);
+    assert!(!element_present(&app, cx, "developer-save"));
+    assert!(
+        element_present(&app, cx, "edit-save"),
+        "new environment is visible"
+    );
+    let developer = cx.read(|cx| app.shell.read(cx).developer().clone());
+    let pane = cx.read(|cx| developer.read(cx).pane().clone());
+    cx.update_window(app.window, |_, w, cx| {
+        pane.update(cx, |p, cx| p.cancel(w, cx))
+    })
+    .expect("cancel");
+    dispatch(&app, cx, LockVault);
+    dispatch(&app, cx, NewProjectSecrets);
+    assert!(element_present(&app, cx, "developer-unlock"));
+    let task = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.unlock_vault(
+                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                cx,
+            )
+        })
+    });
+    task.detach();
+    cx.run_until_parked();
+    dispatch(&app, cx, GoDeveloper);
+    assert!(
+        !element_present(&app, cx, "developer-unlock"),
+        "unlock guidance disappears"
+    );
+    dispatch(&app, cx, NewProjectSecrets);
+    assert!(element_present(&app, cx, "edit-save"));
+}
+
+#[gpui_kit::test]
+fn passwords_navigation_preserves_invalid_environment_drafts(cx: &mut TestAppContext) {
+    use calmfold_core::vault::environment::EnvironmentSecrets;
+    use calmfold_core::vault::{ItemFields, ItemKind};
+    use calmfold_desktop::actions::{GoPasswords, NewLogin};
+    use calmfold_desktop::vault::VaultFilter;
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    let id = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.create_vault_item(
+                &ItemFields {
+                    title: "Other".into(),
+                    ..ItemFields::new(ItemKind::Login)
+                },
+                cx,
+            )
+            .expect("other");
+            l.create_vault_item(
+                &ItemFields {
+                    title: "Development".into(),
+                    environment: Some(EnvironmentSecrets::parse("OLD=value").expect("parse")),
+                    ..ItemFields::new(ItemKind::Note)
+                },
+                cx,
+            )
+            .expect("environment")
+        })
+    });
+    dispatch(&app, cx, GoPasswords);
+    let passwords = cx.read(|cx| app.shell.read(cx).passwords().clone());
+    let pane = cx.read(|cx| passwords.read(cx).pane().clone());
+    let editor = cx.read(|cx| pane.read(cx).environment_editor().clone());
+    for pending in [true, false] {
+        cx.update_window(app.window, |_, w, cx| {
+            passwords.update(cx, |p, cx| p.select_for_dev("Development", w, cx));
+            pane.update(cx, |p, cx| p.edit(w, cx));
+            if pending {
+                editor.update(cx, |e, cx| e.preview("NEW=value", cx));
+            }
+        })
+        .expect("edit");
+        cx.run_until_parked();
+        if !pending {
+            click_placeholder(&app, cx, "VARIABLE_NAME");
+            press(&app, cx, leak(secondary("a")));
+            type_text(&app, cx, "BAD-KEY");
+        }
+        assert!(cx.read(|cx| editor.read(cx).document(cx).is_err()));
+        cx.update_window(app.window, |_, w, cx| {
+            passwords.update(cx, |p, cx| p.select_for_dev("Other", w, cx))
+        })
+        .expect("switch");
+        cx.run_until_parked();
+        assert_eq!(cx.read(|cx| passwords.read(cx).selected()), Some(id));
+        assert!(cx.read(|cx| pane.read(cx).is_editing()));
+        dispatch(&app, cx, NewLogin);
+        cx.update_window(app.window, |_, w, cx| {
+            passwords.update(cx, |p, cx| {
+                p.set_filter(VaultFilter::Kind(ItemKind::Card), w, cx)
+            })
+        })
+        .expect("filter");
+        assert_eq!(cx.read(|cx| passwords.read(cx).filter()), VaultFilter::All);
+        assert!(
+            cx.read(|cx| editor.read(cx).document(cx).is_err()),
+            "invalid draft still present"
+        );
+        if pending {
+            cx.update_window(app.window, |_, w, cx| {
+                pane.update(cx, |p, cx| p.cancel(w, cx))
+            })
+            .expect("cancel");
+        } else {
+            click_placeholder(&app, cx, "VARIABLE_NAME");
+            press(&app, cx, leak(secondary("a")));
+            type_text(&app, cx, "  NEW_KEY  ");
+            cx.update_window(app.window, |_, w, cx| {
+                passwords.update(cx, |p, cx| p.select_for_dev("Other", w, cx))
+            })
+            .expect("correct and switch");
+            cx.run_until_parked();
+            assert_ne!(cx.read(|cx| passwords.read(cx).selected()), Some(id));
+            let saved = cx.read(|cx| {
+                lib.read(cx)
+                    .vault_item(id)
+                    .expect("item")
+                    .fields()
+                    .environment
+                    .clone()
+                    .expect("environment")
+            });
+            assert_eq!(saved.variables()[0].key(), "NEW_KEY");
+            assert_eq!(saved.variables()[0].value(), "value");
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn environment_reveal_is_literal_and_copy_updates_recent_use(cx: &mut TestAppContext) {
+    use calmfold_core::vault::environment::EnvironmentSecrets;
+    use calmfold_core::vault::{ItemFields, ItemKind};
+    use calmfold_desktop::actions::{CopyProjectEnvironment, GoPasswords};
+    use gpui_kit::test::TestQueryExt as _;
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    let value = "line one\nline two\tC:\\folder";
+    let env = EnvironmentSecrets::new(
+        None,
+        "Development",
+        vec![
+            calmfold_core::vault::environment::EnvVariable::new("PRIVATE_KEY", value)
+                .expect("value"),
+        ],
+    )
+    .expect("env");
+    let id = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.create_vault_item(
+                &ItemFields {
+                    title: "Environment".into(),
+                    environment: Some(env),
+                    ..ItemFields::new(ItemKind::Note)
+                },
+                cx,
+            )
+            .expect("item")
+        })
+    });
+    dispatch(&app, cx, GoPasswords);
+    let passwords = cx.read(|cx| app.shell.read(cx).passwords().clone());
+    cx.update_window(app.window, |_, w, cx| {
+        passwords.update(cx, |p, cx| p.select_for_dev("Environment", w, cx))
+    })
+    .expect("show");
+    cx.run_until_parked();
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        assert!(
+            w.find("environment-editor").bounds().size.height < w.rem_size() * 18.,
+            "one variable does not reserve a six-row empty area"
+        );
+    })
+    .expect("compact editor");
+    click_label(&app, cx, "Reveal value");
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        let texts = gpui_kit::base::test_support::texts(w);
+        assert!(
+            texts.iter().any(|t| t.text() == value),
+            "literal multiline value is rendered"
+        );
+        let copy = w
+            .elements()
+            .into_iter()
+            .find(|e| e.description() == Some("Copy value"))
+            .expect("copy button");
+        assert!(copy.bounds().size.height > gpui_kit::px(0.));
+    })
+    .expect("reveal");
+    assert!(cx.read(|cx| {
+        lib.read(cx)
+            .vault_item(id)
+            .expect("item")
+            .used_at()
+            .is_none()
+    }));
+    // Click the real per-value copy, using the observed component identity.
+    cx.update_window(app.window, |_, w, cx| {
+        w.render_frame(cx);
+        let copy = w
+            .elements()
+            .into_iter()
+            .find(|e| e.description() == Some("Copy value"))
+            .expect("copy button");
+        let id = copy.path().last().expect("id").clone();
+        w.click(id, cx);
+    })
+    .expect("copy");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| cx.read_from_clipboard().and_then(|c| c.text()))
+            .as_deref(),
+        Some(value)
+    );
+    assert!(cx.read(|cx| {
+        lib.read(cx)
+            .vault_item(id)
+            .expect("item")
+            .used_at()
+            .is_some()
+    }));
+    let fresh = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let mut fields = l.vault_item(id).expect("item").fields().clone();
+            fields.title = "All variables".into();
+            l.create_vault_item(&fields, cx).expect("fresh item")
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(app.window, |_, w, cx| {
+        passwords.update(cx, |p, cx| p.select_for_dev("All variables", w, cx))
+    })
+    .expect("select");
+    dispatch(&app, cx, CopyProjectEnvironment);
+    assert!(cx.read(|cx| {
+        lib.read(cx)
+            .vault_item(fresh)
+            .expect("item")
+            .used_at()
+            .is_some()
+    }));
+}
+
+#[gpui_kit::test]
+fn environment_export_rejects_existing_files_and_late_locked_dialogs(cx: &mut TestAppContext) {
+    use calmfold_core::vault::environment::EnvironmentSecrets;
+    use calmfold_core::vault::{ItemFields, ItemKind};
+    use calmfold_desktop::actions::{ExportProjectEnvironment, GoPasswords, LockVault};
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.create_vault_item(
+                &ItemFields {
+                    title: "Export test".into(),
+                    environment: Some(EnvironmentSecrets::parse("KEY=private").expect("parse")),
+                    ..ItemFields::new(ItemKind::Note)
+                },
+                cx,
+            )
+            .expect("item")
+        })
+    });
+    dispatch(&app, cx, GoPasswords);
+    let passwords = cx.read(|cx| app.shell.read(cx).passwords().clone());
+    cx.update_window(app.window, |_, w, cx| {
+        passwords.update(cx, |p, cx| p.select_for_dev("Export test", w, cx))
+    })
+    .expect("select");
+    let path = app._dir.path().join("existing.env");
+    std::fs::write(&path, "keep original").expect("existing");
+    dispatch(&app, cx, ExportProjectEnvironment);
+    click_label(&app, cx, "Choose location…");
+    cx.simulate_new_path_selection(|_| Some(path.clone()));
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("unchanged"),
+        "keep original"
+    );
+    let error = calmfold_desktop::library::Library::write_environment_file(&path, "new")
+        .expect_err("no overwrite");
+    assert!(error.to_string().contains("already exists"));
+    let late = app._dir.path().join("late.env");
+    dispatch(&app, cx, ExportProjectEnvironment);
+    click_label(&app, cx, "Choose location…");
+    dispatch(&app, cx, LockVault);
+    cx.simulate_new_path_selection(|_| Some(late.clone()));
+    cx.run_until_parked();
+    assert!(
+        !late.exists(),
+        "locking before the dialog returns never starts an export"
+    );
+}
+
+#[gpui_kit::test]
+fn developer_projects_reuse_tasks_and_setup_notes(cx: &mut TestAppContext) {
+    use calmfold_desktop::actions::{GoDeveloper, NewDeveloperProject};
+    let app = launch(cx);
+    let lib = library(&app, cx);
+    dispatch(&app, cx, NewDeveloperProject);
+    assert_eq!(route(&app, cx), Route::Developer);
+    type_text(&app, cx, "Calmfold website");
+    press(&app, cx, "enter");
+    let project = cx.read(|cx| {
+        lib.read(cx)
+            .developer_projects(false)
+            .expect("projects")
+            .remove(0)
+    });
+    let note_id = project.setup_note().expect("setup note");
+    assert_eq!(project.project().name(), "Calmfold website");
+    click(&app, cx, "developer-setup-note");
+    assert_eq!(route(&app, cx), Route::Notes);
+    assert!(cx.read(|cx| lib.read(cx).note(note_id).expect("read").is_some()));
+    dispatch(&app, cx, GoDeveloper);
+    click(&app, cx, "developer-tasks");
+    assert_eq!(route(&app, cx), Route::Tasks);
+    let tasks = cx.read(|cx| app.shell.read(cx).tasks().clone());
+    assert_eq!(cx.read(|cx| tasks.read(cx).project()), Some(project.id()));
+    dispatch(&app, cx, GoDeveloper);
+    click(&app, cx, "developer-project-menu");
+    click_label(&app, cx, "Edit project…");
+    click(&app, cx, "developer-name");
+    press(&app, cx, leak(secondary("a")));
+    type_text(&app, cx, "New website");
+    click(&app, cx, "developer-folder");
+    type_text(&app, cx, "/tmp/website");
+    click(&app, cx, "developer-save");
+    let updated = cx.read(|cx| {
+        lib.read(cx)
+            .developer_project(project.id())
+            .expect("read")
+            .expect("project")
+    });
+    assert_eq!(updated.project().name(), "New website");
+    assert_eq!(updated.folder(), "/tmp/website");
+    cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.archive_developer_project(project.id(), true, cx)
+                .expect("archive")
+        })
+    });
+    cx.run_until_parked();
+    assert!(cx.read(|cx| {
+        lib.read(cx)
+            .developer_projects(false)
+            .expect("active")
+            .is_empty()
+    }));
+    assert!(cx.read(|cx| lib.read(cx).note(note_id).expect("note").is_some()));
+    cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.archive_developer_project(project.id(), false, cx)
+                .expect("restore")
+        })
+    });
+    dispatch(&app, cx, GoDeveloper);
+    let developer = cx.read(|cx| app.shell.read(cx).developer().clone());
+    assert_eq!(
+        cx.read(|cx| developer.read(cx).selected()),
+        Some(project.id())
+    );
+    for action in [
+        Box::new(UseLightTheme) as Box<dyn gpui_kit::Action>,
+        Box::new(UseDarkTheme),
+    ] {
+        cx.update_window(app.window, |_, w, cx| w.dispatch_action(action, cx))
+            .expect("window");
+        cx.run_until_parked();
+    }
+}
+
+#[gpui_kit::test]
+fn developer_secrets_import_edit_export_and_lock(cx: &mut TestAppContext) {
+    use calmfold_desktop::actions::{
+        CopyProjectEnvironment, ExportProjectEnvironment, GoDeveloper, GoPasswords,
+        ImportProjectEnvironment, LockVault, NewProjectSecrets,
+    };
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    let project = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            l.create_developer_project("Calmfold", None, cx)
+                .expect("project")
+        })
+    });
+    cx.run_until_parked();
+    dispatch(&app, cx, GoDeveloper);
+    dispatch(&app, cx, NewProjectSecrets);
+    let developer = cx.read(|cx| app.shell.read(cx).developer().clone());
+    let pane = cx.read(|cx| developer.read(cx).pane().clone());
+    let editor = cx.read(|cx| pane.read(cx).environment_editor().clone());
+    let source = (0..80)
+        .map(|i| format!("K{i}=unique-value-{i}\n"))
+        .collect::<String>()
+        + "MULTILINE='line one\nline two'\n";
+    let path = app._dir.path().join("import.env");
+    std::fs::write(&path, &source).expect("source");
+    dispatch(&app, cx, ImportProjectEnvironment);
+    assert!(cx.did_prompt_for_paths());
+    cx.simulate_path_prompt_response(|_| Some(vec![path.clone()]));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| editor.read(cx).document(cx).is_err()),
+        "preview must be acknowledged"
+    );
+    click(&app, cx, "env-apply-import");
+    let expected = cx.read(|cx| editor.read(cx).document(cx).expect("document"));
+    assert_eq!(expected.variables().len(), 81);
+    assert_eq!(expected.variables()[80].value(), "line one\nline two");
+    assert_eq!(expected.project_id(), Some(project));
+    cx.update_window(app.window, |_, w, cx| {
+        pane.update(cx, |p, cx| p.save(w, cx))
+    })
+    .expect("save");
+    cx.run_until_parked();
+    let id = cx.read(|cx| pane.read(cx).item_id().expect("saved"));
+    assert_eq!(
+        cx.read(|cx| lib
+            .read(cx)
+            .vault_item(id)
+            .expect("item")
+            .fields()
+            .environment
+            .clone()),
+        Some(expected.clone())
+    );
+    let out = app._dir.path().join("export.env");
+    dispatch(&app, cx, CopyProjectEnvironment);
+    let copied = cx.read(|cx| {
+        cx.read_from_clipboard()
+            .and_then(|c| c.text())
+            .expect("copied")
+    });
+    assert_eq!(
+        calmfold_core::vault::environment::EnvironmentSecrets::parse(&copied)
+            .expect("copy")
+            .variables(),
+        expected.variables()
+    );
+    dispatch(&app, cx, ExportProjectEnvironment);
+    assert!(dialog_open(&app, cx));
+    click_label(&app, cx, "Choose location…");
+    cx.simulate_new_path_selection(|_| Some(out.clone()));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| lib.read(cx).export_environment(id, &out).is_err()),
+        "never overwrite"
+    );
+    let exported = std::fs::read_to_string(&out).expect("read");
+    let parsed =
+        calmfold_core::vault::environment::EnvironmentSecrets::parse(&exported).expect("parse");
+    assert_eq!(parsed.variables(), expected.variables());
+    cx.executor().advance_clock(Duration::from_secs(31));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| cx
+            .read_from_clipboard()
+            .and_then(|c| c.text())
+            .unwrap_or_default()
+            .is_empty()),
+        "secret clipboard clears"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&out)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+    dispatch(&app, cx, GoPasswords);
+    let passwords = cx.read(|cx| app.shell.read(cx).passwords().clone());
+    let other_pane = cx.read(|cx| passwords.read(cx).pane().clone());
+    cx.update_window(app.window, |_, w, cx| {
+        other_pane.update(cx, |p, cx| {
+            p.show(Some(id), w, cx);
+            p.edit(w, cx);
+            p.save(w, cx);
+        })
+    })
+    .expect("edit through Passwords");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| lib
+            .read(cx)
+            .vault_item(id)
+            .expect("item")
+            .fields()
+            .environment
+            .clone()),
+        Some(expected)
+    );
+    dispatch(&app, cx, GoDeveloper);
+    cx.update_window(app.window, |_, w, cx| {
+        pane.update(cx, |p, cx| {
+            p.show(Some(id), w, cx);
+            p.edit(w, cx);
+        })
+    })
+    .expect("edit");
+    cx.update_window(app.window, |_, w, cx| {
+        editor.update(cx, |s, cx| s.import(w, cx))
+    })
+    .expect("pending import");
+    dispatch(&app, cx, LockVault);
+    cx.simulate_path_prompt_response(|_| Some(vec![path]));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| pane.read(cx).draft_is_empty(cx)),
+        "lock clears every secret editor"
+    );
+    assert!(
+        cx.read(|cx| editor.read(cx).draft_is_empty(cx)),
+        "late import cannot refill locked draft"
+    );
+    assert!(cx.read(|cx| {
+        lib.read(cx)
+            .export_environment(id, &app._dir.path().join("locked.env"))
+            .is_err()
+    }));
+}
+
+#[gpui_kit::test]
+fn developer_late_import_cannot_replace_another_draft(cx: &mut TestAppContext) {
+    use calmfold_desktop::actions::{GoDeveloper, ImportProjectEnvironment, NewProjectSecrets};
+    let app = unlocked_vault(cx);
+    let lib = library(&app, cx);
+    let (first, second) = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            (
+                l.create_developer_project("First", None, cx)
+                    .expect("first"),
+                l.create_developer_project("Second", None, cx)
+                    .expect("second"),
+            )
+        })
+    });
+    dispatch(&app, cx, GoDeveloper);
+    let developer = cx.read(|cx| app.shell.read(cx).developer().clone());
+    cx.update_window(app.window, |_, w, cx| {
+        developer.update(cx, |d, cx| d.select(first, w, cx))
+    })
+    .expect("select");
+    dispatch(&app, cx, NewProjectSecrets);
+    let pane = cx.read(|cx| developer.read(cx).pane().clone());
+    let editor = cx.read(|cx| pane.read(cx).environment_editor().clone());
+    let path = app._dir.path().join("late.env");
+    std::fs::write(&path, "OLD_DRAFT=must-not-appear").expect("file");
+    dispatch(&app, cx, ImportProjectEnvironment);
+    // Discard the first draft and start another while its file picker is open.
+    cx.update_window(app.window, |_, w, cx| {
+        pane.update(cx, |p, cx| {
+            p.cancel(w, cx);
+            p.start_environment(second, "Second", w, cx);
+        })
+    })
+    .expect("replace draft");
+    cx.simulate_path_prompt_response(|_| Some(vec![path]));
+    cx.run_until_parked();
+    let doc = cx.read(|cx| editor.read(cx).document(cx).expect("no stale preview"));
+    assert_eq!(doc.project_id(), Some(second));
+    assert!(doc.variables().is_empty());
 }
 
 #[gpui_kit::test]
@@ -2794,4 +3680,337 @@ fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
         })
     });
     assert_eq!(found, (1, 1, 1), "typo, filter word, custom field value");
+}
+
+#[gpui_kit::test]
+fn focus_task_picker_searches_beyond_the_first_page(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let lib = library(&app, cx);
+    let needle = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let id = l
+                .create_task("Needle deep in the task list", None, cx)
+                .expect("task");
+            for ix in 0..300 {
+                l.create_task(&format!("Other task {ix}"), None, cx)
+                    .expect("task");
+            }
+            id
+        })
+    });
+    dispatch(&app, cx, GoFocus);
+    click(&app, cx, "focus-task-picker");
+    type_text(&app, cx, "NEEDLE");
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    press(&app, cx, "enter");
+    assert_eq!(
+        cx.read(|cx| app.shell.read(cx).focus_ctrl().read(cx).timer().task_id),
+        Some(needle)
+    );
+    click(&app, cx, "focus-clear-task");
+    assert_eq!(
+        cx.read(|cx| app.shell.read(cx).focus_ctrl().read(cx).timer().task_id),
+        None
+    );
+}
+
+#[gpui_kit::test]
+fn focus_duration_menu_validates_custom_minutes(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    dispatch(&app, cx, GoFocus);
+    click(&app, cx, "focus-duration");
+    click_label(&app, cx, "50 minutes");
+    assert_eq!(
+        cx.read(|cx| app
+            .shell
+            .read(cx)
+            .focus_ctrl()
+            .read(cx)
+            .timer()
+            .planned_secs),
+        50 * 60
+    );
+    click(&app, cx, "focus-duration");
+    click_label(&app, cx, "Custom duration…");
+    press(
+        &app,
+        cx,
+        if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        },
+    );
+    type_text(&app, cx, "240");
+    press(&app, cx, "enter");
+    assert_eq!(
+        cx.read(|cx| app
+            .shell
+            .read(cx)
+            .focus_ctrl()
+            .read(cx)
+            .timer()
+            .planned_secs),
+        50 * 60,
+        "Out-of-range input must not silently clamp or change the timer"
+    );
+    press(
+        &app,
+        cx,
+        if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        },
+    );
+    type_text(&app, cx, "37");
+    press(&app, cx, "enter");
+    assert_eq!(
+        cx.read(|cx| app
+            .shell
+            .read(cx)
+            .focus_ctrl()
+            .read(cx)
+            .timer()
+            .planned_secs),
+        37 * 60
+    );
+}
+
+#[gpui_kit::test]
+fn focus_complete_task_undo_restores_in_progress_status(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let lib = library(&app, cx);
+    let task_id = cx.update(|cx| {
+        lib.update(cx, |l, cx| {
+            let id = l.create_task("Already working", None, cx).expect("create");
+            l.set_task_status(id, TaskStatus::InProgress, cx)
+                .expect("start task");
+            id
+        })
+    });
+    dispatch(&app, cx, GoFocus);
+    cx.update_window(app.window, |_, window, cx| {
+        let ctrl = app.shell.read(cx).focus_ctrl().clone();
+        ctrl.update(cx, |f, cx| {
+            f.start_task_focus(task_id, "Already working", window, cx);
+            f.finish_now(true, cx).expect("finish");
+        });
+    })
+    .expect("window");
+    cx.run_until_parked();
+    click_label(&app, cx, "Mark task done");
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).tasks_by_id(task_id).expect("task").status()),
+        TaskStatus::Done
+    );
+    click(&app, cx, "undo");
+    assert_eq!(
+        cx.read(|cx| lib.read(cx).tasks_by_id(task_id).expect("task").status()),
+        TaskStatus::InProgress
+    );
+}
+
+#[gpui_kit::test]
+fn focus_failed_save_preserves_progress_and_can_be_retried(cx: &mut TestAppContext) {
+    let app = launch(cx);
+    dispatch(&app, cx, GoFocus);
+    let lib = library(&app, cx);
+    // A missing linked task causes a real SQLite foreign-key failure.
+    cx.update_window(app.window, |_, window, cx| {
+        let controller = app.shell.read(cx).focus_ctrl().clone();
+        controller.update(cx, |f, cx| {
+            f.start_task_focus(calmfold_core::TaskId::new(), "Missing task", window, cx);
+            assert!(f.finish_now(true, cx).is_err());
+            assert!(f.timer().is_paused());
+            assert_eq!(f.timer().cycle_completed, 0);
+            assert!(f.save_error().is_some());
+            let before = f.timer().clone();
+            f.set_kind(calmfold_core::FocusKind::ShortBreak, cx);
+            assert_eq!(
+                f.timer(),
+                &before,
+                "A mode change must preserve an unsaved session"
+            );
+            f.attach_task(None, "Recovered session", cx);
+            f.finish_now(true, cx).expect("retry save");
+            assert!(f.save_error().is_none());
+            assert!(f.timer().is_idle());
+            assert_eq!(f.timer().cycle_completed, 1);
+        });
+    })
+    .expect("window");
+    cx.run_until_parked();
+    let sessions = cx.read(|cx| {
+        lib.read(cx)
+            .focus_sessions_between(calmfold_core::Timestamp::MIN, calmfold_core::Timestamp::MAX)
+            .expect("sessions")
+    });
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].label, "Recovered session");
+}
+
+#[gpui_kit::test]
+fn focus_mode_tabs_preserve_running_and_paused_sessions(cx: &mut TestAppContext) {
+    use calmfold_core::FocusKind;
+    use gpui_kit::component::WindowExt as _;
+
+    let app = launch(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    dispatch(&app, cx, GoFocus);
+    for light in [false, true] {
+        if light {
+            dispatch(&app, cx, UseLightTheme);
+        } else {
+            dispatch(&app, cx, UseDarkTheme);
+        }
+        click_label(&app, cx, "Short break");
+        press(&app, cx, "space");
+        let timer = cx.read(|cx| app.shell.read(cx).focus_ctrl().read(cx).timer().clone());
+        assert_eq!(timer.kind, FocusKind::ShortBreak);
+        assert!(timer.is_running());
+        for _ in 0..12 {
+            click_label(&app, cx, "Long break");
+            click_label(&app, cx, "Short break");
+        }
+        assert_eq!(
+            cx.update_window(app.window, |_, window, cx| window.notifications(cx).len())
+                .expect("window"),
+            0,
+            "Repeated mode clicks must never stack notifications"
+        );
+        assert!(
+            cx.update_window(app.window, |_, window, _| {
+                window.try_find("focus-mode-hint").is_none()
+            })
+            .expect("window")
+        );
+        assert_eq!(
+            cx.read(|cx| app.shell.read(cx).focus_ctrl().read(cx).timer().clone()),
+            timer,
+            "Mode clicks must not reset or cancel a running break"
+        );
+        press(&app, cx, "space");
+        let paused = cx.read(|cx| app.shell.read(cx).focus_ctrl().read(cx).timer().clone());
+        assert!(paused.is_paused());
+        click_label(&app, cx, "Long break");
+        assert_eq!(
+            cx.read(|cx| app.shell.read(cx).focus_ctrl().read(cx).timer().clone()),
+            paused,
+            "A paused session is still protected"
+        );
+        dispatch(&app, cx, calmfold_desktop::actions::FocusReset);
+        assert!(
+            cx.update_window(app.window, |_, window, _| {
+                window.try_find("focus-mode-hint").is_none()
+            })
+            .expect("window")
+        );
+        click_label(&app, cx, "Long break");
+        assert_eq!(
+            cx.read(|cx| app.shell.read(cx).focus_ctrl().read(cx).timer().kind),
+            FocusKind::LongBreak,
+            "Reset explicitly allows a new mode"
+        );
+    }
+}
+
+#[gpui_kit::test]
+fn focus_timer_attaches_to_tasks_persists_and_shows_header_pill_off_screen(
+    cx: &mut TestAppContext,
+) {
+    let app = launch(cx);
+    let lib = library(&app, cx);
+    let task_id = cx.update(|cx| {
+        lib.update(cx, |l, cx| l.create_task("Write release notes", None, cx))
+            .expect("create task")
+    });
+
+    // Navigate to Focus via action and test Spacebar toggle + task focus.
+    dispatch(&app, cx, GoFocus);
+    assert_eq!(route(&app, cx), Route::Focus);
+    press(&app, cx, "space");
+    assert!(
+        cx.read(|cx| app
+            .shell
+            .read(cx)
+            .focus_ctrl()
+            .read(cx)
+            .timer()
+            .is_running()),
+        "Space on Focus screen should start the timer once"
+    );
+    press(&app, cx, "space");
+    assert!(
+        cx.read(|cx| app.shell.read(cx).focus_ctrl().read(cx).timer().is_paused()),
+        "Space again on Focus screen should pause the timer once"
+    );
+
+    cx.update_window(app.window, |_, window, cx| {
+        app.shell.update(cx, |s, cx| {
+            s.focus_ctrl().update(cx, |f, cx| {
+                f.reset(cx);
+                f.start_task_focus(task_id, "Write release notes", window, cx);
+            });
+        });
+    })
+    .expect("window");
+    cx.run_until_parked();
+
+    let is_running = cx.read(|cx| {
+        app.shell
+            .read(cx)
+            .focus_ctrl()
+            .read(cx)
+            .timer()
+            .is_running()
+    });
+    assert!(is_running, "focus timer should be running");
+
+    // Switching away to Notes keeps the timer running and shows the title-bar pill.
+    dispatch(&app, cx, GoNotes);
+    let pill_visible = cx
+        .update_window(app.window, |_, window, _| {
+            window.try_find("focus-pill-open").is_some()
+        })
+        .expect("window");
+    assert!(
+        pill_visible,
+        "active focus pill should appear in title bar off Focus screen"
+    );
+
+    // Pause via action, finish, and verify the pill hides when idle.
+    dispatch(&app, cx, FocusToggle);
+    assert!(
+        cx.read(|cx| app.shell.read(cx).focus_ctrl().read(cx).timer().is_paused()),
+        "FocusToggle action should pause a running timer"
+    );
+
+    cx.update_window(app.window, |_, window, cx| {
+        app.shell.update(cx, |s, cx| {
+            s.focus_ctrl().update(cx, |f, cx| {
+                f.finish_now(true, cx).expect("finish");
+            });
+            s.navigate(Route::Focus, window, cx);
+        });
+    })
+    .expect("window");
+    cx.run_until_parked();
+
+    let stats = cx.read(|cx| {
+        lib.read(cx)
+            .focus_stats_for_task(task_id)
+            .expect("focus stats")
+    });
+    assert_eq!(stats.sessions, 1, "completed session should be persisted");
+    let pill_hidden = cx
+        .update_window(app.window, |_, window, _| {
+            window.try_find("focus-pill-open").is_none()
+        })
+        .expect("window");
+    assert!(pill_hidden, "header pill should hide when idle");
 }

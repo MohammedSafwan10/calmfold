@@ -19,6 +19,7 @@ path = "src/main.rs"
 winresource = "0.1"
 
 [dependencies]
+tempfile.workspace = true
 calmfold-core.workspace = true
 calmfold-storage.workspace = true
 calmfold-ui.workspace = true
@@ -31,6 +32,7 @@ two-face.workspace = true
 mermaid-rs-renderer.workspace = true
 os-spellcheck.workspace = true
 anyhow.workspace = true
+ureq.workspace = true
 directories.workspace = true
 jiff.workspace = true
 chrono.workspace = true

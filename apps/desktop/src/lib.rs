@@ -6,15 +6,18 @@
 //! so tests exercise the real app.
 
 pub mod actions;
+pub mod focus;
 pub mod holidays;
 pub mod library;
 pub mod markdown_io;
 pub mod nav;
+pub mod navigation;
 pub mod paths;
 #[cfg(feature = "perf")]
 pub mod perf;
 pub mod shell;
 pub mod ui_state;
+pub mod updates;
 pub mod vault;
 pub mod vault_prefs;
 pub mod views;
@@ -57,6 +60,11 @@ pub fn start(
 ) -> Result<(AnyWindowHandle, Entity<AppShell>)> {
     gpui_kit::init(cx);
     calmfold_ui::init(paths.appearance.clone(), cx);
+    ui_state::initialize_navigation(
+        &paths.data_dir,
+        calmfold_ui::appearance::settings(cx).developer_tools,
+        paths.existing_database,
+    );
     vault_prefs::init(&paths.data_dir, cx);
     // The note editor's own keys first: ours are bound after, so they win on a tie.
     zorite_editor::bind_keys(cx);
@@ -80,10 +88,13 @@ pub fn start(
         app_id: Some("com.nexdark.calmfold".into()),
         ..TitleBar::window_options()
     };
+    let paths_data_dir = paths.data_dir.clone();
     let (window, shell) = gpui_kit::open_window(options, cx, |window, cx| {
         cx.new(|cx| AppShell::new(library, paths, window, cx))
     })?;
     AppShell::install(&shell, window, cx);
+    // After the window: an update found at startup shows its notice there.
+    updates::init(&paths_data_dir, cx);
     {
         let shell = shell.downgrade();
         window.update(cx, |_, window, cx| {
@@ -106,6 +117,15 @@ pub fn start(
         window.update(cx, |_, window, cx| {
             shell.update(cx, |s, cx| s.navigate(route, window, cx))
         })?;
+        // Existing review hook: open the Workspace settings directly.
+        if route == views::Route::Settings
+            && std::env::var("CALMFOLD_DEV_SETTINGS")
+                .is_ok_and(|v| v.eq_ignore_ascii_case("workspace"))
+        {
+            window.update(cx, |_, w, cx| {
+                w.dispatch_action(Box::new(actions::CustomizeSidebar), cx)
+            })?;
+        }
         // CALMFOLD_DEV_SOURCE=1 with route=notes: open the first note as Markdown source.
         if route == views::Route::Notes && std::env::var_os("CALMFOLD_DEV_SOURCE").is_some() {
             window.update(cx, |_, window, cx| {
@@ -303,6 +323,11 @@ fn dev_vault(window: AnyWindowHandle, shell: Entity<AppShell>, password: String,
                 .timer(std::time::Duration::from_millis(300))
                 .await;
             _ = window.update(cx, |_, window, cx| {
+                if shell.read(cx).route() == views::Route::Developer {
+                    let developer = shell.read(cx).developer().clone();
+                    developer.update(cx, |d, cx| d.select_for_dev(&title, window, cx));
+                    return;
+                }
                 let passwords = shell.read(cx).passwords().clone();
                 passwords.update(cx, |p, cx| p.select_for_dev(&title, window, cx));
             });

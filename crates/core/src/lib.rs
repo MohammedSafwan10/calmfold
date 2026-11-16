@@ -5,6 +5,7 @@
 //! time in, which keeps every rule deterministic and testable.
 
 pub mod clock;
+pub mod developer;
 mod error;
 pub mod event;
 pub mod event_quick_add;

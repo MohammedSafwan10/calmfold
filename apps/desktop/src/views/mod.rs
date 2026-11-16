@@ -5,9 +5,12 @@ pub mod calendar;
 pub mod calendar_grid;
 pub mod calendar_layout;
 pub mod code_highlight;
+pub mod developer;
 pub mod diagram;
+pub mod environment;
 pub mod event_detail;
 pub mod event_trash;
+pub mod focus;
 pub mod habit_detail;
 pub mod habit_insights_view;
 pub mod habit_widgets;
@@ -25,6 +28,7 @@ pub mod today_layout;
 pub mod vault_generator;
 pub mod vault_item;
 pub mod vault_recovery;
+pub mod workspace_settings;
 
 use calmfold_core::NoteId;
 
@@ -36,18 +40,22 @@ pub enum Route {
     Tasks,
     Calendar,
     Habits,
+    Focus,
     Passwords,
+    Developer,
     Settings,
 }
 
 impl Route {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Today,
         Self::Notes,
         Self::Tasks,
         Self::Calendar,
         Self::Habits,
+        Self::Focus,
         Self::Passwords,
+        Self::Developer,
         Self::Settings,
     ];
 
@@ -67,7 +75,9 @@ impl Route {
             Self::Tasks => "Tasks",
             Self::Calendar => "Calendar",
             Self::Habits => "Habits",
+            Self::Focus => "Focus",
             Self::Passwords => "Passwords",
+            Self::Developer => "Developer",
             Self::Settings => "Settings",
         }
     }
@@ -78,6 +88,7 @@ impl Route {
 pub enum Navigate {
     To(Route),
     OpenNote(NoteId),
+    ProjectTasks(calmfold_core::ProjectId),
 }
 
 /// Formats a due date relative to `today`: "Today", "Tomorrow", "Yesterday",

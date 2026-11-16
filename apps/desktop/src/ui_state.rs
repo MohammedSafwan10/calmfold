@@ -57,6 +57,7 @@ impl Default for PanelLayout {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LayoutState {
+    pub navigation: Option<crate::navigation::SidebarPreferences>,
     /// Expanded sidebar width in logical pixels.
     pub sidebar_width: f32,
     pub sidebar_collapsed: bool,
@@ -114,6 +115,7 @@ impl LayoutState {
 impl Default for LayoutState {
     fn default() -> Self {
         Self {
+            navigation: None,
             sidebar_width: Self::DEFAULT_SIDEBAR,
             sidebar_collapsed: false,
             panels: BTreeMap::new(),
@@ -125,6 +127,22 @@ impl Default for LayoutState {
 #[must_use]
 pub fn layout_file(data_dir: &Path) -> PathBuf {
     data_dir.join("layout.json")
+}
+
+/// Run before first-launch appearance defaults are persisted. Legacy users keep
+/// their sidebar; only genuinely fresh preference folders get the quiet preset.
+pub fn initialize_navigation(data_dir: &Path, developer: bool, existing_database: bool) {
+    let file = layout_file(data_dir);
+    let existing = existing_database || file.exists() || data_dir.join("appearance.json").exists();
+    let mut state = LayoutState::load(&file);
+    if state.navigation.is_none() {
+        state.navigation = Some(if existing {
+            crate::navigation::SidebarPreferences::legacy(developer)
+        } else {
+            crate::navigation::SidebarPreferences::default()
+        });
+        state.save(&file);
+    }
 }
 
 /// Shared layout owner. Views read it in `render` and call its setters; it
@@ -152,6 +170,22 @@ impl LayoutStore {
     #[must_use]
     pub fn state(&self) -> &LayoutState {
         &self.state
+    }
+
+    pub fn navigation(&self) -> crate::navigation::SidebarPreferences {
+        self.state.navigation.clone().unwrap_or_default()
+    }
+    pub fn edit_navigation(
+        &mut self,
+        edit: impl FnOnce(&mut crate::navigation::SidebarPreferences),
+        cx: &mut Context<Self>,
+    ) {
+        let mut next = self.navigation();
+        edit(&mut next);
+        if self.state.navigation.as_ref() != Some(&next) {
+            self.state.navigation = Some(next);
+            self.changed(cx);
+        }
     }
 
     #[must_use]
@@ -215,6 +249,48 @@ impl LayoutStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_preferences_migrate_once_preserve_layout_and_persist() {
+        let fresh = tempfile::tempdir().expect("dir");
+        initialize_navigation(fresh.path(), true, false);
+        assert_eq!(
+            LayoutState::load(&layout_file(fresh.path()))
+                .navigation
+                .expect("prefs")
+                .visible,
+            ["today", "notes", "tasks", "calendar"]
+        );
+        let old = tempfile::tempdir().expect("dir");
+        let path = layout_file(old.path());
+        fs::write(&path, r#"{"sidebar_width":280,"sidebar_collapsed":true}"#).expect("old layout");
+        initialize_navigation(old.path(), false, true);
+        let mut saved = LayoutState::load(&path);
+        assert_eq!(saved.sidebar_width, 280.);
+        assert!(saved.sidebar_collapsed);
+        let prefs = saved.navigation.as_mut().expect("prefs");
+        assert!(!prefs.is_visible("developer"));
+        assert!(prefs.is_visible("focus"));
+        prefs.set_visible("notes", false);
+        prefs.move_to("passwords", 0);
+        prefs.start_page = "notes".into();
+        saved.save(&path);
+        initialize_navigation(old.path(), true, true);
+        assert_eq!(
+            LayoutState::load(&path),
+            saved,
+            "migration never overwrites an existing customization"
+        );
+        let only_db = tempfile::tempdir().expect("dir");
+        initialize_navigation(only_db.path(), true, true);
+        assert!(
+            LayoutState::load(&layout_file(only_db.path()))
+                .navigation
+                .expect("prefs")
+                .is_visible("developer"),
+            "existing databases without preferences keep prior entries"
+        );
+    }
 
     #[test]
     fn round_trips_and_clamps() {

@@ -27,18 +27,25 @@ use gpui_kit::{
 };
 
 use crate::actions::{
-    ChangeMasterPassword, CreateRecoveryKey, ExportNotes, ExportVaultBackup, FindInNote, FindNext,
-    FindPrevious, GeneratePassword, GoCalendar, GoHabits, GoNotes, GoPasswords, GoSettings,
-    GoTasks, GoToday, ImportCalendar, ImportNotes, LockVault, NewEvent, NewHabit, NewLogin,
-    NewNote, NewProject, NewTask, OpenCommandPalette, OpenDailyNote, RestoreVaultBackup,
-    ShowDeletedEvents, ShowVaultArchives, ToggleListPanel, ToggleMarkdownSource, ToggleSidebar,
-    UseDarkTheme, UseLightTheme, UseSystemTheme,
+    ChangeMasterPassword, CheckForUpdates, CopyProjectEnvironment, CreateRecoveryKey,
+    CustomizeSidebar, ExportNotes, ExportProjectEnvironment, ExportVaultBackup, FindInNote,
+    FindNext, FindPrevious, FocusFinish, FocusReset, FocusToggle, GeneratePassword, GoCalendar,
+    GoDeveloper, GoFocus, GoHabits, GoNotes, GoPasswords, GoSettings, GoTasks, GoToday,
+    ImportCalendar, ImportNotes, ImportProjectEnvironment, LockVault, NewDeveloperProject,
+    NewEvent, NewHabit, NewLogin, NewNote, NewProject, NewProjectSecrets, NewTask,
+    OpenCommandPalette, OpenDailyNote, PasteProjectEnvironment, RestartToUpdate,
+    RestoreVaultBackup, ShowDeletedEvents, ShowVaultArchives, ToggleArchivedDeveloperProjects,
+    ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseDarkTheme, UseLightTheme,
+    UseSystemTheme,
 };
+use crate::focus::FocusController;
 use crate::library::{Library, LibraryEvent};
 use crate::nav::{self, Badge, NavTarget};
 use crate::paths::AppPaths;
 use crate::ui_state::{self, LayoutState, LayoutStore};
 use crate::views::calendar::CalendarView;
+use crate::views::developer::DeveloperView;
+use crate::views::focus::FocusView;
 use crate::views::habits::HabitsView;
 use crate::views::notes::NotesView;
 use crate::views::passwords::PasswordsView;
@@ -61,6 +68,14 @@ impl Render for ResizeSidebar {
     }
 }
 
+#[derive(Clone, Copy)]
+enum EnvironmentCommand {
+    Import,
+    Paste,
+    Copy,
+    Export,
+}
+
 pub struct AppShell {
     route: Route,
     layout: Entity<LayoutStore>,
@@ -74,6 +89,9 @@ pub struct AppShell {
     tasks: Entity<TasksView>,
     calendar: Entity<CalendarView>,
     habits: Entity<HabitsView>,
+    focus_ctrl: Entity<FocusController>,
+    focus_view: Entity<FocusView>,
+    developer: Entity<DeveloperView>,
     passwords: Entity<PasswordsView>,
     settings: Entity<SettingsView>,
     focus: FocusHandle,
@@ -101,11 +119,20 @@ impl AppShell {
         let tasks = cx.new(|cx| TasksView::new(library.clone(), window, cx));
         let calendar = cx.new(|cx| CalendarView::new(library.clone(), window, cx));
         let habits = cx.new(|cx| HabitsView::new(library.clone(), window, cx));
+        let focus_ctrl = cx.new(|_| FocusController::new(library.clone()));
+        crate::focus::install(&focus_ctrl, cx);
+        let focus_view =
+            cx.new(|cx| FocusView::new(library.clone(), focus_ctrl.clone(), window, cx));
         let passwords = cx.new(|cx| PasswordsView::new(library.clone(), window, cx));
-        let settings = cx.new(|cx| SettingsView::new(paths.data_dir.clone(), cx));
+        let developer = cx.new(|cx| DeveloperView::new(library.clone(), window, cx));
+        let settings = cx.new(|cx| SettingsView::new(paths.data_dir.clone(), layout.clone(), cx));
 
         let subscriptions = vec![
+            cx.subscribe_in(&developer, window, |this, _, nav, window, cx| {
+                this.handle_nav(*nav, window, cx)
+            }),
             cx.observe(&layout, |_, _, cx| cx.notify()),
+            cx.observe(&focus_ctrl, |_, _, cx| cx.notify()),
             cx.subscribe_in(&today, window, |this, _, nav, window, cx| {
                 this.handle_nav(*nav, window, cx)
             }),
@@ -153,11 +180,13 @@ impl AppShell {
                         .update(cx, |tasks, cx| tasks.refresh_if_new_day(cx));
                     this.calendar.update(cx, |calendar, cx| calendar.reload(cx));
                     this.habits.update(cx, |habits, cx| habits.reload(cx));
+                    this.focus_view.update(cx, |focus, cx| focus.reload(cx));
                     this.refresh_badges(cx);
                 }
             }),
         ];
 
+        let startup = layout.read(cx).navigation().startup_route();
         let mut this = Self {
             route: Route::Today,
             layout,
@@ -170,12 +199,16 @@ impl AppShell {
             tasks,
             calendar,
             habits,
+            focus_ctrl,
+            focus_view,
             passwords,
+            developer,
             settings,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
         this.refresh_badges(cx);
+        this.navigate(startup, window, cx);
         this
     }
 
@@ -279,9 +312,26 @@ impl AppShell {
             window,
             shell: shell.downgrade(),
         });
+        // One quiet notice when an update is ready or a manual check ends.
+        let mut last = crate::updates::Status::Idle;
+        cx.observe_global::<crate::updates::Updates>(move |cx| {
+            let status = crate::updates::status(cx);
+            if status == last {
+                return;
+            }
+            last = status.clone();
+            _ = window.update(cx, |_, window, cx| update_notice(&status, window, cx));
+        })
+        .detach();
     }
 
     pub fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
+        if self.route == Route::Developer
+            && route != Route::Developer
+            && !self.developer.update(cx, |d, cx| d.flush(window, cx))
+        {
+            return;
+        }
         self.route = route;
         match route {
             Route::Today => self.today.update(cx, |today, cx| today.reload(cx)),
@@ -290,6 +340,8 @@ impl AppShell {
                 .update(cx, |notes, cx| notes.ensure_selection(window, cx)),
             Route::Calendar => self.calendar.update(cx, |c, cx| c.reload(cx)),
             Route::Habits => self.habits.update(cx, |h, cx| h.reload(cx)),
+            Route::Focus => self.focus_view.update(cx, |f, cx| f.reload(cx)),
+            Route::Developer => self.developer.update(cx, |d, cx| d.reload(window, cx)),
             Route::Passwords => {}
             Route::Tasks | Route::Settings => {}
         }
@@ -304,6 +356,8 @@ impl AppShell {
             Route::Tasks => self.tasks.focus_handle(cx),
             Route::Calendar => self.calendar.focus_handle(cx),
             Route::Habits => self.habits.focus_handle(cx),
+            Route::Focus => self.focus_view.focus_handle(cx),
+            Route::Developer => self.developer.focus_handle(cx),
             Route::Passwords => {
                 // The field that matters: master password, unlock, or search.
                 self.passwords
@@ -319,6 +373,11 @@ impl AppShell {
         match nav {
             Navigate::To(route) => self.navigate(route, window, cx),
             Navigate::OpenNote(id) => self.open_note(id, window, cx),
+            Navigate::ProjectTasks(id) => {
+                self.navigate(Route::Tasks, window, cx);
+                self.tasks
+                    .update(cx, |tasks, cx| tasks.show_project(id, cx));
+            }
         }
     }
 
@@ -407,6 +466,60 @@ impl AppShell {
 
     pub fn habits(&self) -> &Entity<HabitsView> {
         &self.habits
+    }
+
+    pub fn developer(&self) -> &Entity<DeveloperView> {
+        &self.developer
+    }
+
+    fn environment_command(
+        &mut self,
+        command: EnvironmentCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane = match self.route {
+            Route::Developer => self.developer.read(cx).pane().clone(),
+            Route::Passwords => self.passwords.read(cx).pane().clone(),
+            _ => {
+                window.push_notification(
+                    "Open a project secrets item in Developer or Passwords first.",
+                    cx,
+                );
+                return;
+            }
+        };
+        let editor = pane.read(cx).environment_editor().clone();
+        if !editor.read(cx).is_active() {
+            window.push_notification("Open a project secrets item first.", cx);
+            return;
+        }
+        if matches!(
+            command,
+            EnvironmentCommand::Import | EnvironmentCommand::Paste
+        ) && !pane.read(cx).is_editing()
+        {
+            window.push_notification("Edit this item before importing variables.", cx);
+            return;
+        }
+        if matches!(command, EnvironmentCommand::Export) && pane.read(cx).is_editing() {
+            window.push_notification("Save this item before exporting.", cx);
+            return;
+        }
+        editor.update(cx, |editor, cx| match command {
+            EnvironmentCommand::Import => editor.import(window, cx),
+            EnvironmentCommand::Paste => editor.paste(cx),
+            EnvironmentCommand::Copy => editor.copy_all(window, cx),
+            EnvironmentCommand::Export => editor.export(window, cx),
+        });
+    }
+
+    pub fn focus_view(&self) -> &Entity<FocusView> {
+        &self.focus_view
+    }
+
+    pub fn focus_ctrl(&self) -> &Entity<FocusController> {
+        &self.focus_ctrl
     }
 
     pub fn passwords(&self) -> &Entity<PasswordsView> {
@@ -535,82 +648,123 @@ impl AppShell {
             }
         };
 
-        let groups: Vec<SidebarGroup<SidebarMenu>> = nav::SECTIONS
+        let preferences = self.layout.read(cx).navigation();
+        let ordered = preferences.ordered();
+        let hidden: Vec<_> = ordered
             .iter()
-            .map(|section| {
-                let items = section.entries.iter().map(|entry| {
-                    let route = entry.route;
-                    let children: Vec<SidebarMenuItem> = entry
-                        .children
-                        .iter()
-                        .map(|child| {
-                            let target = child.target;
-                            SidebarMenuItem::new(child.label)
-                                .active(self.is_target_active(target, cx))
-                                .suffix(count_suffix(self.badge_count(child.badge)))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_target(target, window, cx)
-                                }))
-                        })
-                        .collect();
-                    let mut children = children;
-                    if entry.dynamic == Some(nav::DynamicChildren::Projects) {
-                        for (project, open) in self.library.read(cx).projects() {
-                            let target = NavTarget::Project(project.id());
-                            children.push(
-                                SidebarMenuItem::new(gpui_kit::SharedString::from(
-                                    project.name().to_owned(),
-                                ))
-                                .icon(Lucide::FolderKanban)
-                                .active(self.is_target_active(target, cx))
-                                .suffix(count_suffix(open))
-                                .on_click(cx.listener(
-                                    move |this, _, window, cx| this.open_target(target, window, cx),
-                                )),
-                            );
-                        }
-                        children.push(
-                            SidebarMenuItem::new("New project")
-                                .icon(Lucide::Plus)
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.new_project(window, cx)),
-                                ),
-                        );
-                    }
-                    if entry.dynamic == Some(nav::DynamicChildren::VaultTags) {
-                        let tags = self.library.read(cx).vault_tags();
-                        let current = self.passwords.read(cx).tag().map(str::to_owned);
-                        for (tag, n) in tags.into_iter().take(SIDEBAR_TAGS) {
-                            let active = self.route == Route::Passwords
-                                && current.as_deref() == Some(tag.as_str());
-                            let label = gpui_kit::SharedString::from(format!("#{tag}"));
-                            children.push(
-                                SidebarMenuItem::new(label)
-                                    .active(active)
-                                    .suffix(count_suffix(n))
+            .copied()
+            .filter(|e| !preferences.is_visible(e.id))
+            .collect();
+        let groups: Vec<SidebarGroup<SidebarMenu>> = std::iter::once(())
+            .map(|()| {
+                let mut items: Vec<_> = ordered
+                    .iter()
+                    .copied()
+                    .filter(|entry| preferences.is_visible(entry.id))
+                    .map(|entry| {
+                        let route = entry.route;
+                        let children: Vec<SidebarMenuItem> = entry
+                            .children
+                            .iter()
+                            .map(|child| {
+                                let target = child.target;
+                                SidebarMenuItem::new(child.label)
+                                    .active(self.is_target_active(target, cx))
+                                    .suffix(count_suffix(self.badge_count(child.badge)))
                                     .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.navigate(Route::Passwords, window, cx);
-                                        let tag = tag.clone();
-                                        this.passwords
-                                            .update(cx, |p, cx| p.set_tag(Some(tag), window, cx));
+                                        this.open_target(target, window, cx)
+                                    }))
+                            })
+                            .collect();
+                        let mut children = children;
+                        if entry.dynamic == Some(nav::DynamicChildren::Projects) {
+                            for (project, open) in self.library.read(cx).projects() {
+                                let target = NavTarget::Project(project.id());
+                                children.push(
+                                    SidebarMenuItem::new(gpui_kit::SharedString::from(
+                                        project.name().to_owned(),
+                                    ))
+                                    .icon(Lucide::FolderKanban)
+                                    .active(self.is_target_active(target, cx))
+                                    .suffix(count_suffix(open))
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.open_target(target, window, cx)
+                                        },
+                                    )),
+                                );
+                            }
+                            children.push(
+                                SidebarMenuItem::new("New project")
+                                    .icon(Lucide::Plus)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.new_project(window, cx)
                                     })),
                             );
                         }
-                    }
-                    let has_children = !children.is_empty();
-                    SidebarMenuItem::new(entry.label)
-                        .icon(entry.icon)
-                        .active(self.route == route && !has_children)
-                        .default_open(self.route == route)
-                        .suffix(count_suffix(self.badge_count(entry.badge)))
-                        .children(children)
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| {
+                        if entry.dynamic == Some(nav::DynamicChildren::VaultTags) {
+                            let tags = self.library.read(cx).vault_tags();
+                            let current = self.passwords.read(cx).tag().map(str::to_owned);
+                            for (tag, n) in tags.into_iter().take(SIDEBAR_TAGS) {
+                                let active = self.route == Route::Passwords
+                                    && current.as_deref() == Some(tag.as_str());
+                                let label = gpui_kit::SharedString::from(format!("#{tag}"));
+                                children.push(
+                                    SidebarMenuItem::new(label)
+                                        .active(active)
+                                        .suffix(count_suffix(n))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.navigate(Route::Passwords, window, cx);
+                                            let tag = tag.clone();
+                                            this.passwords.update(cx, |p, cx| {
+                                                p.set_tag(Some(tag), window, cx)
+                                            });
+                                        })),
+                                );
+                            }
+                        }
+                        let has_children = !children.is_empty();
+                        SidebarMenuItem::new(entry.label)
+                            .icon(entry.icon)
+                            .active(self.route == route && !has_children)
+                            .default_open(self.route == route)
+                            .suffix(count_suffix(self.badge_count(entry.badge)))
+                            .children(children)
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 this.navigate(route, window, cx)
-                            }),
-                        )
-                });
-                SidebarGroup::new(section.label).child(SidebarMenu::new().children(items))
+                            }))
+                    })
+                    .collect();
+                if !hidden.is_empty() {
+                    let mut children: Vec<_> = hidden
+                        .iter()
+                        .map(|entry| {
+                            let action = entry.action;
+                            SidebarMenuItem::new(entry.label)
+                                .icon(entry.icon)
+                                .active(self.route == entry.route)
+                                .on_click(move |_, w, cx| w.dispatch_action(action(), cx))
+                        })
+                        .collect();
+                    children.push(
+                        SidebarMenuItem::new("Customize sidebar…")
+                            .icon(Lucide::Settings)
+                            .on_click(|_, w, cx| w.dispatch_action(Box::new(CustomizeSidebar), cx)),
+                    );
+                    items.push(
+                        SidebarMenuItem::new("More")
+                            .accessibility_label("More features")
+                            .icon(Lucide::Ellipsis)
+                            .click_to_toggle(!collapsed)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if collapsed {
+                                    this.toggle_sidebar(cx);
+                                }
+                            }))
+                            .children(children),
+                    );
+                }
+                SidebarGroup::new("Workspace").child(SidebarMenu::new().children(items))
             })
             .collect();
 
@@ -696,11 +850,30 @@ impl AppShell {
     }
 
     fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_focus = (self.route != Route::Focus)
+            .then(|| {
+                let ctrl = self.focus_ctrl.read(cx);
+                let t = ctrl.timer();
+                t.is_active().then(|| {
+                    let remaining =
+                        calmfold_core::format_mm_ss(t.remaining_secs(calmfold_core::clock::now()));
+                    let running = t.is_running();
+                    let label = if t.label.is_empty() {
+                        t.kind.label().to_owned()
+                    } else {
+                        t.label.clone()
+                    };
+                    (remaining, running, label)
+                })
+            })
+            .flatten();
+
         TitleBar::new().child(
             h_flex()
                 .w_full()
                 .pr_2()
                 .items_center()
+                .justify_between()
                 // Panel toggles live here so they never move when a panel collapses.
                 // `occlude` keeps the title bar's drag area out from under them:
                 // Windows hit-tests every hitbox under the pointer, and without
@@ -730,7 +903,66 @@ impl AppShell {
                                     ),
                             )
                         }),
-                ),
+                )
+                .when_some(active_focus, |bar, (remaining, running, label)| {
+                    let theme = cx.theme();
+                    bar.child(
+                        h_flex()
+                            .id("title-bar-focus-pill")
+                            .occlude()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Button::new("focus-pill-open")
+                                    .ghost()
+                                    .xsmall()
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .min_w_0()
+                                            .child(
+                                                div()
+                                                    .size(rems(0.375))
+                                                    .flex_shrink_0()
+                                                    .rounded_full()
+                                                    .bg(if running {
+                                                        theme.primary
+                                                    } else {
+                                                        theme.muted_foreground
+                                                    }),
+                                            )
+                                            .child(div().flex_shrink_0().text_xs().child(remaining))
+                                            .child(
+                                                div()
+                                                    .min_w_0()
+                                                    .max_w(rems(14.))
+                                                    .truncate()
+                                                    .text_xs()
+                                                    .text_color(theme.muted_foreground)
+                                                    .child(label),
+                                            ),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.navigate(Route::Focus, window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("focus-pill-toggle")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(if running { Lucide::Pause } else { Lucide::Play })
+                                    .tooltip(if running {
+                                        "Pause focus"
+                                    } else {
+                                        "Resume focus"
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.focus_ctrl.update(cx, |f, cx| f.toggle(window, cx));
+                                    })),
+                            ),
+                    )
+                }),
         )
     }
 }
@@ -835,6 +1067,78 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["routine", "streak", "check in"],
         ),
         cmd(
+            "Go to Developer",
+            Lucide::Code,
+            Box::new(GoDeveloper),
+            &["projects", "environment", "secrets", "env"],
+        ),
+        cmd(
+            "New developer project",
+            Lucide::FolderPlus,
+            Box::new(NewDeveloperProject),
+            &["developer", "project"],
+        ),
+        cmd(
+            "Show / hide archived developer projects",
+            Lucide::Archive,
+            Box::new(ToggleArchivedDeveloperProjects),
+            &["developer", "archive", "restore"],
+        ),
+        cmd(
+            "New project secrets",
+            Lucide::KeyRound,
+            Box::new(NewProjectSecrets),
+            &["developer", "env", "environment"],
+        ),
+        cmd(
+            "Import environment file…",
+            Lucide::Code,
+            Box::new(ImportProjectEnvironment),
+            &["dotenv", "env", "secrets"],
+        ),
+        cmd(
+            "Paste environment variables",
+            Lucide::Code,
+            Box::new(PasteProjectEnvironment),
+            &["dotenv", "env", "secrets"],
+        ),
+        cmd(
+            "Copy environment as .env",
+            Lucide::Copy,
+            Box::new(CopyProjectEnvironment),
+            &["dotenv", "env", "secrets"],
+        ),
+        cmd(
+            "Export environment file…",
+            Lucide::Code,
+            Box::new(ExportProjectEnvironment),
+            &["dotenv", "env", "secrets"],
+        ),
+        cmd(
+            "Go to Focus",
+            Lucide::Timer,
+            Box::new(GoFocus),
+            &["pomodoro", "timer", "deep work"],
+        ),
+        cmd(
+            "Start / pause focus",
+            Lucide::Play,
+            Box::new(FocusToggle),
+            &["pomodoro", "timer"],
+        ),
+        cmd(
+            "Reset focus timer",
+            Lucide::RotateCcw,
+            Box::new(FocusReset),
+            &["pomodoro", "timer"],
+        ),
+        cmd(
+            "Finish focus session",
+            Lucide::Check,
+            Box::new(FocusFinish),
+            &["pomodoro", "timer", "log"],
+        ),
+        cmd(
             "Go to Passwords",
             Lucide::KeyRound,
             Box::new(GoPasswords),
@@ -889,10 +1193,29 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["vault", "old vault", "restore"],
         ),
         cmd(
+            "Check for updates",
+            Lucide::RefreshCw,
+            Box::new(CheckForUpdates),
+            &["update", "new version", "upgrade"],
+        ),
+        cmd(
             "Open settings",
             Lucide::Settings,
             Box::new(GoSettings),
             &["preferences"],
+        ),
+        cmd(
+            "Customize sidebar",
+            Lucide::PanelLeft,
+            Box::new(CustomizeSidebar),
+            &[
+                "workspace",
+                "sidebar",
+                "hide",
+                "show",
+                "reorder",
+                "features",
+            ],
         ),
         cmd(
             "Toggle sidebar",
@@ -943,6 +1266,40 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
 ///
 /// Deferred: app-level action handlers run while the window is still borrowed
 /// by the event dispatch, so updating it directly would silently fail.
+/// The notice for an update status change (nothing for the quiet ones).
+fn update_notice(status: &crate::updates::Status, window: &mut Window, cx: &mut App) {
+    use crate::updates::Status;
+    use gpui_kit::component::notification::{Notification, NotificationType};
+    let notification = match status {
+        Status::Ready { version, .. } => Notification::new()
+            .message(format!(
+                "Calmfold {version} is ready. It installs when you restart."
+            ))
+            .action(|_, _, cx| {
+                Button::new("update-restart")
+                    .outline()
+                    .xsmall()
+                    .label("Restart now")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        window.dispatch_action(Box::new(RestartToUpdate), cx);
+                        this.dismiss(window, cx);
+                    }))
+            })
+            .autohide(false),
+        Status::Available { version } => Notification::new().message(format!(
+            "Calmfold {version} is out. Download it from calmfold.nexdark.com."
+        )),
+        Status::UpToDate if crate::updates::manual_pending(cx) => Notification::new().message(
+            format!("Calmfold {} is up to date.", env!("CARGO_PKG_VERSION")),
+        ),
+        Status::Failed { message } => Notification::new()
+            .with_type(NotificationType::Error)
+            .message(message.clone()),
+        _ => return,
+    };
+    window.push_notification(notification, cx);
+}
+
 fn with_shell(
     cx: &mut App,
     f: impl FnOnce(&mut AppShell, &mut Window, &mut Context<AppShell>) + 'static,
@@ -987,6 +1344,69 @@ pub fn register_commands(cx: &mut App) {
     });
     cx.on_action(|_: &GoHabits, cx| with_shell(cx, |s, w, cx| s.navigate(Route::Habits, w, cx)));
     cx.on_action(|_: &NewHabit, cx| with_shell(cx, |s, w, cx| s.new_habit(w, cx)));
+    cx.on_action(|_: &GoDeveloper, cx| {
+        with_shell(cx, |s, w, cx| s.navigate(Route::Developer, w, cx))
+    });
+    cx.on_action(|_: &NewDeveloperProject, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.navigate(Route::Developer, w, cx);
+            s.developer.update(cx, |d, cx| d.begin_new(w, cx));
+        })
+    });
+    cx.on_action(|_: &NewProjectSecrets, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.navigate(Route::Developer, w, cx);
+            s.developer.update(cx, |d, cx| d.new_environment(w, cx));
+        })
+    });
+    cx.on_action(|_: &ToggleArchivedDeveloperProjects, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.navigate(Route::Developer, w, cx);
+            s.developer.update(cx, |d, cx| d.toggle_archived(w, cx));
+        })
+    });
+    cx.on_action(|_: &ImportProjectEnvironment, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.environment_command(EnvironmentCommand::Import, w, cx)
+        })
+    });
+    cx.on_action(|_: &PasteProjectEnvironment, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.environment_command(EnvironmentCommand::Paste, w, cx)
+        })
+    });
+    cx.on_action(|_: &CopyProjectEnvironment, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.environment_command(EnvironmentCommand::Copy, w, cx)
+        })
+    });
+    cx.on_action(|_: &ExportProjectEnvironment, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.environment_command(EnvironmentCommand::Export, w, cx)
+        })
+    });
+    cx.on_action(|_: &GoFocus, cx| with_shell(cx, |s, w, cx| s.navigate(Route::Focus, w, cx)));
+    cx.on_action(|_: &FocusToggle, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.focus_ctrl.update(cx, |f, cx| f.toggle(w, cx));
+        })
+    });
+    cx.on_action(|_: &FocusReset, cx| {
+        with_shell(cx, |s, _, cx| {
+            s.focus_ctrl.update(cx, |f, cx| f.reset(cx));
+        })
+    });
+    cx.on_action(|_: &FocusFinish, cx| {
+        with_shell(cx, |s, w, cx| {
+            if let Err(err) = s.focus_ctrl.update(cx, |f, cx| f.finish_now(true, cx)) {
+                calmfold_ui::feedback::error_toast(
+                    format!("Couldn't save focus session: {err}"),
+                    w,
+                    cx,
+                );
+            }
+        })
+    });
     cx.on_action(|_: &GoPasswords, cx| {
         with_shell(cx, |s, w, cx| s.navigate(Route::Passwords, w, cx))
     });
@@ -1048,8 +1468,25 @@ pub fn register_commands(cx: &mut App) {
             crate::views::vault_generator::open_generator(None, &library, w, cx);
         })
     });
+    cx.on_action(|_: &CheckForUpdates, cx| crate::updates::check(true, cx));
+    cx.on_action(|_: &RestartToUpdate, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.save_everything(cx);
+            match crate::updates::apply(cx) {
+                Ok(()) => cx.quit(),
+                Err(err) => calmfold_ui::feedback::error_toast(format!("{err:#}"), w, cx),
+            }
+        })
+    });
     cx.on_action(|_: &GoSettings, cx| {
         with_shell(cx, |s, w, cx| s.navigate(Route::Settings, w, cx))
+    });
+    cx.on_action(|_: &CustomizeSidebar, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.settings
+                .update(cx, |settings, cx| settings.open_workspace(cx));
+            s.navigate(Route::Settings, w, cx);
+        })
     });
     cx.on_action(|_: &ToggleSidebar, cx| with_shell(cx, |s, _, cx| s.toggle_sidebar(cx)));
     cx.on_action(|_: &ToggleListPanel, cx| {
@@ -1122,6 +1559,8 @@ impl Render for AppShell {
             Route::Tasks => self.tasks.clone().into(),
             Route::Calendar => self.calendar.clone().into(),
             Route::Habits => self.habits.clone().into(),
+            Route::Focus => self.focus_view.clone().into(),
+            Route::Developer => self.developer.clone().into(),
             Route::Passwords => self.passwords.clone().into(),
             Route::Settings => self.settings.clone().into(),
         };

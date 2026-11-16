@@ -25,6 +25,7 @@ const LEGACY_DATABASE: &str = "keepstone.sqlite3";
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
+    pub existing_database: bool,
     pub data_dir: PathBuf,
     pub database: PathBuf,
     pub appearance: PathBuf,
@@ -61,6 +62,7 @@ impl AppPaths {
     #[must_use]
     pub fn in_dir(data_dir: PathBuf) -> Self {
         Self {
+            existing_database: data_dir.join(DATABASE).exists(),
             database: data_dir.join(DATABASE),
             appearance: data_dir.join("appearance.json"),
             data_dir,

@@ -74,6 +74,7 @@ icon_assets!(
         Dices,
         RefreshCw,
         Sparkles,
+        Square,
         ChevronRight,
         SlidersHorizontal,
         ChartColumn,
@@ -112,6 +113,7 @@ icon_assets!(
         Sun,
         SunMoon,
         Sunrise,
+        Timer,
         Trash,
         TriangleAlert,
     ]

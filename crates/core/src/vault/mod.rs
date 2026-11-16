@@ -7,6 +7,7 @@
 //! only ever sees ciphertext. Secret-bearing types zero their memory on drop
 //! and print `[redacted]` in `Debug`.
 
+pub mod environment;
 pub mod generator;
 pub mod health;
 pub mod import;
@@ -36,7 +37,7 @@ pub const PASSWORD_HISTORY: usize = 10;
 /// Custom fields per item.
 pub const MAX_CUSTOM_FIELDS: usize = 30;
 /// Serialized format version (bump with a migration in `from_json`).
-const FORMAT: u8 = 1;
+const FORMAT: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -155,6 +156,9 @@ pub struct ItemFields {
     pub tags: Vec<String>,
     /// Extra fields, in the order the user arranged them.
     pub custom: Vec<CustomField>,
+    /// Dedicated environment sets are not subject to the generic custom-field cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<environment::EnvironmentSecrets>,
     /// Which template made it (for its icon and suggested fields).
     #[zeroize(skip)]
     pub template: Option<template::Template>,
@@ -180,6 +184,13 @@ impl ItemFields {
     /// Trims and checks every field. URLs and tags drop blanks and duplicates.
     fn normalized(&self) -> DomainResult<Self> {
         let mut f = self.clone();
+        if f.environment.is_some() && f.kind != ItemKind::Note {
+            return Err(DomainError::InvalidEnvironment);
+        }
+        if let Some(env) = &f.environment {
+            env.validate()
+                .map_err(|_| DomainError::InvalidEnvironment)?;
+        }
         f.title = normalize_title(&f.title)?;
         for field in [
             &mut f.username,
@@ -340,7 +351,7 @@ fn ts(ms: i64) -> Timestamp {
 impl VaultItem {
     pub fn new(fields: &ItemFields, now: Timestamp) -> DomainResult<Self> {
         Ok(Self {
-            v: FORMAT,
+            v: if fields.environment.is_some() { 2 } else { 1 },
             id: VaultItemId::new(),
             fields: fields.normalized()?,
             favorite: false,
@@ -449,6 +460,9 @@ impl VaultItem {
             }
             self.password_changed_at = ms(now);
         }
+        if next.environment.is_some() {
+            self.v = FORMAT;
+        }
         self.fields = next;
         self.updated_at = ms(now);
         Ok(true)
@@ -496,8 +510,18 @@ impl VaultItem {
     /// AAD it was sealed with); a mismatch means the blob was moved.
     pub fn from_json(json: &[u8], id: VaultItemId) -> DomainResult<Self> {
         let item: Self = serde_json::from_slice(json).map_err(|_| DomainError::Corrupt)?;
-        if item.id != id || item.v == 0 || item.v > FORMAT {
+        if item.id != id
+            || item.v == 0
+            || item.v > FORMAT
+            || (item.fields.environment.is_some() && item.v < 2)
+        {
             return Err(DomainError::Corrupt);
+        }
+        if let Some(env) = &item.fields.environment {
+            if item.fields.kind != ItemKind::Note {
+                return Err(DomainError::Corrupt);
+            }
+            env.validate().map_err(|_| DomainError::Corrupt)?;
         }
         Ok(item)
     }
@@ -507,6 +531,9 @@ impl VaultItem {
     #[must_use]
     pub fn subtitle(&self) -> String {
         let f = &self.fields;
+        if f.environment.is_some() {
+            return "Project secrets".to_owned();
+        }
         match f.kind {
             ItemKind::Login if !f.username.is_empty() => f.username.clone(),
             ItemKind::Login => f.urls.first().map(|u| host(u)).unwrap_or_default(),
@@ -643,6 +670,43 @@ mod tests {
             Some(DomainError::Corrupt)
         );
         assert!(VaultItem::from_json(b"{not json", item.id()).is_err());
+    }
+
+    #[test]
+    fn environment_items_are_versioned_and_never_truncated_or_searched() {
+        use environment::EnvironmentSecrets;
+        let old = VaultItem::new(&login("Existing", "", "pw"), now()).expect("old");
+        let old_json = old.to_json().expect("json");
+        let old_value: serde_json::Value = serde_json::from_slice(&old_json).expect("value");
+        assert_eq!(old_value["v"], 1);
+        assert!(!String::from_utf8_lossy(&old_json).contains("environment"));
+        let source = (0..200)
+            .map(|i| format!("K{i}=unique-secret-{i}\n"))
+            .collect::<String>();
+        let fields = ItemFields {
+            title: "Project configuration".into(),
+            environment: Some(EnvironmentSecrets::parse(&source).expect("parse")),
+            ..ItemFields::new(ItemKind::Note)
+        };
+        let mut item = VaultItem::new(&fields, now()).expect("new");
+        assert_eq!(item.matches("unique-secret"), None);
+        let mut renamed = fields.clone();
+        renamed.title = "Renamed".into();
+        item.update(&renamed, now()).expect("update");
+        let json = item.to_json().expect("json");
+        let decoded = VaultItem::from_json(&json, item.id()).expect("read");
+        assert_eq!(decoded.fields().environment, fields.environment);
+        let mut value: serde_json::Value = serde_json::from_slice(&json).expect("value");
+        assert_eq!(value["v"], 2);
+        value["v"] = 1.into();
+        assert!(
+            VaultItem::from_json(&serde_json::to_vec(&value).expect("json"), item.id()).is_err()
+        );
+        value["v"] = 2.into();
+        value["fields"]["environment"]["variables"][0]["key"] = "INVALID-KEY".into();
+        assert!(
+            VaultItem::from_json(&serde_json::to_vec(&value).expect("json"), item.id()).is_err()
+        );
     }
 
     #[test]

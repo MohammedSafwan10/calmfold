@@ -1,7 +1,7 @@
 //! Settings screen, built on GPUI Kit's searchable `Settings` component.
 //!
-//! Pages: Appearance, General, Today, Calendar, Keyboard, About. Add a feature's settings as a
-//! new `SettingPage` (or group) here; the search box covers every page.
+//! Pages: General, Workspace, Appearance, Features, Privacy & data, Keyboard,
+//! About. Feature preferences stay grouped under Features; search covers all pages.
 
 use std::path::PathBuf;
 
@@ -21,9 +21,9 @@ use gpui_kit::component::setting::{
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, Context, FocusHandle, Focusable, InteractiveElement as _, IntoElement, Keystroke,
+    App, Context, Entity, FocusHandle, Focusable, InteractiveElement as _, IntoElement, Keystroke,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    TestSupportExt as _, Window, div,
+    Subscription, TestSupportExt as _, Window, div,
 };
 
 use crate::actions::{
@@ -31,6 +31,11 @@ use crate::actions::{
 };
 
 pub struct SettingsView {
+    reorder_focus: std::collections::BTreeMap<&'static str, (FocusHandle, FocusHandle)>,
+    layout: Entity<crate::ui_state::LayoutStore>,
+    generation: u64,
+    initial_page: usize,
+    _layout_observer: Subscription,
     data_dir: PathBuf,
     focus: FocusHandle,
     /// Created on first render (it needs a window).
@@ -38,12 +43,29 @@ pub struct SettingsView {
 }
 
 impl SettingsView {
-    pub fn new(data_dir: PathBuf, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        data_dir: PathBuf,
+        layout: Entity<crate::ui_state::LayoutStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let observer = cx.observe(&layout, |_, _, cx| cx.notify());
         Self {
+            reorder_focus: crate::nav::entries()
+                .map(|e| (e.id, (cx.focus_handle(), cx.focus_handle())))
+                .collect(),
+            layout,
+            generation: 0,
+            initial_page: 0,
+            _layout_observer: observer,
             data_dir,
             focus: cx.focus_handle(),
             holiday_pickers: None,
         }
+    }
+    pub fn open_workspace(&mut self, cx: &mut Context<Self>) {
+        self.initial_page = 1;
+        self.generation = self.generation.wrapping_add(1);
+        cx.notify();
     }
 
     fn appearance_page() -> SettingPage {
@@ -227,18 +249,6 @@ impl SettingsView {
         )
         .keywords(["animation", "accessibility"]);
 
-        let spelling = SettingItem::new(
-            "Check spelling",
-            SettingField::switch(
-                |cx| appearance::settings(cx).spell_check,
-                |on, cx| appearance::update(cx, |s| s.spell_check = on),
-            ),
-        )
-        .description(
-            "Underlines misspelled words in notes. Right-click one for suggestions. Code, links and tags are skipped.",
-        )
-        .keywords(["spelling", "spellcheck", "typo", "dictionary"]);
-
         let reset = SettingItem::render(|_, _, _| {
             h_flex()
                 .w_full()
@@ -254,11 +264,8 @@ impl SettingsView {
         })
         .keywords(["reset", "default"]);
 
-        // Calm order: how it looks (theme), how text reads, how it's laid out,
-        // then the two behaviour switches.
         SettingPage::new("Appearance")
             .icon(Lucide::Palette)
-            .default_open(true)
             .group(SettingGroup::new().title("Theme").items(vec![mode]))
             .group(SettingGroup::new().title("Light theme").items(vec![light]))
             .group(SettingGroup::new().title("Dark theme").items(vec![dark]))
@@ -270,8 +277,8 @@ impl SettingsView {
             .group(SettingGroup::new().title("Layout").items(vec![width]))
             .group(
                 SettingGroup::new()
-                    .title("Writing and motion")
-                    .items(vec![spelling, motion]),
+                    .title("Accessibility")
+                    .items(vec![motion]),
             )
             .group(
                 SettingGroup::new()
@@ -280,7 +287,23 @@ impl SettingsView {
             )
     }
 
-    fn general_page(data_dir: PathBuf) -> SettingPage {
+    fn notes_group() -> SettingGroup {
+        let spelling = SettingItem::new(
+            "Check spelling",
+            SettingField::switch(
+                |cx| appearance::settings(cx).spell_check,
+                |on, cx| appearance::update(cx, |s| s.spell_check = on),
+            ),
+        )
+        .description(
+            "Underlines misspelled words in notes. Right-click one for suggestions. Code, links and tags are skipped.",
+        )
+        .keywords(["spelling", "spellcheck", "typo", "dictionary"]);
+
+        SettingGroup::new().title("Notes").item(spelling)
+    }
+
+    fn privacy_page(data_dir: PathBuf) -> SettingPage {
         let shown = SharedString::from(data_dir.display().to_string());
         let location = SettingItem::new(
             "Data folder",
@@ -300,15 +323,18 @@ impl SettingsView {
         .description(shown)
         .keywords(["storage", "database", "backup", "location"]);
 
-        SettingPage::new("General").icon(Lucide::HardDrive).group(
-            SettingGroup::new()
-                .title("Storage")
-                .item(location)
-                .footer(|_, _| "Everything stays on this device. Sync is not set up yet."),
-        )
+        SettingPage::new("Privacy & data")
+            .icon(Lucide::ShieldCheck)
+            .groups(Self::password_groups())
+            .group(
+                SettingGroup::new()
+                    .title("Storage")
+                    .item(location)
+                    .footer(|_, _| "Everything stays on this device. Sync is not set up yet."),
+            )
     }
 
-    fn today_page() -> SettingPage {
+    fn today_group() -> SettingGroup {
         use crate::views::today_layout::{TodaySection, moved, resolve};
         let rows = SettingItem::render(|_, _, cx| {
             let prefs = appearance::settings(cx);
@@ -416,18 +442,13 @@ impl SettingsView {
                 .into_any_element()
         });
         let _ = TodaySection::ALL;
-        SettingPage::new("Today")
-            .icon(Lucide::House)
-            .group(
-                SettingGroup::new()
-                    .title("Sections")
-                    .items(vec![rows])
-                    .footer(|_, _| "Half-width sections sit side by side on wide windows."),
-            )
-            .group(SettingGroup::new().items(vec![reset]))
+        SettingGroup::new()
+            .title("Today")
+            .items(vec![rows, reset])
+            .footer(|_, _| "Half-width sections sit side by side on wide windows.")
     }
 
-    fn passwords_page() -> SettingPage {
+    fn password_groups() -> Vec<SettingGroup> {
         use calmfold_core::vault::lock::{AutoLock, ClipboardClear};
         let auto: &'static [(AutoLock, &'static str)] = &[
             (AutoLock::OneMinute, "1 min"),
@@ -549,21 +570,19 @@ impl SettingsView {
         )
         .description("A copy of your vault that stays encrypted. It opens with the master password you have when you save it.")
         .keywords(["backup", "export", "restore", "vault", "copy"]);
-        SettingPage::new("Passwords")
-            .icon(Lucide::KeyRound)
-            .group(
-                SettingGroup::new()
-                    .title("Security")
-                    .items(vec![auto_lock, hide, clipboard]),
-            )
-            .group(
-                SettingGroup::new()
-                    .title("Vault")
-                    .items(vec![master, recovery, backup, archives]),
-            )
+        vec![
+            SettingGroup::new()
+                .title("Password security")
+                .items(vec![auto_lock, hide, clipboard]),
+            SettingGroup::new()
+                .title("Vault & backups")
+                .items(vec![master, recovery, backup, archives]),
+        ]
     }
 
-    fn calendar_page(holidays: &crate::views::holiday_settings::HolidayPickers) -> SettingPage {
+    fn calendar_groups(
+        holidays: &crate::views::holiday_settings::HolidayPickers,
+    ) -> Vec<SettingGroup> {
         let week = SettingItem::new(
             "Week starts on",
             SettingField::render(|_, _, cx| {
@@ -604,10 +623,12 @@ impl SettingsView {
             "Events that repeat 3 or more times a week. In the month view they show as small dots.",
         )
         .keywords(["calendar", "routine", "repeat", "noise", "hide"]);
-        SettingPage::new("Calendar")
-            .icon(Lucide::CalendarDays)
-            .group(SettingGroup::new().items(vec![week, clock, routines]))
-            .group(crate::views::holiday_settings::holiday_group(holidays))
+        vec![
+            SettingGroup::new()
+                .title("Calendar")
+                .items(vec![week, clock, routines]),
+            crate::views::holiday_settings::holiday_group(holidays),
+        ]
     }
 
     fn keyboard_page() -> SettingPage {
@@ -648,6 +669,14 @@ impl SettingsView {
         groups.push(
             SettingGroup::new().title("Habits").items(
                 HABIT_SHORTCUTS
+                    .iter()
+                    .map(|s| key_row(s.keys, s.label))
+                    .collect::<Vec<_>>(),
+            ),
+        );
+        groups.push(
+            SettingGroup::new().title("Focus").items(
+                crate::actions::FOCUS_SHORTCUTS
                     .iter()
                     .map(|s| key_row(s.keys, s.label))
                     .collect::<Vec<_>>(),
@@ -745,10 +774,67 @@ impl SettingsView {
                 )
                 .into_any_element()
         });
+        let updates = SettingItem::new(
+            "Updates",
+            SettingField::render(|_, _, cx| {
+                use crate::updates::Status;
+                let (text, busy) = match crate::updates::status(cx) {
+                    Status::Checking => ("Checking…".to_owned(), true),
+                    Status::Downloading { version } => (format!("Downloading {version}…"), true),
+                    Status::Ready { version, .. } => {
+                        (format!("{version} installs when you restart"), false)
+                    }
+                    Status::Available { version } => (format!("{version} is available"), false),
+                    Status::UpToDate => ("Up to date".to_owned(), false),
+                    Status::Failed { .. } => ("Couldn't check".to_owned(), false),
+                    Status::Idle => (String::new(), false),
+                };
+                let ready = matches!(crate::updates::status(cx), Status::Ready { .. });
+                h_flex()
+                    .gap_3()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(text),
+                    )
+                    .child(if ready {
+                        Button::new("set-update-restart")
+                            .small()
+                            .primary()
+                            .label("Restart to update")
+                            .on_click(|_, window, cx| {
+                                window
+                                    .dispatch_action(Box::new(crate::actions::RestartToUpdate), cx)
+                            })
+                    } else {
+                        Button::new("set-update-check")
+                            .small()
+                            .label("Check now")
+                            .disabled(busy)
+                            .on_click(|_, window, cx| {
+                                window
+                                    .dispatch_action(Box::new(crate::actions::CheckForUpdates), cx)
+                            })
+                    })
+                    .into_any_element()
+            }),
+        )
+        .description("New versions are signed by Nexdark Labs and checked before they install.")
+        .keywords(["update", "upgrade", "new version", "version"]);
+        let automatic = SettingItem::new(
+            "Check for updates automatically",
+            SettingField::switch(crate::updates::automatic, crate::updates::set_automatic),
+        )
+        .description(
+            "Once a day. Updates download in the background and install only when you restart.",
+        )
+        .keywords(["update", "automatic", "background"]);
         SettingPage::new("About").icon(Lucide::Info).group(
-            SettingGroup::new()
-                .title("Calmfold")
-                .items(vec![header, version, maker, fonts, icons]),
+            SettingGroup::new().title("Calmfold").items(vec![
+                header, version, updates, automatic, maker, fonts, icons,
+            ]),
         )
     }
 }
@@ -917,14 +1003,27 @@ impl Render for SettingsView {
             return div();
         };
         div().track_focus(&self.focus).size_full().child(
-            Settings::new("calmfold-settings")
+            Settings::new(("calmfold-settings", self.generation))
+                .sidebar_width(window.rem_size() * 13.)
+                .default_selected_index(gpui_kit::component::setting::SelectIndex {
+                    page_ix: self.initial_page,
+                    group_ix: None,
+                })
                 .with_group_variant(GroupBoxVariant::Outline)
                 .pages(vec![
+                    super::workspace_settings::general_page(self.layout.clone()),
+                    super::workspace_settings::workspace_page(
+                        self.layout.clone(),
+                        &self.reorder_focus,
+                        cx,
+                    ),
                     Self::appearance_page(),
-                    Self::general_page(self.data_dir.clone()),
-                    Self::today_page(),
-                    Self::passwords_page(),
-                    Self::calendar_page(pickers),
+                    SettingPage::new("Features")
+                        .icon(Lucide::SlidersHorizontal)
+                        .group(Self::notes_group())
+                        .group(Self::today_group())
+                        .groups(Self::calendar_groups(pickers)),
+                    Self::privacy_page(self.data_dir.clone()),
                     Self::keyboard_page(),
                     Self::about_page(),
                 ]),

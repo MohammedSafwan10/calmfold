@@ -237,6 +237,9 @@ impl PasswordsView {
 
     pub fn set_filter(&mut self, filter: VaultFilter, window: &mut Window, cx: &mut Context<Self>) {
         if self.filter != filter || self.tag.is_some() {
+            if !self.flush_edit(window, cx) {
+                return;
+            }
             self.filter = filter;
             self.tag = None;
             self.selected = None;
@@ -251,6 +254,9 @@ impl PasswordsView {
 
     /// Shows items with `tag` (from the sidebar), across all kinds.
     pub fn set_tag(&mut self, tag: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.flush_edit(window, cx) {
+            return;
+        }
         self.filter = VaultFilter::All;
         self.tag = tag;
         self.selected = None;
@@ -403,14 +409,21 @@ impl PasswordsView {
     }
 
     fn select(&mut self, id: Option<VaultItemId>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pane.read(cx).is_editing() && self.selected != id {
-            // Leaving an edit saves it, like closing a sheet.
-            self.pane.update(cx, |p, cx| p.save(window, cx));
+        if self.selected != id && !self.flush_edit(window, cx) {
+            return;
         }
         self.selected = id;
         self.pane.update(cx, |p, cx| p.show(id, window, cx));
         self.scroll_to_selection();
         cx.notify();
+    }
+
+    // Navigation must keep an invalid draft open so the user can correct it.
+    fn flush_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.pane.read(cx).is_editing() {
+            self.pane.update(cx, |p, cx| p.save(window, cx));
+        }
+        !self.pane.read(cx).is_editing()
     }
 
     fn scroll_to_selection(&self) {
@@ -794,6 +807,9 @@ impl PasswordsView {
     }
 
     fn new_item(&mut self, kind: ItemKind, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.flush_edit(window, cx) {
+            return;
+        }
         self.selected = None;
         self.pane.update(cx, |p, cx| p.start_new(kind, window, cx));
         cx.notify();
@@ -805,6 +821,9 @@ impl PasswordsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.flush_edit(window, cx) {
+            return;
+        }
         self.selected = None;
         self.pane
             .update(cx, |p, cx| p.start_template(template, window, cx));
@@ -1286,7 +1305,7 @@ pub fn template_icon(t: Template) -> Lucide {
         Template::Note => Lucide::StickyNote,
         Template::Wifi => Lucide::Wifi,
         Template::License => Lucide::BadgeCheck,
-        Template::ApiKey => Lucide::Code,
+        Template::ApiKey | Template::Environment => Lucide::Code,
         Template::SshKey => Lucide::Terminal,
         Template::Identity => Lucide::IdCard,
         Template::Authenticator => Lucide::ShieldCheck,

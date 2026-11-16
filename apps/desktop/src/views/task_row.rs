@@ -100,6 +100,7 @@ pub fn task_row(
 
     let menu = task_menu_builder(
         id,
+        task.title().to_owned(),
         task.priority(),
         task.status(),
         task.due(),
@@ -186,6 +187,7 @@ pub fn task_row(
 #[allow(clippy::too_many_arguments)]
 fn task_menu_builder(
     id: TaskId,
+    title: String,
     priority: Priority,
     status: TaskStatus,
     due: Option<Date>,
@@ -267,6 +269,7 @@ fn task_menu_builder(
             let prio_lib = library.clone();
             let trash_lib = library.clone();
 
+            let focus_title = title.clone();
             menu.item(
                 PopupMenuItem::new("Open details")
                     .icon(Lucide::PanelRightOpen)
@@ -274,6 +277,15 @@ fn task_menu_builder(
                         open_task_detail(id, details_lib.clone(), window, cx)
                     }),
             )
+            .when(status.is_open(), |m| {
+                m.item(
+                    PopupMenuItem::new("Start focus")
+                        .icon(Lucide::Timer)
+                        .on_click(move |_, window, cx| {
+                            crate::focus::start_task_focus(id, &focus_title, window, cx);
+                        }),
+                )
+            })
             .separator()
             .submenu_with_icon(
                 Some(Lucide::CalendarDays.into()),

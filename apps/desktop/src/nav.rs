@@ -41,6 +41,9 @@ pub struct NavChild {
 }
 
 pub struct NavEntry {
+    pub id: &'static str,
+    pub default_visible: bool,
+    pub action: fn() -> Box<dyn gpui_kit::Action>,
     pub label: &'static str,
     pub icon: Lucide,
     pub route: Route,
@@ -68,6 +71,9 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
     label: "Workspace",
     entries: &[
         NavEntry {
+            id: "today",
+            default_visible: true,
+            action: || Box::new(crate::actions::GoToday),
             label: "Today",
             icon: Lucide::House,
             route: Route::Today,
@@ -76,6 +82,9 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
             dynamic: None,
         },
         NavEntry {
+            id: "notes",
+            default_visible: true,
+            action: || Box::new(crate::actions::GoNotes),
             label: "Notes",
             icon: Lucide::NotebookPen,
             route: Route::Notes,
@@ -100,6 +109,9 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
             dynamic: None,
         },
         NavEntry {
+            id: "tasks",
+            default_visible: true,
+            action: || Box::new(crate::actions::GoTasks),
             label: "Tasks",
             icon: Lucide::ListTodo,
             route: Route::Tasks,
@@ -134,6 +146,9 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
             dynamic: Some(DynamicChildren::Projects),
         },
         NavEntry {
+            id: "calendar",
+            default_visible: true,
+            action: || Box::new(crate::actions::GoCalendar),
             label: "Calendar",
             icon: Lucide::CalendarDays,
             route: Route::Calendar,
@@ -142,6 +157,9 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
             dynamic: None,
         },
         NavEntry {
+            id: "habits",
+            default_visible: false,
+            action: || Box::new(crate::actions::GoHabits),
             label: "Habits",
             icon: Lucide::Sprout,
             route: Route::Habits,
@@ -150,6 +168,31 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
             dynamic: None,
         },
         NavEntry {
+            id: "focus",
+            default_visible: false,
+            action: || Box::new(crate::actions::GoFocus),
+            label: "Focus",
+            icon: Lucide::Timer,
+            route: Route::Focus,
+            badge: Badge::None,
+            children: &[],
+            dynamic: None,
+        },
+        NavEntry {
+            id: "developer",
+            default_visible: false,
+            action: || Box::new(crate::actions::GoDeveloper),
+            label: "Developer",
+            icon: Lucide::Code,
+            route: Route::Developer,
+            badge: Badge::None,
+            children: &[],
+            dynamic: None,
+        },
+        NavEntry {
+            id: "passwords",
+            default_visible: false,
+            action: || Box::new(crate::actions::GoPasswords),
             label: "Passwords",
             icon: Lucide::KeyRound,
             route: Route::Passwords,
@@ -201,6 +244,10 @@ pub const SECTIONS: &[NavSection] = &[NavSection {
     ],
 }];
 
+pub fn entries() -> impl Iterator<Item = &'static NavEntry> {
+    SECTIONS.iter().flat_map(|section| section.entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +272,17 @@ mod tests {
             labels.sort_unstable();
             labels.dedup();
             assert_eq!(labels.len(), entry.children.len(), "{}", entry.label);
+        }
+    }
+    #[test]
+    fn feature_keys_are_unique_stable_and_match_routes() {
+        let entries: Vec<_> = entries().collect();
+        let mut ids: Vec<_> = entries.iter().map(|e| e.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), entries.len());
+        for entry in entries {
+            assert_eq!(Route::parse(entry.id), Some(entry.route));
         }
     }
 }

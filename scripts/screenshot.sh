@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Captures only the Calmfold window (never the whole screen) to the given path.
 # Usage: scripts/screenshot.sh /tmp/calmfold.png
+# Optional CALMFOLD_WINDOW_PID targets a disposable review app when two run.
 set -euo pipefail
 out="${1:-/tmp/calmfold.png}"
 here="$(cd "$(dirname "$0")" && pwd)"

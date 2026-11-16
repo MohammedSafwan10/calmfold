@@ -129,12 +129,16 @@ impl TaskDetail {
             }),
             // Keep status/priority/due in sync with changes made elsewhere
             // (e.g. the checkbox in the list). Text fields are left alone.
-            cx.subscribe(&library, |this, library, event, cx| {
-                if *event == LibraryEvent::TasksChanged {
+            cx.subscribe(&library, |this, library, event, cx| match event {
+                LibraryEvent::TasksChanged => {
                     this.task = library.read(cx).tasks_by_id(this.id);
                     this.subtasks = library.read(cx).subtasks(this.id);
                     cx.notify();
                 }
+                LibraryEvent::FocusChanged => {
+                    cx.notify();
+                }
+                _ => {}
             }),
             // Closing the panel drops this view: save what is still pending.
             cx.on_release(|this, cx| {
@@ -368,6 +372,49 @@ impl Render for TaskDetail {
                     .child("This task is in the trash. Restore it to edit."),
             );
         }
+        let focus_stats = self
+            .library
+            .read(cx)
+            .focus_stats_for_task(self.id)
+            .unwrap_or_default();
+        let focus_title = task.title().to_owned();
+        let focus_row = h_flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(if focus_stats.sessions == 0 {
+                        "No focus sessions yet".to_owned()
+                    } else {
+                        let word = if focus_stats.sessions == 1 {
+                            "session"
+                        } else {
+                            "sessions"
+                        };
+                        format!(
+                            "{} focused ({} {word})",
+                            calmfold_core::format_duration(focus_stats.total_secs),
+                            focus_stats.sessions
+                        )
+                    }),
+            )
+            .when(task.status().is_open(), |row| {
+                let id = self.id;
+                row.child(
+                    Button::new("detail-start-focus")
+                        .outline()
+                        .xsmall()
+                        .icon(Lucide::Timer)
+                        .label("Start focus")
+                        .on_click(move |_, window, cx| {
+                            crate::focus::start_task_focus(id, &focus_title, window, cx);
+                        }),
+                )
+            });
+
         let today = clock::today();
         let view = cx.entity().downgrade();
         let priority = segmented(
@@ -443,6 +490,12 @@ impl Render for TaskDetail {
                     .gap_2()
                     .child(section_label("Priority", cx))
                     .child(priority),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(section_label("Focus", cx))
+                    .child(focus_row),
             )
             .child(self.render_subtasks(cx))
             .child(

@@ -5,6 +5,7 @@
 //! than one table run in a transaction.
 
 mod codec;
+mod developer;
 mod error;
 mod events;
 mod focus;

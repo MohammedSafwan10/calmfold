@@ -5,6 +5,8 @@ import CoreGraphics
 import Foundation
 
 let owner = CommandLine.arguments.dropFirst().first ?? "calmfold"
+// Optional target when a disposable review app and the user's app both run.
+let targetPID = ProcessInfo.processInfo.environment["CALMFOLD_WINDOW_PID"].flatMap(Int.init)
 // Prefer on-screen windows; fall back to any window (e.g. on another Space).
 let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 let all = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
@@ -16,6 +18,7 @@ func area(_ w: [String: Any]) -> Double {
 func mine(_ w: [String: Any]) -> Bool {
     (w[kCGWindowOwnerName as String] as? String ?? "").lowercased() == owner.lowercased()
         && (w[kCGWindowLayer as String] as? Int) == 0
+        && (targetPID == nil || (w[kCGWindowOwnerPID as String] as? Int) == targetPID)
 }
 for list in [onScreen, all] {
     if let window = list.filter(mine).max(by: { area($0) < area($1) }),
