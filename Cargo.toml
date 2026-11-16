@@ -74,6 +74,11 @@ totp-rs = { version = "6", default-features = false, features = ["std", "otpauth
 zxcvbn = { version = "3.1", default-features = false }
 csv = "1.4"
 
+# Updates: minisign signatures on the update feed, SHA-256 of downloads,
+# a small blocking HTTPS client (rustls, no OpenSSL).
+minisign-verify = "0.2"
+sha2 = "0.10"
+
 # Dev
 tempfile = "3"
 

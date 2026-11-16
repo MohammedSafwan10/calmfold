@@ -23,6 +23,7 @@ pub mod recurrence;
 pub mod tags;
 pub mod task;
 mod text;
+pub mod update;
 pub mod vault;
 
 pub use error::{DomainError, DomainResult};

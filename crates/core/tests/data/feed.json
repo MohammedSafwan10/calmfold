@@ -1,0 +1,1 @@
+{"version":"0.2.0","date":"2026-12-01","notes":["Faster search."],"platforms":{"windows-x64":{"url":"https://example.com/w.zip","sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","size":5},"macos-arm64":{"url":"https://example.com/m.zip","sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","size":5}}}
