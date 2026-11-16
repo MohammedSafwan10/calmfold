@@ -101,6 +101,16 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 
 ## Log
 
+### 2026-11-16: Keep shared Kiro guides, ignore local state
+
+- `.kiro/skills` contains the checked-in, licensed GPUI reference guides required
+  by AGENTS.md (about 432 KiB). Keep these shared instructions in Git; they are
+  not application assets. Ignore other `.kiro` children by default for local
+  machine/session state. No tracked files removed or history rewritten.
+- Owner made the source repository public. Release candidate run 43872632747
+  started successfully; final native Windows proof and publication still pending.
+
+
 ### 2026-11-16: Reduce repeated CI work without weakening release gates
 
 - Restrict expensive app checks to app/build inputs, explicitly preserving the
