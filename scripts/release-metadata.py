@@ -41,7 +41,7 @@ with zipfile.ZipFile(windows[0]) as archive:
 portable=list(root.glob('*Portable.zip'))
 assert len(portable)==1
 with zipfile.ZipFile(portable[0]) as archive: verify_notices(archive,'current/')
-entries = json.loads(Path('website/src/data/changelog.json').read_text())
+entries = json.loads(Path('apps/desktop/changelog.json').read_text())
 notes = next(e for e in entries if e['version'] == version)
 platforms = {}
 for platform, artifact in [('macos-arm64', mac), ('windows-x64', windows[0])]:

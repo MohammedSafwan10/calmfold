@@ -22,9 +22,10 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
   Settings → Workspace controls sidebar order/visibility with direct arrows,
   switches and reset/Undo. Hidden features live in inline More; keyboard and
   command access remain available. General selects the startup page.
-- Website is a scaffold/assets snapshot, not a finished site: no pages yet,
-  and the release-fetch build step needs a published feed or saved release.json.
-  Astro is patched to 7.4.12; npm audit reports zero known vulnerabilities.
+- Website moved to the private repo `MohammedSafwan10/calmfold-site`
+  (with the brand explorations formerly in `output/`). The app's changelog
+  is `apps/desktop/changelog.json` (embedded in What's new, used by
+  `release-metadata.py`); the site reads it from this public repo.
 - Production updates: native Sparkle/Velopack replace the legacy installer.
   Final GPL candidate run **43918679795**, source **7d9b04f**, passes every job:
   Mac 346 tests, Windows 345, real installed upgrades/relaunch and tamper
@@ -113,6 +114,12 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
 ```
 
 ## Log
+
+### 2026-11-17: Repo split
+
+- `website/` and `output/` moved to private `calmfold-site`; changelog moved
+  to `apps/desktop/changelog.json` (paths updated in CI, release metadata,
+  What's new, testing doc). `cargo clean` + full gate: 346 tests, target 3.4 GB.
 
 ### 2026-11-16: Publish verified GPLv3 native release
 

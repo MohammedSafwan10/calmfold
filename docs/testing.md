@@ -40,7 +40,7 @@ captures only the Calmfold window. Check light and dark mode.
 - CI runs the full `scripts/check.sh` on macOS and Windows for application,
   workspace, vendored, asset/theme and quality-workflow changes. Documentation
   and unrelated website changes skip these expensive app jobs. The bundled
-  `website/src/data/changelog.json` explicitly counts as app input. Manual
+  `apps/desktop/changelog.json` explicitly counts as app input. Manual
   workflow dispatch remains available for a complete check of any revision.
 - Native updater integration runs for updater code, signed-catalog rules,
   native entry points, packaging scripts and dependency/toolchain changes.

@@ -12,7 +12,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - '.cargo/**'
-      - 'website/src/data/changelog.json'
+      - 'apps/desktop/changelog.json'
       - 'scripts/check.sh'
       - '.github/workflows/ci.yml'
   pull_request:

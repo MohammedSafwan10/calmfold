@@ -29,9 +29,8 @@ struct Section {
     emoji: String,
     items: Vec<String>,
 }
-static RELEASES: LazyLock<Result<Vec<Release>, serde_json::Error>> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../../../website/src/data/changelog.json"))
-});
+static RELEASES: LazyLock<Result<Vec<Release>, serde_json::Error>> =
+    LazyLock::new(|| serde_json::from_str(include_str!("../../changelog.json")));
 
 pub fn render(
     focus: &FocusHandle,

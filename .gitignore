@@ -42,12 +42,6 @@ Thumbs.db
 *.profraw
 lcov.info
 
-# Website build output
-/website/node_modules/
-/website/dist/
-/website/.astro/
-/website/.taste-skill/
-/website/shots/
 
 __pycache__/
 *.pyc
