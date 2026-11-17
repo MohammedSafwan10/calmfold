@@ -1,21 +1,222 @@
-# 06 Sync server (Coolify on Oracle VPS)
+# 06 Accounts, Ottero Cloud and sync
 
-Start only after notes, tasks and vault work well locally.
+Status: design, awaiting owner review. Decisions: ADR 0010.
 
-## Design
+Ottero stays fully usable without an account. **Ottero Cloud** is the paid,
+optional layer: an account, end-to-end encrypted sync across devices in real
+time, encrypted cloud backup and note history. The server never sees note,
+task, event, habit, vault or project content, and never sees the password.
 
-- `server/` crate: axum + sqlx + Postgres, Docker image, deployed by Coolify.
-- Clients push/pull encrypted change records `{id, entity, updated_at, deleted_at, blob}`.
-  Server never sees plaintext or keys.
-- Conflict handling: last-writer-wins per record first; move note bodies to a
-  CRDT (`loro`) when real-time multi-device editing matters.
-- Auth: device registration + token; account key derived separately from vault key.
+## 1. Pieces
 
-## Steps
+| Piece | Tech | Where | Repo |
+| --- | --- | --- | --- |
+| Desktop app | Rust/GPUI (this repo): native sign-up/sign-in, sync engine | user's computer | `ottero` (public) |
+| Account API | Hono + Better Auth + PostgreSQL (Node 24) | `account.nexdark.com/api` | `ottero-cloud` (private) |
+| Account and admin web | React + shadcn/ui, same origin as the API | `account.nexdark.com` | `ottero-cloud` |
+| Sync server | Rust axum + sqlx + PostgreSQL, WebSocket | `sync.nexdark.com` | `ottero-cloud` |
+| Payments | Razorpay Subscriptions + webhooks | Razorpay | — |
+| Email | Brevo over SMTP (swap to SES by config) | Brevo | — |
 
-1. [ ] `sync_state` table + change log in the client (migration)
-2. [ ] Protocol types in a shared crate, versioned
-3. [ ] Server: push/pull endpoints, health check, Dockerfile
-4. [ ] Coolify deploy, TLS, backups of Postgres
-5. [ ] Client sync loop (background, offline-tolerant), status in sidebar footer
-6. [ ] Tests: two clients converge, offline edits, deletes, clock skew
+All services run on the existing Coolify server (OCI ARM, 12 GB) with one
+PostgreSQL 17 instance, two databases (`accounts`, `sync`), nightly encrypted
+off-server backups, and Coolify health checks. The protocol crate shared by
+the app and the sync server lives in this repo (`crates/sync-protocol`, no IO)
+so the open-source client documents exactly what it sends.
+
+## 2. Sign-up and sign-in (inside the app)
+
+Sign-in is a native form in the app, not a web page, because the password is
+also the root of the encryption key and must never leave the device in a form
+that opens data. The browser is used only for billing (Razorpay Checkout) and
+the account/admin website.
+
+### Key derivation (one password, Bitwarden model)
+
+```
+salt        = random 16 bytes, created at sign-up, stored by the server, public
+master_key  = Argon2id(password, salt, m=256 MiB, t=3, p=1)   # on the device
+auth_key    = HKDF-SHA256(master_key, info="ottero auth v1")   # sent to log in
+wrap_key    = HKDF-SHA256(master_key, info="ottero wrap v1")   # never leaves device
+server stores: Argon2id(auth_key, server_salt, m=64 MiB) — never auth_key itself
+```
+
+- The server can verify a login but cannot derive `wrap_key`; a stolen
+  database only allows a slow offline guess at each password (Argon2id twice).
+- Argon2id parameters are stored per account (`kdf` record) so they can be
+  raised later; old accounts upgrade on next sign-in.
+- Passwords: 10+ characters, checked against the top breached-password list
+  on the device (no network lookup); strength meter in the form.
+
+### Flow
+
+1. **Sign up:** email + password → device derives keys → API creates the
+   account (unverified) → Brevo sends a 6-digit code (10 min, 5 tries) →
+   user types it in the app → account verified → app shows the **Recovery
+   Kit** (recovery key as text + printable PDF) and asks the user to confirm
+   they saved it.
+2. **Sign in:** email → API returns the account's public `salt`/`kdf` (a
+   fixed fake salt for unknown emails, so emails can't be enumerated) → device
+   derives `auth_key` → API checks it → session. A new device then needs the
+   account key (§3): approval from a signed-in device, or the password-derived
+   copy.
+3. **Two-factor (optional):** TOTP authenticator app or passkey as a second
+   step at sign-in. Strongly suggested in the app after the first sync.
+4. **Sessions:** short-lived access token (JWT, 15 min, EdDSA, verified by the
+   sync server against the API's JWKS) + rotating refresh token (60 days,
+   reuse detection signs out the whole family). One session per device, listed
+   and revocable. Release builds keep the refresh token in the OS keychain
+   (macOS Data Protection keychain, Windows Credential Manager); development
+   builds keep it in an encrypted file in the dev data folder and never touch
+   the keychain (security.md, Keychain policy).
+5. **Forgot password:** email code proves the inbox → the user enters the
+   **recovery key** → the device unwraps the account key and re-wraps it with
+   the new password. Without the recovery key the user can only **reset
+   Cloud**: the cloud copy is deleted and re-uploaded from a device that still
+   has the data. The app says this plainly at sign-up.
+
+### Abuse protection
+
+Per-IP and per-account rate limits on sign-in, sign-up and code checks;
+exponential back-off after failures; sign-in alerts by email for a new device;
+disposable-email block list on sign-up; all auth endpoints behind TLS only
+(HSTS), CSRF-protected cookies for the website, bearer tokens for the app.
+
+## 3. Encryption key hierarchy
+
+```
+account_key (random 256-bit, created at sign-up on the device)
+ ├─ wrapped by wrap_key           → stored on server (sign in on a new device)
+ ├─ wrapped by recovery_key       → stored on server (forgot password)
+ └─ wrapped to each device's X25519 public key (HPKE, RFC 9180)
+collection keys (random, one per data type: notes, tasks, events, habits,
+  focus, projects, settings, vault), wrapped by account_key
+item payload = XChaCha20-Poly1305(collection_key, plaintext,
+                 AAD = account_id | collection | item_id | schema_version)
+```
+
+- The existing local vault (Argon2id + XChaCha20-Poly1305, ADR 0003) keeps
+  its own master password and lock. Turning sync on stores the vault key
+  wrapped by `account_key` on the server; vault items sync as already
+  encrypted blobs, so the vault stays locked until unlocked on each device.
+- Recovery key: 32 random bytes shown as 8 groups of words (BIP39 list),
+  derived into `recovery_wrap_key` with HKDF; the server stores only its wrap.
+- Changing the password re-wraps `account_key` only; no data is re-encrypted.
+  Removing a compromised device rotates `account_key` and the collection keys
+  (re-wrap, then background re-encryption).
+- New crypto lives in `crates/crypto` with test vectors (crypto/AGENTS.md):
+  HKDF, X25519 + HPKE (`hpke` crate, audited suites only), BIP39 encoding.
+
+### New device by QR approval
+
+1. New device signs in (password) and shows a QR code: its device ID, X25519
+   public key and a 6-digit check code.
+2. A signed-in device scans or types the code, shows "Approve *MacBook Air*
+   in Mumbai?", and on approval uploads `account_key` sealed to the new
+   device's public key.
+3. The new device opens it; the server only relayed ciphertext. Without
+   another device, the password-derived wrap (§2) works on its own.
+
+## 4. Sync protocol
+
+- **Change log:** every local write appends `{collection, item_id, hlc,
+  fields_changed}` to a new `sync_outbox` table (migration `000N_sync.sql`).
+  HLC = hybrid logical clock (wall time + counter + device id), so clock skew
+  can't reorder edits.
+- **Records** (tasks, events, habits, focus sessions, projects, settings,
+  vault items): last-writer-wins **per field** by HLC; deletes are
+  tombstones kept 90 days.
+- **Note bodies:** Loro CRDT document per note. The editor still works on
+  Markdown text; on save the client diffs old/new text into Loro operations,
+  so concurrent offline edits merge instead of overwriting. Encrypted Loro
+  updates are compacted into snapshots by the client (the server can't read
+  them).
+- **Server data model:** `changes(account_id, seq bigserial, device_id,
+  collection, item_id, blob, created_at)`; clients push batches and pull
+  `seq > cursor`. Idempotent push (client change IDs), size limits per blob
+  (1 MiB) and per batch.
+- **Real time:** a WebSocket per device receives "seq advanced" notices and
+  pulls; offline devices catch up on reconnect. Fallback: poll every 60 s.
+- **Search** stays local (FTS5 on the device); the server has no index.
+- **Quotas:** Cloud includes 5 GB; history 30 days; the server reports usage
+  in the app and admin panel. Attachments (later) as encrypted 4 MiB chunks in
+  object storage.
+- **First sync** on an existing install uploads everything encrypted with a
+  progress bar; a second device downloads it, then both stay live.
+
+## 5. Plans and billing
+
+| | Free | Ottero Cloud |
+| --- | --- | --- |
+| Every feature on one computer | yes | yes |
+| Account | no | yes |
+| Encrypted sync, real time | — | yes |
+| Encrypted cloud backup, 30-day note history | — | yes |
+| QR device approval | — | yes |
+
+- Proposed prices: ₹129/month or ₹999/year (India), $3.99/month or $36/year
+  (rest of world), 14-day trial. Final numbers are the owner's call.
+- **Entitlements** table, the one source of truth the sync server checks:
+  `entitlement(user_id, plan, source = razorpay | grant | owner, status,
+  starts_at, ends_at, note, granted_by)`.
+- **Razorpay:** Subscriptions with plans per currency/interval. Upgrade opens
+  `account.nexdark.com/upgrade` (Razorpay Checkout) in the browser; the
+  webhook (`subscription.activated | charged | pending | halted | cancelled`),
+  verified by its HMAC signature and stored idempotently by event ID, updates
+  the entitlement; the app picks it up on its next token refresh. Payment
+  failure: 7-day grace period, then sync pauses (read-only cloud copy for 30
+  days, local data untouched).
+- Owner account `itzmesafwan@gmail.com`: role `owner`, entitlement source
+  `owner`, never expires.
+
+## 6. Admin panel (`account.nexdark.com/admin`)
+
+Roles: `owner` (everything), `admin` (no role changes, no deletions),
+`support` (read-only). Every action is written to an append-only audit log.
+
+- **Dashboard:** users, sign-ups over time, active syncing devices, paying
+  users, MRR (INR and USD), trials, churn, failed payments, storage.
+- **Users:** search by email/name/ID; filter by plan, status (active,
+  trial, past due, banned, unverified), sign-up date, last sync, country.
+- **User detail:** profile, verification, 2FA on/off, devices and sessions,
+  storage used, entitlements, Razorpay subscription and invoices, audit
+  history.
+- **Actions:** grant Cloud free (optionally until a date), revoke Cloud,
+  cancel the Razorpay subscription, block/unblock (signs out every session and
+  stops sync), sign out one device, resend verification, delete the account
+  (owner only, with a typed confirmation).
+- **Never available:** reading user content (it is encrypted), impersonating
+  a user, or setting a user's password.
+
+## 7. Security checklist (gate before launch)
+
+- [ ] Threat model reviewed: stolen server DB, malicious server, stolen
+      device, phishing, lost password, compromised admin account.
+- [ ] Crypto test vectors, round trips and tamper tests in `crates/crypto`.
+- [ ] Admin and owner accounts require passkey or TOTP.
+- [ ] Secrets only in Coolify environment variables; none in repos or logs;
+      logs never contain emails' codes, tokens, keys or payloads.
+- [ ] Webhook signatures verified; replayed events ignored.
+- [ ] Backups restore-tested; account deletion removes server data within 30
+      days and backups age out.
+- [ ] Privacy policy and terms updated before the first paid sign-up.
+
+## 8. Steps
+
+1. [ ] This plan + ADR 0010 reviewed by the owner.
+2. [ ] `ottero-cloud` repo; PostgreSQL + account API (Better Auth, entitlements,
+       Brevo email, rate limits) on Coolify at `account.nexdark.com`; owner
+       account; backups.
+3. [ ] App: Settings → Account (sign up, verify, sign in, sign out), key
+       derivation and recovery kit in `crates/crypto`; tokens per keychain policy.
+4. [ ] Account website + admin panel (dashboard, users, detail, actions, audit).
+5. [ ] Razorpay plans, checkout, webhooks, trial, grace period.
+6. [ ] `crates/sync-protocol`; sync server (push/pull, WebSocket, quotas)
+       at `sync.nexdark.com`.
+7. [ ] App sync engine: outbox migration, HLC, per-field LWW, Loro notes,
+       status in the sidebar footer, first sync.
+8. [ ] QR device approval, device list, key rotation on device removal,
+       account deletion.
+9. [ ] Website: Pricing section and `/pricing`, sign-in link, updated privacy.
+10. [ ] Tests: two clients converge, offline edits, deletes, clock skew,
+        tampered blobs rejected, revoked device locked out.
