@@ -114,6 +114,18 @@ debug = false
 [profile.dev.package.ottero-desktop]
 opt-level = 0
 
+# CI quality gate (scripts/check.sh with OTTERO_CHECK_PROFILE=ci): no
+# optimisation and no debug info, so a cold build takes about 40% of the time
+# the dev profile needs. Tests don't need the dev profile's optimised GPUI.
+[profile.ci]
+inherits = "dev"
+debug = false
+incremental = false
+
+[profile.ci.package."*"]
+opt-level = 0
+debug = false
+
 # Release speed with symbols, for profiling (scripts/perf.sh, `sample`).
 [profile.perf]
 inherits = "release"

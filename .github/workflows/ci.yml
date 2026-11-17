@@ -37,12 +37,24 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      # Windows: build on a Dev Drive (ReFS, no real-time antivirus scan of
+      # every build file), the main reason Windows was slower than macOS.
+      - uses: samypr100/setup-dev-drive@v4
+        if: runner.os == 'Windows'
+        with:
+          drive-size: 12GB
+          drive-format: ReFS
+          env-mapping: |
+            CARGO_TARGET_DIR,{{ DEV_DRIVE }}/target
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: quality
           cache-on-failure: true
+          workspaces: ". -> ${{ env.CARGO_TARGET_DIR || 'target' }}"
       - name: Rust toolchain (from rust-toolchain.toml)
         run: rustup show
       - name: Check
         shell: bash
+        env:
+          OTTERO_CHECK_PROFILE: ci
         run: scripts/check.sh

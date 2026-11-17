@@ -19,7 +19,28 @@ permissions:
 jobs:
   engines:
     uses: ./.github/workflows/update-probes.yml
+  # A tag on a commit whose CI already passed on both systems doesn't run
+  # the same 15-20 minute quality gate again; any other commit does.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: read
+    outputs:
+      verified: ${{ steps.ci.outputs.verified }}
+    steps:
+      - id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          ok=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+            --jq '[.check_runs[] | select((.name == "check (macos-latest)" or .name == "check (windows-latest)") and .conclusion == "success") | .name] | unique | length')
+          if [ "$ok" = "2" ]; then echo "verified=true" >> "$GITHUB_OUTPUT"; echo "CI passed on $SHA; skipping the repeat quality gate"; else echo "verified=false" >> "$GITHUB_OUTPUT"; fi
   quality:
+    needs: gate
+    if: needs.gate.outputs.verified != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -28,17 +49,29 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: samypr100/setup-dev-drive@v4
+        if: runner.os == 'Windows'
+        with:
+          drive-size: 12GB
+          drive-format: ReFS
+          env-mapping: |
+            CARGO_TARGET_DIR,{{ DEV_DRIVE }}/target
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: quality
           cache-on-failure: true
+          workspaces: ". -> ${{ env.CARGO_TARGET_DIR || 'target' }}"
       - shell: bash
+        env:
+          OTTERO_CHECK_PROFILE: ci
         run: scripts/check.sh
   build:
     env:
       OTTERO_SPARKLE_DIR: ${{ github.workspace }}/.native-tools/sparkle
-    # Do not spend time packaging a candidate whose quality/native gates failed.
+    # Do not spend time packaging a candidate whose quality/native gates failed
+    # (quality is skipped, not failed, when CI already verified this commit).
     needs: [engines, quality]
+    if: ${{ !cancelled() && needs.engines.result == 'success' && (needs.quality.result == 'success' || needs.quality.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -120,6 +153,7 @@ jobs:
           if-no-files-found: error
   catalog:
     needs: [engines, quality, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
