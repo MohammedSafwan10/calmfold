@@ -137,6 +137,23 @@ OTTERO_DEV_ROUTE=calendar OTTERO_DEV_CALENDAR=week cargo run  # debug: calendar 
 
 ## Log
 
+### 2026-11-17: Ottero 0.1.3 released; site live; faster CI
+
+- Published immutable v0.1.3 in calmfold-releases (11 assets: Mac zip, Windows
+  Setup/Portable, Velopack nupkg, signed stable.json + minisig, Sparkle appcast,
+  exact source tar from 54c3e26, LICENSE, NOTICE, SHA256SUMS). Verified locally:
+  minisign signature with RELEASE_KEY, sha256/size of both platform packages,
+  Mac bundle name/ID/feed, ran the downloaded Mac build. Windows CI proved the
+  real Calmfold.exe -> Ottero.exe Velopack upgrade and tamper rejection.
+- Repos renamed: calmfold -> ottero, calmfold-site -> ottero-site (GitHub
+  redirects). calmfold-releases keeps its name: installed apps' feed URLs.
+- Website live at https://ottero.nexdark.com (Coolify project "Ottero", app
+  ih3sfzq4hni4epwarrdj8mog, read-only deploy key; GitHub webhook deploys on push;
+  no Actions needed). In-app About and docs point to it.
+- CI: `profile.ci` (opt-level 0, no debug info; OTTERO_CHECK_PROFILE=ci in
+  check.sh), Windows Dev Drive, and release.yml skips the repeat quality gate
+  when CI already passed on the tagged commit. CI went from 15m/21m to 6m/10m.
+
 ### 2026-11-17: Save approved Ottero icon master
 
 - Owner chose concept 01 (curled charcoal otter/O). Generated a clean square

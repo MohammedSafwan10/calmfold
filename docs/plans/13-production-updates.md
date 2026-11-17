@@ -2,7 +2,7 @@
 
 Status: native engines adopted; v0.1.2 quality, installed upgrades, packaging and
 production-key signature checks pass on both OSes in run 43918679795.
-Verified assets are published as immutable v0.1.2 in calmfold-releases.
+Verified assets are published as immutable v0.1.3 (first Ottero release) in calmfold-releases.
 This checklist is evidence-based: a compiling adapter or
 unit test does not count as a successful installed-app upgrade.
 
@@ -10,8 +10,8 @@ Ottero rename (ADR 0009): bundle ID `com.nexdark.calmfold` and Velopack packId
 `Calmfold` stay; Mac executable/helper and Windows `--mainExe` become Ottero.
 - [x] Sparkle installed upgrade from Calmfold-named to Ottero-named fixture
       (same bundle ID) passes locally (`scripts/test-sparkle.py`).
-- [ ] Velopack upgrade from `Calmfold.exe` to `Ottero.exe` passes on Windows CI
-      (`update-probes.yml`) before the first Ottero release.
+- [x] Velopack upgrade from `Calmfold.exe` to `Ottero.exe` passes on Windows CI
+      (`update-probes.yml`, release run 44050007044) before the first Ottero release.
 
 ## Architecture and release boundaries
 
