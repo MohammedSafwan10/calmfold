@@ -769,7 +769,7 @@ impl SettingsView {
             "Made by",
             SettingField::render(|_, _, _| div().text_sm().child("Nexdark Labs")),
         )
-        .description("calmfold.nexdark.com");
+        .description("ottero.nexdark.com");
         let header = SettingItem::render(|_, _, cx| {
             h_flex()
                 .gap_3()

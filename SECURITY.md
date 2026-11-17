@@ -5,7 +5,7 @@ for fixes; there is no long-term support branch or formal audit claim.
 
 ## Report privately
 
-Use [GitHub's private vulnerability reporting](https://github.com/MohammedSafwan10/calmfold/security/advisories/new).
+Use [GitHub's private vulnerability reporting](https://github.com/MohammedSafwan10/ottero/security/advisories/new).
 It is enabled for this repository. Do not disclose a vulnerability in a public
 issue while it is being investigated.
 
@@ -15,7 +15,7 @@ private signing key or personal database. The maintainer will review the report;
 this small project does not promise a fixed response deadline or bug bounty.
 
 Ordinary bugs and feature requests belong in
-[Issues](https://github.com/MohammedSafwan10/calmfold/issues).
+[Issues](https://github.com/MohammedSafwan10/ottero/issues).
 
 ## What is protected
 

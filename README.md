@@ -68,8 +68,8 @@ Rust is pinned in [`rust-toolchain.toml`](rust-toolchain.toml).
 - **Windows:** MSVC Rust, Visual Studio C++ build tools and CMake.
 
 ```sh
-git clone https://github.com/MohammedSafwan10/calmfold.git
-cd calmfold   # the repository keeps its old name for now
+git clone https://github.com/MohammedSafwan10/ottero.git
+cd ottero
 cargo run
 ```
 

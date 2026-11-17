@@ -11,7 +11,7 @@ assert re.fullmatch(r'[0-9a-f]{40}',revision), 'invalid source revision'
 dirty = not os.environ.get('GITHUB_SHA') and bool(subprocess.check_output(['git','status','--porcelain','--','apps','crates','Cargo.toml','Cargo.lock','native','scripts']))
 label = 'Development base revision (uncommitted changes present)' if dirty else 'Exact build revision'
 root=Path(sys.argv[1]); root.mkdir(parents=True,exist_ok=True)
-repo='https://github.com/MohammedSafwan10/calmfold'
+repo='https://github.com/MohammedSafwan10/ottero'
 (root/'SOURCE.txt').write_text(f'''Ottero source code — GPL-3.0-only
 
 {label}: {revision}

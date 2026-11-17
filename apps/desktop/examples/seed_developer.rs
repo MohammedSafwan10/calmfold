@@ -28,7 +28,7 @@ fn main() {
         project
             .update(
                 vec![
-                    ProjectLink::new("Repository", "https://github.com/MohammedSafwan10/calmfold")
+                    ProjectLink::new("Repository", "https://github.com/MohammedSafwan10/ottero")
                         .expect("link"),
                     ProjectLink::new("Website", "https://nexdark.com").expect("link"),
                 ],
