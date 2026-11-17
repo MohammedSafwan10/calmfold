@@ -1,6 +1,6 @@
 # 0010 Accounts, encryption and sync
 
-Status: proposed (2026-11-17), awaiting owner review.
+Status: accepted (2026-11-17).
 
 ## Context
 
@@ -17,10 +17,14 @@ encrypted. Plan: `docs/plans/06-sync.md`.
    and entitlements next to billing, which Better Auth's plugins (admin, email
    OTP, two-factor, passkey, JWT/JWKS) support directly. Impersonation is
    disabled.
-2. **One password** for sign-in and encryption (Bitwarden model): Argon2id on
-   the device, HKDF into an auth key (sent, then hashed again by the server)
-   and a wrap key (never sent). No 1Password-style Secret Key, for simplicity;
-   a **recovery key** covers a forgotten password.
+2. **One password plus a Secret Key** (1Password model): the account password
+   signs in and unlocks everything, including the vault section; there is no
+   separate vault password for Cloud users. Argon2id on the device, mixed
+   with a 128-bit Secret Key the server never sees, then HKDF into an auth key
+   (sent, then hashed again by the server) and a wrap key (never sent). A new
+   device gets the Secret Key once (QR approval or the Emergency Kit); unlock
+   afterwards is the password or Touch ID / Windows Hello. A **recovery code**
+   in the Emergency Kit covers a forgotten password.
 3. **Random account key** wrapped by the password, the recovery key and each
    device (HPKE); per-collection keys under it; XChaCha20-Poly1305 per item.
 4. **Own Rust sync server** (axum + PostgreSQL): per-field last-writer-wins by
@@ -31,8 +35,10 @@ encrypted. Plan: `docs/plans/06-sync.md`.
 
 ## Consequences
 
-- Losing both the password and the recovery key means the cloud copy can only
-  be reset, not recovered. The app must say so at sign-up.
+- Losing both the password and the Emergency Kit means the cloud copy can
+  only be reset, not recovered. The app must say so at sign-up.
+- A stolen server database can't be brute-forced offline, because the Secret
+  Key is never on the server.
 - The account API is a second runtime (Node) next to the Rust sync server.
 - Better Auth stores the password verifier format we choose (the auth key);
   its built-in password hashing is applied to the auth key, never the password.

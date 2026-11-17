@@ -31,18 +31,32 @@ also the root of the encryption key and must never leave the device in a form
 that opens data. The browser is used only for billing (Razorpay Checkout) and
 the account/admin website.
 
-### Key derivation (one password, Bitwarden model)
+### Key derivation (one password + Secret Key, 1Password model)
 
 ```
 salt        = random 16 bytes, created at sign-up, stored by the server, public
-master_key  = Argon2id(password, salt, m=256 MiB, t=3, p=1)   # on the device
+secret_key  = random 128-bit, created on the device at sign-up, never sent;
+              kept in the OS keychain (release builds) and the Emergency Kit
+master_key  = Argon2id(password, salt, m=256 MiB, t=3, p=1)  XOR  HKDF(secret_key)
 auth_key    = HKDF-SHA256(master_key, info="ottero auth v1")   # sent to log in
 wrap_key    = HKDF-SHA256(master_key, info="ottero wrap v1")   # never leaves device
 server stores: Argon2id(auth_key, server_salt, m=64 MiB) — never auth_key itself
 ```
 
-- The server can verify a login but cannot derive `wrap_key`; a stolen
-  database only allows a slow offline guess at each password (Argon2id twice).
+- One password for everything: the account password also unlocks the vault
+  section. There is no second vault password for Cloud users.
+- The server can verify a login but cannot derive `wrap_key`. Because the
+  Secret Key never reaches the server, a stolen database can't be attacked
+  offline even for a weak password.
+- A device needs the Secret Key once: from a signed-in device by QR approval
+  (§3), or typed from the **Emergency Kit** (PDF: email, Secret Key, recovery
+  code). After that the device keeps it and never asks again.
+- **Unlock:** the app locks after inactivity or restart, as today. Unlock with
+  the account password, or Touch ID / Windows Hello on release builds. Notes,
+  tasks and the calendar stay open; the lock covers the vault section.
+- **Local-only users** (no account) keep today's vault master password.
+  Turning Cloud on asks for it once, re-wraps the vault key under
+  `account_key`, and from then on the account password unlocks the vault.
 - Argon2id parameters are stored per account (`kdf` record) so they can be
   raised later; old accounts upgrade on next sign-in.
 - Passwords: 10+ characters, checked against the top breached-password list
@@ -52,14 +66,13 @@ server stores: Argon2id(auth_key, server_salt, m=64 MiB) — never auth_key itse
 
 1. **Sign up:** email + password → device derives keys → API creates the
    account (unverified) → Brevo sends a 6-digit code (10 min, 5 tries) →
-   user types it in the app → account verified → app shows the **Recovery
-   Kit** (recovery key as text + printable PDF) and asks the user to confirm
-   they saved it.
+   user types it in the app → account verified → app shows the **Emergency
+   Kit** (Secret Key + recovery code, printable PDF) and asks the user to
+   confirm they saved it.
 2. **Sign in:** email → API returns the account's public `salt`/`kdf` (a
    fixed fake salt for unknown emails, so emails can't be enumerated) → device
-   derives `auth_key` → API checks it → session. A new device then needs the
-   account key (§3): approval from a signed-in device, or the password-derived
-   copy.
+   derives `auth_key` (needs the Secret Key: QR approval or Emergency Kit)
+   → API checks it → session → the device unwraps `account_key` locally.
 3. **Two-factor (optional):** TOTP authenticator app or passkey as a second
    step at sign-in. Strongly suggested in the app after the first sync.
 4. **Sessions:** short-lived access token (JWT, 15 min, EdDSA, verified by the
@@ -96,9 +109,10 @@ item payload = XChaCha20-Poly1305(collection_key, plaintext,
 ```
 
 - The existing local vault (Argon2id + XChaCha20-Poly1305, ADR 0003) keeps
-  its own master password and lock. Turning sync on stores the vault key
-  wrapped by `account_key` on the server; vault items sync as already
-  encrypted blobs, so the vault stays locked until unlocked on each device.
+  its data key. Turning Cloud on wraps that key by `account_key` (no item is
+  re-encrypted); the vault's own master password is then retired on that
+  device and the account password unlocks it. Vault items sync as encrypted
+  blobs and stay locked until the app is unlocked on each device.
 - Recovery key: 32 random bytes shown as 8 groups of words (BIP39 list),
   derived into `recovery_wrap_key` with HKDF; the server stores only its wrap.
 - Changing the password re-wraps `account_key` only; no data is re-encrypted.
@@ -109,13 +123,13 @@ item payload = XChaCha20-Poly1305(collection_key, plaintext,
 
 ### New device by QR approval
 
-1. New device signs in (password) and shows a QR code: its device ID, X25519
-   public key and a 6-digit check code.
+1. New device enters the email and password and shows a QR code: its
+   device ID, X25519 public key and a 6-digit check code.
 2. A signed-in device scans or types the code, shows "Approve *MacBook Air*
-   in Mumbai?", and on approval uploads `account_key` sealed to the new
-   device's public key.
+   in Mumbai?", and on approval sends the Secret Key and `account_key` sealed
+   to the new device's public key (HPKE).
 3. The new device opens it; the server only relayed ciphertext. Without
-   another device, the password-derived wrap (§2) works on its own.
+   another device, the user types the Secret Key from the Emergency Kit.
 
 ## 4. Sync protocol
 
