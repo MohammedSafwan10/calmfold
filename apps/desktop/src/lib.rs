@@ -16,6 +16,7 @@ pub mod navigation;
 pub mod paths;
 #[cfg(feature = "perf")]
 pub mod perf;
+pub mod private_file;
 pub mod shell;
 pub mod ui_state;
 pub mod updates;

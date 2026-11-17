@@ -1819,7 +1819,7 @@ pub fn save_kit(library: Entity<Library>, window: &mut Window, cx: &mut App) {
             let Ok(Ok(Some(path))) = path.await else {
                 return;
             };
-            let written = write_private(&path, html.as_bytes());
+            let written = crate::private_file::write_private(&path, html.as_bytes());
             _ = cx.update(|window, cx| match written {
                 Ok(()) => {
                     cx.open_with_system(&path);
@@ -1832,20 +1832,6 @@ pub fn save_kit(library: Entity<Library>, window: &mut Window, cx: &mut App) {
             });
         })
         .detach();
-}
-
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write as _;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 /// Asks for the account password, then runs `then`. Escape cancels.

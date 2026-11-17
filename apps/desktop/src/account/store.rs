@@ -11,7 +11,6 @@
 //! unlocked.
 
 use std::collections::BTreeMap;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
@@ -287,31 +286,8 @@ impl AccountFile {
     }
 }
 
-/// Writes `bytes` to a sibling temp file readable only by the user, syncs
-/// it, then renames it over `path`.
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let dir = path.parent().context("no folder")?;
-    std::fs::create_dir_all(dir)?;
-    let tmp = path.with_extension("json.tmp");
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&tmp)?;
-    #[cfg(unix)]
-    {
-        // `mode` only applies to new files; tighten a leftover temp file too.
-        use std::os::unix::fs::PermissionsExt as _;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    Ok(crate::private_file::write_private(path, bytes)?)
 }
 
 #[cfg(test)]

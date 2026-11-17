@@ -71,14 +71,14 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Next steps (in order)
 
-**Account review (2026-11-17):** resolve the P1 findings recorded in
-`/Users/admin/saf/ottero-cloud/ACCOUNT-REVIEW-2026-11-17.md` before deploying
-accounts or adding real encrypted sync data. Isolated API tests confirmed
-uncoordinated email-only credential reset, email-only OTP login and a direct
-plugin admin route bypassing owner protection/auditing. Desktop late unlock/
-refresh callbacks also lack session/generation guards (code-review finding).
-Focused checks pass: 17 account crypto tests, 6 account UI tests, API typecheck;
-these cases need additional regressions. No implementation fixes applied.
+**Latest account review (2026-11-17):** original unsafe routes now return 404;
+late-result guards/regressions are in place. New confirmed findings are in
+`/Users/admin/saf/ottero-cloud/docs/reviews/TWO-STEP-REVIEW-2026-11-17.md`:
+P1 older password-only sessions inherit admin access when another session enables
+2FA; P2 Emergency Kit overwrite retains an existing 0644 file's broad mode.
+Full local gate passes 410 tests (92 UI); API typecheck and 20 integration tests
+pass. Both findings were reproduced locally without real data/accounts/mail.
+No implementation fixes applied in this review; add regressions and fix them.
 
 **Ottero Cloud (plan 06):**
 
@@ -176,6 +176,18 @@ OTTERO_DEV_ROUTE=calendar OTTERO_DEV_CALENDAR=week cargo run  # debug: calendar 
 ```
 
 ## Log
+
+### 2026-11-17: Two-step review fixes (ottero-cloud docs/reviews/TWO-STEP-REVIEW-2026-11-17.md)
+
+- API (ottero-cloud 35d2498, deployed): confirming two-step setup ends every
+  other session of the user, so a password-only session can never become a
+  staff session; a normal two-step sign-in elsewhere ends nothing. Regression
+  covers enable, disable and re-enable, and fails on the previous code.
+- App: `private_file::write_private` writes secrets to a new 0600 temp file and
+  renames it over the target, so an existing 0644 Emergency Kit can't keep its
+  permissions; account.json uses it too. Tests cover new files, overwriting a
+  0644 file, no leftover temp files and failed writes. Windows ACLs of a saved
+  kit are not checked yet (it inherits the chosen folder's ACL).
 
 ### 2026-11-17: Two-step verification (TOTP) in the app
 
