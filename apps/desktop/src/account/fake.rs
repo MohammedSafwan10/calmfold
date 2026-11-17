@@ -8,9 +8,18 @@ use std::sync::Mutex;
 use ottero_crypto::Salt;
 use ottero_crypto::account::{AccountKdf, decode_salt};
 
+use ottero_crypto::Zeroizing;
+
 use super::client::{
-    AccountApi, ApiError, ApiResult, Cloud, KdfInfo, Me, SessionInfo, SessionToken, WrappedKeys,
+    AccountApi, ApiError, ApiResult, Cloud, KdfInfo, Me, SecondFactor, SessionInfo, SessionToken,
+    SignInOutcome, TwoStepChallenge, TwoStepSetup, WrappedKeys,
 };
+
+/// Failed codes before two-step verification locks, and for how long (as the server).
+const MAX_FAILURES: u8 = 5;
+const LOCK_SECONDS: i64 = 15 * 60;
+/// Wrong codes one sign-in attempt may try before the password is needed again.
+const MAX_CHALLENGE_ATTEMPTS: u8 = 5;
 
 struct User {
     id: String,
@@ -22,6 +31,54 @@ struct User {
     keys: Option<WrappedKeys>,
     role: String,
     cloud: Option<Cloud>,
+    two_factor: Option<TwoFactor>,
+}
+
+/// Two-step verification as the server's `twoFactor` plugin keeps it.
+struct TwoFactor {
+    /// Base32 TOTP secret (RFC 6238, SHA-1, 30 s, 6 digits).
+    secret: String,
+    /// False until a code from the app confirmed the setup.
+    verified: bool,
+    backup_codes: Vec<String>,
+    failures: u8,
+    locked_until: Option<i64>,
+}
+
+impl TwoFactor {
+    fn uri(&self, email: &str) -> String {
+        format!(
+            "otpauth://totp/Ottero:{}?secret={}&issuer=Ottero&digits=6&period=30",
+            email.replace('@', "%40"),
+            self.secret
+        )
+    }
+
+    /// The code now, as an authenticator app shows it.
+    fn code_at(&self, unix_seconds: u64) -> String {
+        ottero_core::vault::totp::parse(&self.secret)
+            .map(|otp| otp.code_at(unix_seconds).code)
+            .unwrap_or_default()
+    }
+
+    /// RFC 6238 with one step of clock drift either way, like the server.
+    fn accepts(&self, code: &str) -> bool {
+        let now = now_seconds().cast_unsigned();
+        [now.saturating_sub(30), now, now + 30]
+            .iter()
+            .any(|t| self.code_at(*t) == code)
+    }
+}
+
+fn now_seconds() -> i64 {
+    ottero_core::clock::now().as_second()
+}
+
+/// A pending second step: cookie value → email and wrong tries so far.
+struct Challenge {
+    cookie: String,
+    email: String,
+    attempts: u8,
 }
 
 #[derive(Default)]
@@ -32,6 +89,7 @@ struct State {
     next: u64,
     offline: bool,
     blocked: Vec<String>,
+    challenges: Vec<Challenge>,
 }
 
 #[derive(Default)]
@@ -99,6 +157,88 @@ impl FakeAccountApi {
         self.lock().sessions.len()
     }
 
+    /// Whether two-step verification is on (confirmed) for `email`.
+    #[must_use]
+    pub fn two_factor_on(&self, email: &str) -> bool {
+        self.lock()
+            .users
+            .get(email)
+            .and_then(|u| u.two_factor.as_ref())
+            .is_some_and(|t| t.verified)
+    }
+
+    /// The code an authenticator app would show now for `email`.
+    #[must_use]
+    pub fn authenticator_code(&self, email: &str) -> Option<String> {
+        let s = self.lock();
+        let tf = s.users.get(email)?.two_factor.as_ref()?;
+        Some(tf.code_at(now_seconds().cast_unsigned()))
+    }
+
+    /// The backup codes still unused for `email`.
+    #[must_use]
+    pub fn backup_codes(&self, email: &str) -> Vec<String> {
+        self.lock()
+            .users
+            .get(email)
+            .and_then(|u| u.two_factor.as_ref())
+            .map(|t| t.backup_codes.clone())
+            .unwrap_or_default()
+    }
+
+    /// Whether `token` is a live session (an old token stops working once
+    /// turning two-step on or off replaced it).
+    #[must_use]
+    pub fn is_session(&self, token: &SessionToken) -> bool {
+        Self::user_of(&self.lock(), token).is_ok()
+    }
+
+    fn new_session(state: &mut State, email: &str) -> SessionToken {
+        state.next += 1;
+        let raw = format!("tok{}", state.next);
+        state
+            .sessions
+            .push((raw.clone(), email.to_owned(), super::client::user_agent()));
+        SessionToken::new(format!("{raw}.sig"))
+    }
+
+    /// Ends `token`'s session and starts another for the same user, as the
+    /// server does when two-step verification is turned on or off.
+    fn replace_session(state: &mut State, token: &SessionToken, email: &str) -> SessionToken {
+        state.sessions.retain(|(t, _, _)| t != token.session_part());
+        Self::new_session(state, email)
+    }
+
+    fn new_secret(state: &mut State) -> (String, Vec<String>) {
+        const BASE32: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        const ALNUM: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        state.next += 1;
+        let mut seed = state.next.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut pick = |alphabet: &[u8]| {
+            // xorshift: deterministic, which is all a fake needs.
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            char::from(alphabet[usize::try_from(seed % alphabet.len() as u64).unwrap_or(0)])
+        };
+        let secret = (0..32).map(|_| pick(BASE32)).collect();
+        let codes = (0..10)
+            .map(|_| {
+                let a: String = (0..5).map(|_| pick(ALNUM)).collect();
+                let b: String = (0..5).map(|_| pick(ALNUM)).collect();
+                format!("{a}-{b}")
+            })
+            .collect();
+        (secret, codes)
+    }
+
+    fn check_auth(state: &State, email: &str, auth: &str) -> ApiResult<()> {
+        match state.users.get(email) {
+            Some(u) if u.auth == auth => Ok(()),
+            _ => Err(ApiError::WrongCredentials),
+        }
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
             .lock()
@@ -160,6 +300,7 @@ impl AccountApi for FakeAccountApi {
                 keys: None,
                 role: "user".into(),
                 cloud: None,
+                two_factor: None,
             },
         );
         Ok(())
@@ -187,7 +328,7 @@ impl AccountApi for FakeAccountApi {
         Ok(())
     }
 
-    fn sign_in(&self, email: &str, auth: &str) -> ApiResult<SessionToken> {
+    fn sign_in(&self, email: &str, auth: &str) -> ApiResult<SignInOutcome> {
         let mut s = self.online()?;
         if s.blocked.iter().any(|b| b == email) {
             return Err(ApiError::Blocked("This account is blocked.".into()));
@@ -199,11 +340,155 @@ impl AccountApi for FakeAccountApi {
         if !u.verified {
             return Err(ApiError::NotVerified);
         }
-        s.next += 1;
-        let raw = format!("tok{}", s.next);
-        s.sessions
-            .push((raw.clone(), email.to_owned(), super::client::user_agent()));
-        Ok(SessionToken::new(format!("{raw}.sig")))
+        if u.two_factor.as_ref().is_some_and(|t| t.verified) {
+            s.next += 1;
+            let cookie = format!("better-auth.two_factor=2fa-{}.sig", s.next);
+            s.challenges.push(Challenge {
+                cookie: cookie.clone(),
+                email: email.to_owned(),
+                attempts: 0,
+            });
+            return Ok(SignInOutcome::TwoStep(TwoStepChallenge::new(cookie)));
+        }
+        Ok(SignInOutcome::Session(Self::new_session(&mut s, email)))
+    }
+
+    fn verify_second_factor(
+        &self,
+        challenge: &TwoStepChallenge,
+        factor: SecondFactor,
+        code: &str,
+    ) -> ApiResult<SessionToken> {
+        let mut guard = self.online()?;
+        let s = &mut *guard;
+        let ix = s
+            .challenges
+            .iter()
+            .position(|c| c.cookie == challenge.expose())
+            .ok_or(ApiError::TwoStepExpired)?;
+        let email = s.challenges[ix].email.clone();
+        let now = now_seconds();
+        let tf = s
+            .users
+            .get_mut(&email)
+            .and_then(|u| u.two_factor.as_mut())
+            .filter(|t| t.verified)
+            .ok_or(ApiError::TwoStepExpired)?;
+        // The server's order: account lockout, then this attempt's budget.
+        if tf.locked_until.is_some_and(|t| t > now) {
+            return Err(ApiError::TwoStepLocked);
+        }
+        if s.challenges[ix].attempts >= MAX_CHALLENGE_ATTEMPTS {
+            s.challenges.remove(ix);
+            return Err(ApiError::TwoStepTooManyCodes);
+        }
+        let right = match factor {
+            SecondFactor::Authenticator => tf.accepts(code),
+            SecondFactor::BackupCode => match tf.backup_codes.iter().position(|c| c == code) {
+                Some(used) => {
+                    tf.backup_codes.remove(used);
+                    true
+                }
+                None => false,
+            },
+        };
+        if right {
+            tf.failures = 0;
+            tf.locked_until = None;
+            s.challenges.remove(ix);
+            return Ok(Self::new_session(s, &email));
+        }
+        tf.failures += 1;
+        if tf.failures >= MAX_FAILURES {
+            tf.locked_until = Some(now + LOCK_SECONDS);
+        }
+        s.challenges[ix].attempts += 1;
+        Err(match factor {
+            SecondFactor::Authenticator => ApiError::WrongTwoStepCode,
+            SecondFactor::BackupCode => ApiError::WrongBackupCode,
+        })
+    }
+
+    fn enable_two_factor(&self, token: &SessionToken, auth: &str) -> ApiResult<TwoStepSetup> {
+        let mut s = self.online()?;
+        let email = Self::user_of(&s, token)?;
+        Self::check_auth(&s, &email, auth)?;
+        if s.users
+            .get(&email)
+            .and_then(|u| u.two_factor.as_ref())
+            .is_some_and(|t| t.verified)
+        {
+            return Err(ApiError::TwoStepChanged);
+        }
+        let (secret, codes) = Self::new_secret(&mut s);
+        let tf = TwoFactor {
+            secret,
+            verified: false,
+            backup_codes: codes.clone(),
+            failures: 0,
+            locked_until: None,
+        };
+        let uri = tf.uri(&email);
+        if let Some(u) = s.users.get_mut(&email) {
+            u.two_factor = Some(tf);
+        }
+        TwoStepSetup::new(uri, codes)
+    }
+
+    fn confirm_two_factor(
+        &self,
+        token: &SessionToken,
+        code: &str,
+    ) -> ApiResult<Option<SessionToken>> {
+        let mut s = self.online()?;
+        let email = Self::user_of(&s, token)?;
+        let tf = s
+            .users
+            .get_mut(&email)
+            .and_then(|u| u.two_factor.as_mut())
+            .ok_or(ApiError::TwoStepChanged)?;
+        if !tf.accepts(code) {
+            return Err(ApiError::WrongTwoStepCode);
+        }
+        if tf.verified {
+            return Ok(None);
+        }
+        tf.verified = true;
+        Ok(Some(Self::replace_session(&mut s, token, &email)))
+    }
+
+    fn disable_two_factor(
+        &self,
+        token: &SessionToken,
+        auth: &str,
+    ) -> ApiResult<Option<SessionToken>> {
+        let mut s = self.online()?;
+        let email = Self::user_of(&s, token)?;
+        Self::check_auth(&s, &email, auth)?;
+        let u = s.users.get_mut(&email).ok_or(ApiError::SessionEnded)?;
+        if u.two_factor.take().is_none() {
+            return Err(ApiError::TwoStepChanged);
+        }
+        Ok(Some(Self::replace_session(&mut s, token, &email)))
+    }
+
+    fn regenerate_backup_codes(
+        &self,
+        token: &SessionToken,
+        auth: &str,
+    ) -> ApiResult<Vec<Zeroizing<String>>> {
+        let mut s = self.online()?;
+        let email = Self::user_of(&s, token)?;
+        Self::check_auth(&s, &email, auth)?;
+        let (_, codes) = Self::new_secret(&mut s);
+        let tf = s
+            .users
+            .get_mut(&email)
+            .and_then(|u| u.two_factor.as_mut())
+            .filter(|t| t.verified)
+            .ok_or(ApiError::TwoStepChanged)?;
+        tf.backup_codes.clone_from(&codes);
+        Ok(codes.into_iter().map(Zeroizing::new).collect())
     }
 
     fn me(&self, token: &SessionToken) -> ApiResult<Me> {
@@ -216,6 +501,7 @@ impl AccountApi for FakeAccountApi {
             role: u.role.clone(),
             cloud: u.cloud.clone(),
             has_keys: u.keys.is_some(),
+            two_factor: u.two_factor.as_ref().is_some_and(|t| t.verified),
         })
     }
 
@@ -265,5 +551,91 @@ impl AccountApi for FakeAccountApi {
         Self::user_of(&s, token)?;
         s.sessions.retain(|(t, _, _)| t != session_token);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const AUTH: &str = "ab";
+
+    fn signed_up(api: &FakeAccountApi) -> SessionToken {
+        let auth = AUTH.repeat(32);
+        api.sign_up("sam@example.com", "sam", &auth, "B465J6Y1apD8t4WQw10Jzg")
+            .expect("sign up");
+        let code = api.code_for("sam@example.com").expect("code");
+        api.verify_email("sam@example.com", &code)
+            .expect("verified");
+        match api.sign_in("sam@example.com", &auth).expect("in") {
+            SignInOutcome::Session(t) => t,
+            SignInOutcome::TwoStep(_) => panic!("no two-step yet"),
+        }
+    }
+
+    #[test]
+    fn two_step_follows_the_server_rules() {
+        let api = FakeAccountApi::new();
+        let auth = AUTH.repeat(32);
+        let token = signed_up(&api);
+        assert_eq!(
+            api.enable_two_factor(&token, "wrong").map(|_| ()),
+            Err(ApiError::WrongCredentials)
+        );
+        let setup = api.enable_two_factor(&token, &auth).expect("setup");
+        assert_eq!(setup.backup_codes().len(), 10);
+        assert!(
+            !api.two_factor_on("sam@example.com"),
+            "inactive until confirmed"
+        );
+        // The link's secret is what the code comes from (RFC 6238).
+        let now = now_seconds().cast_unsigned();
+        let code = ottero_core::vault::totp::parse(setup.uri())
+            .expect("link")
+            .code_at(now)
+            .code;
+        let new = api
+            .confirm_two_factor(&token, &code)
+            .expect("on")
+            .expect("replaced");
+        assert!(!api.is_session(&token) && api.is_session(&new));
+        assert!(api.me(&new).expect("me").two_factor);
+
+        let SignInOutcome::TwoStep(challenge) = api.sign_in("sam@example.com", &auth).expect("in")
+        else {
+            panic!("asks for the code");
+        };
+        let backup = setup.backup_codes()[0].to_string();
+        api.verify_second_factor(&challenge, SecondFactor::BackupCode, &backup)
+            .expect("backup code works");
+        assert_eq!(
+            api.verify_second_factor(&challenge, SecondFactor::Authenticator, &code)
+                .map(|_| ()),
+            Err(ApiError::TwoStepExpired),
+            "a challenge is used once"
+        );
+        let SignInOutcome::TwoStep(again) = api.sign_in("sam@example.com", &auth).expect("in")
+        else {
+            panic!("asks for the code");
+        };
+        assert_eq!(
+            api.verify_second_factor(&again, SecondFactor::BackupCode, &backup)
+                .map(|_| ()),
+            Err(ApiError::WrongBackupCode),
+            "backup codes are single-use"
+        );
+        for _ in 0..4 {
+            assert_eq!(
+                api.verify_second_factor(&again, SecondFactor::Authenticator, "000000")
+                    .map(|_| ()),
+                Err(ApiError::WrongTwoStepCode)
+            );
+        }
+        assert_eq!(
+            api.verify_second_factor(&again, SecondFactor::Authenticator, &code)
+                .map(|_| ()),
+            Err(ApiError::TwoStepLocked),
+            "five failures lock it"
+        );
     }
 }

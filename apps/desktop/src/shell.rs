@@ -1311,6 +1311,45 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["account", "cloud", "secret key", "recovery", "print"],
         ),
         cmd(
+            "Turn on two-step verification…",
+            Lucide::ShieldCheck,
+            Box::new(crate::actions::TurnOnTwoStep),
+            &[
+                "account",
+                "cloud",
+                "2fa",
+                "two-factor",
+                "authenticator",
+                "security",
+            ],
+        ),
+        cmd(
+            "New backup codes…",
+            Lucide::ShieldCheck,
+            Box::new(crate::actions::NewBackupCodes),
+            &[
+                "account",
+                "cloud",
+                "2fa",
+                "two-factor",
+                "two-step",
+                "recovery",
+            ],
+        ),
+        cmd(
+            "Turn off two-step verification…",
+            Lucide::ShieldCheck,
+            Box::new(crate::actions::TurnOffTwoStep),
+            &[
+                "account",
+                "cloud",
+                "2fa",
+                "two-factor",
+                "authenticator",
+                "security",
+            ],
+        ),
+        cmd(
             "Customize sidebar",
             Lucide::PanelLeft,
             Box::new(CustomizeSidebar),
@@ -1644,6 +1683,22 @@ pub fn register_commands(cx: &mut App) {
             let account = s.settings.read(cx).account().clone();
             account.update(cx, |a, cx| a.save_kit(w, cx));
         })
+    });
+    fn manage_two_step(purpose: crate::views::account::TwoStepPurpose, cx: &mut App) {
+        with_shell(cx, move |s, w, cx| {
+            s.open_account(None, w, cx);
+            let account = s.settings.read(cx).account().clone();
+            account.update(cx, |a, cx| a.manage_two_step(purpose, w, cx));
+        });
+    }
+    cx.on_action(|_: &crate::actions::TurnOnTwoStep, cx| {
+        manage_two_step(crate::views::account::TwoStepPurpose::TurnOn, cx);
+    });
+    cx.on_action(|_: &crate::actions::NewBackupCodes, cx| {
+        manage_two_step(crate::views::account::TwoStepPurpose::NewBackupCodes, cx);
+    });
+    cx.on_action(|_: &crate::actions::TurnOffTwoStep, cx| {
+        manage_two_step(crate::views::account::TwoStepPurpose::TurnOff, cx);
     });
     cx.on_action(|_: &CustomizeSidebar, cx| {
         with_shell(cx, |s, w, cx| {

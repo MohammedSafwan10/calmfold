@@ -190,6 +190,26 @@ be described as proven merely because a clean upgrade passed.
   release default `https://account.nexdark.com`; release builds refuse
   anything but https). ureq with rustls and timeouts. Tokens, codes, keys and
   response bodies are never logged; errors are fixed sentences.
+- **Two-step verification** (TOTP, Better Auth `twoFactor`: SHA-1, 30 s,
+  6 digits, 10 single-use backup codes, lockout for 15 minutes after 5 wrong
+  codes; no email or SMS second factor). It guards *signing in*: a new device,
+  or this one after sign-out or a revoked session. Unlocking after a restart
+  still needs only the password. Turning it on, off or getting new backup
+  codes asks for the password, which is checked on the device first (it must
+  open the wrapped account key), then sent only as the derived auth key.
+  - The QR code (`otpauth://` link) and setup key are shown once in the
+    dialog and kept only in that dialog's memory; backup codes too, until
+    Done. None of them are written to disk. Copy puts them on the clipboard
+    and clears it after the vault's clipboard delay.
+  - Sign-in with two-step on returns a signed `better-auth.two_factor`
+    cookie (no session). The app keeps it in memory for the code step and
+    sends it with `Origin` set to the account server's own origin (Better
+    Auth's CSRF check needs a trusted origin on cookie requests). It is
+    never stored or logged and is dropped when the step is left.
+  - Turning it on or off replaces the session server-side; the replacement
+    token is saved at once and starts a new epoch, so late answers for the
+    old token are dropped. If such an answer arrives after the user signed
+    out or switched account, the session it created is signed out again.
 - The local password vault still unlocks with its own master password;
   moving it under the account key is a later step.
 

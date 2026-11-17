@@ -208,7 +208,8 @@ Roles: `owner` (everything), `admin` (no role changes, no deletions),
 - [ ] Threat model reviewed: stolen server DB, malicious server, stolen
       device, phishing, lost password, compromised admin account.
 - [ ] Crypto test vectors, round trips and tamper tests in `crates/crypto`.
-- [ ] Admin and owner accounts require passkey or TOTP.
+- [ ] Admin and owner accounts require passkey or TOTP. (Server enforces
+      TOTP for staff on admin routes; users can turn it on in the app.)
 - [ ] Secrets only in Coolify environment variables; none in repos or logs;
       logs never contain emails' codes, tokens, keys or payloads.
 - [ ] Webhook signatures verified; replayed events ignored.
@@ -235,6 +236,13 @@ Roles: `owner` (everything), `admin` (no role changes, no deletions),
    - [x] Tests: crypto/core units, client against an in-process server,
          6 UI flows; real end-to-end run against the local API on two
          data folders (2026-11-17).
+   - [x] Two-step verification (2026-11-17): sign-in asks for the
+         authenticator or a backup code; Security → Two-step verification
+         turns it on (password → QR code + setup key → code → backup codes
+         behind "I saved my backup codes"), gives new backup codes, turns it
+         off (confirm + password). QR via `qrcode` (ADR 0013). Fake server
+         with RFC 6238, lockout and single-use backup codes; client tests,
+         6 UI flows; live run against the local API.
    - [ ] Later: release builds keep token + Secret Key in the OS keychain;
          password reset with the recovery code; vault under the account key;
          QR device approval (step 8).

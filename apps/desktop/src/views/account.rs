@@ -1,5 +1,8 @@
 //! Settings → Account: Ottero Cloud sign-up, code entry, Emergency Kit,
-//! sign-in (with the Secret Key on a new device) and the signed-in page.
+//! sign-in (with the Secret Key on a new device, and the authenticator or
+//! backup code when two-step verification is on) and the signed-in page.
+//! Turning two-step verification on or off and new backup codes run in
+//! [`TwoStepDialog`].
 //!
 //! The screen follows `Library::account().state()` (the state machine in
 //! `ottero_core::account`); this view only owns the form fields and which
@@ -35,8 +38,10 @@ use ottero_core::account::{
 use ottero_crypto::{SecretString, Zeroizing};
 
 use crate::account::Field;
+use crate::account::client::{SecondFactor, TwoStepSetup};
 use crate::library::{Library, LibraryEvent};
 use crate::views::passwords::strength_meter;
+use crate::views::qr::{QrMatrix, qr_tile};
 use crate::views::vault_item::copy_field;
 
 /// Which form a signed-out user is looking at.
@@ -54,6 +59,8 @@ pub enum Screen {
     SignUp,
     SignIn,
     Code,
+    /// The authenticator (or backup) code after the password.
+    TwoStep,
     EmergencyKit,
     SignedIn,
 }
@@ -66,10 +73,16 @@ pub struct AccountView {
     confirm: Entity<InputState>,
     secret_key: Entity<InputState>,
     code: Entity<InputState>,
+    two_step_code: Entity<InputState>,
+    backup_code: Entity<InputState>,
+    /// The second step asks for a backup code instead of the app's code.
+    use_backup: bool,
     unlock: Entity<InputState>,
     kit_saved: bool,
     reveal_secret_key: bool,
     unlock_error: Option<SharedString>,
+    /// The two-step dialog last opened (tests and focus checks read it).
+    two_step_dialog: Option<gpui_kit::WeakEntity<TwoStepDialog>>,
     last_screen: Screen,
     _tick: Option<GpuiTask<()>>,
     _subscriptions: Vec<Subscription>,
@@ -92,6 +105,8 @@ impl AccountView {
         let confirm = masked("Type it again", window, cx);
         let secret_key = plain("O1-XXXXXX-XXXXX-XXXXX-XXXXX-XXXXX", window, cx);
         let code = plain("123 456", window, cx);
+        let two_step_code = plain("123 456", window, cx);
+        let backup_code = plain("Ab12c-De34f", window, cx);
         let unlock = masked("Password", window, cx);
 
         let mut subscriptions =
@@ -124,6 +139,27 @@ impl AccountView {
             },
         ));
         subscriptions.push(cx.subscribe_in(
+            &two_step_code,
+            window,
+            |this, _, event, window, cx| match event {
+                InputEvent::Change => this.two_step_code_changed(window, cx),
+                InputEvent::PressEnter { .. } => this.verify_two_step(cx),
+                _ => {}
+            },
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &backup_code,
+            window,
+            |this, _, event, _, cx| match event {
+                InputEvent::Change => {
+                    this.library.update(cx, Library::clear_account_error);
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } => this.verify_two_step(cx),
+                _ => {}
+            },
+        ));
+        subscriptions.push(cx.subscribe_in(
             &unlock,
             window,
             |this, _, event, window, cx| match event {
@@ -144,10 +180,14 @@ impl AccountView {
             confirm,
             secret_key,
             code,
+            two_step_code,
+            backup_code,
+            use_backup: false,
             unlock,
             kit_saved: false,
             reveal_secret_key: false,
             unlock_error: None,
+            two_step_dialog: None,
             last_screen: Screen::Intro,
             _tick: None,
             _subscriptions: subscriptions,
@@ -181,6 +221,7 @@ impl AccountView {
             },
             AccountState::SigningIn { .. } | AccountState::NeedsSecretKey { .. } => Screen::SignIn,
             AccountState::AwaitingCode { .. } => Screen::Code,
+            AccountState::TwoStep { .. } => Screen::TwoStep,
             AccountState::EmergencyKit { .. } => Screen::EmergencyKit,
             AccountState::SignedIn { .. } => Screen::SignedIn,
         }
@@ -192,7 +233,10 @@ impl AccountView {
             self.library.update(cx, Library::refresh_account);
             return;
         }
-        if matches!(self.screen(cx), Screen::Code | Screen::EmergencyKit) {
+        if matches!(
+            self.screen(cx),
+            Screen::Code | Screen::TwoStep | Screen::EmergencyKit
+        ) {
             return;
         }
         self.library.update(cx, Library::cancel_account_flow);
@@ -210,6 +254,13 @@ impl AccountView {
                 self.clear_secrets(window, cx);
             }
             Screen::Code => self.change_email(window, cx),
+            Screen::TwoStep if self.library.read(cx).account().code_busy() => {}
+            Screen::TwoStep => {
+                // Back to the password, email kept.
+                self.library.update(cx, Library::cancel_account_flow);
+                self.mode = Mode::SignIn;
+                self.focus_for(Screen::SignIn, window, cx);
+            }
             Screen::Intro | Screen::EmergencyKit | Screen::SignedIn => {}
         }
         cx.notify();
@@ -229,6 +280,8 @@ impl AccountView {
             &self.confirm,
             &self.secret_key,
             &self.code,
+            &self.two_step_code,
+            &self.backup_code,
             &self.unlock,
         ] {
             input.update(cx, |i, cx| i.set_value("", window, cx));
@@ -250,6 +303,8 @@ impl AccountView {
                 }
             }
             Screen::Code => &self.code,
+            Screen::TwoStep if self.use_backup => &self.backup_code,
+            Screen::TwoStep => &self.two_step_code,
             _ => return,
         };
         target.update(cx, |i, cx| i.focus(window, cx));
@@ -267,6 +322,14 @@ impl AccountView {
                     self.code.update(cx, |i, cx| i.set_value("", window, cx));
                     self.focus_for(Screen::Code, window, cx);
                 }
+                Screen::TwoStep => {
+                    // The password did its part; a timed-out attempt asks for it again.
+                    self.use_backup = false;
+                    for input in [&self.password, &self.two_step_code, &self.backup_code] {
+                        input.update(cx, |i, cx| i.set_value("", window, cx));
+                    }
+                    self.focus_for(Screen::TwoStep, window, cx);
+                }
                 Screen::EmergencyKit => {
                     self.kit_saved = false;
                     self.password
@@ -281,7 +344,11 @@ impl AccountView {
                     self.reveal_secret_key = false;
                     self.clear_secrets(window, cx);
                 }
-                Screen::SignUp | Screen::SignIn => {}
+                Screen::SignUp | Screen::SignIn => {
+                    if self.last_screen == Screen::TwoStep {
+                        self.focus_for(screen, window, cx);
+                    }
+                }
             }
             self.last_screen = screen;
         }
@@ -381,12 +448,8 @@ impl AccountView {
     /// Digits only, at most six, shown as "123 456"; the sixth digit submits.
     fn code_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = self.code.read(cx).value();
-        let digits: String = value.chars().filter(char::is_ascii_digit).take(6).collect();
-        let shown = if digits.len() > 3 {
-            format!("{} {}", &digits[..3], &digits[3..])
-        } else {
-            digits.clone()
-        };
+        let digits = ottero_core::account::code_digits(&value);
+        let shown = ottero_core::account::group_code(&digits);
         if shown != value.as_ref() {
             self.code.update(cx, |i, cx| i.set_value(shown, window, cx));
         }
@@ -401,6 +464,119 @@ impl AccountView {
         let code = Zeroizing::new(self.code.read(cx).value().to_string());
         self.library
             .update(cx, |lib, cx| lib.verify_account_code(&code, cx));
+    }
+
+    /// The authenticator code field: same rules as the email code.
+    fn two_step_code_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self.two_step_code.read(cx).value();
+        let digits = ottero_core::account::code_digits(&value);
+        let shown = ottero_core::account::group_code(&digits);
+        if shown != value.as_ref() {
+            self.two_step_code
+                .update(cx, |i, cx| i.set_value(shown, window, cx));
+        }
+        self.library.update(cx, Library::clear_account_error);
+        if digits.len() == 6 && !self.library.read(cx).account().code_busy() {
+            self.verify_two_step(cx);
+        }
+        cx.notify();
+    }
+
+    fn verify_two_step(&mut self, cx: &mut Context<Self>) {
+        let (input, factor) = if self.use_backup {
+            (&self.backup_code, SecondFactor::BackupCode)
+        } else {
+            (&self.two_step_code, SecondFactor::Authenticator)
+        };
+        let code = Zeroizing::new(input.read(cx).value().to_string());
+        self.library
+            .update(cx, |lib, cx| lib.verify_two_step_code(&code, factor, cx));
+    }
+
+    /// "Use a backup code" / "Use authenticator app".
+    fn toggle_backup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.use_backup = !self.use_backup;
+        for input in [&self.two_step_code, &self.backup_code] {
+            input.update(cx, |i, cx| i.set_value("", window, cx));
+        }
+        self.library.update(cx, Library::clear_account_error);
+        self.focus_for(Screen::TwoStep, window, cx);
+        cx.notify();
+    }
+
+    /// Whether the second step shows the backup code field.
+    #[must_use]
+    pub fn uses_backup_code(&self) -> bool {
+        self.use_backup
+    }
+
+    /// Turn on… / New backup codes… / Turn off… (from the Security row or
+    /// the command palette). Turning off is confirmed first.
+    pub fn manage_two_step(
+        &mut self,
+        purpose: TwoStepPurpose,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (signed_in, on) = {
+            let account = self.library.read(cx).account();
+            (account.state().is_signed_in(), account.two_step_on())
+        };
+        if !signed_in || window.has_active_dialog(cx) {
+            return;
+        }
+        let applies = match purpose {
+            TwoStepPurpose::TurnOn => on != Some(true),
+            TwoStepPurpose::NewBackupCodes | TwoStepPurpose::TurnOff => on == Some(true),
+        };
+        if !applies {
+            let message = if on == Some(true) {
+                "Two-step verification is already on."
+            } else {
+                "Two-step verification is off."
+            };
+            window.push_notification(message, cx);
+            return;
+        }
+        self.two_step_dialog = None;
+        let library = self.library.clone();
+        let view = cx.entity().downgrade();
+        let remember =
+            std::rc::Rc::new(move |dialog: Option<Entity<TwoStepDialog>>, cx: &mut App| {
+                _ = view.update(cx, |this, _| {
+                    this.two_step_dialog = dialog.map(|d| d.downgrade());
+                });
+            });
+        if purpose == TwoStepPurpose::TurnOff {
+            ottero_ui::feedback::confirm_destructive(
+                ottero_ui::feedback::Confirm::new(
+                    "Turn off two-step verification?",
+                    "Signing in on a new device will need only your password and Secret Key. Your backup codes stop working.",
+                    "Turn off",
+                ),
+                window,
+                cx,
+                move |window, cx| {
+                    // After the confirmation has closed: one dialog at a time.
+                    let (library, remember) = (library.clone(), remember.clone());
+                    window.defer(cx, move |window, cx| {
+                        let dialog = open_two_step_dialog(library, purpose, window, cx);
+                        remember(dialog, cx);
+                    });
+                },
+            );
+        } else {
+            self.two_step_dialog =
+                open_two_step_dialog(library, purpose, window, cx).map(|d| d.downgrade());
+        }
+    }
+
+    /// The open two-step dialog, if any.
+    #[must_use]
+    pub fn two_step_dialog(&self) -> Option<Entity<TwoStepDialog>> {
+        self.two_step_dialog
+            .as_ref()
+            .and_then(gpui_kit::WeakEntity::upgrade)
     }
 
     fn finish_kit(&mut self, cx: &mut Context<Self>) {
@@ -536,7 +712,7 @@ impl AccountView {
         if event.keystroke.key == "escape"
             && matches!(
                 self.screen(cx),
-                Screen::SignUp | Screen::SignIn | Screen::Code
+                Screen::SignUp | Screen::SignIn | Screen::Code | Screen::TwoStep
             )
             && !window.has_active_dialog(cx)
         {
@@ -828,6 +1004,91 @@ impl AccountView {
             .into_any_element()
     }
 
+    fn render_two_step(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let account = self.library.read(cx).account();
+        let email = account.state().email().unwrap_or_default().to_owned();
+        let busy = account.code_busy();
+        let code_error = account.error_for(Field::Code).map(str::to_owned);
+        let general = account.error_for(Field::General).map(str::to_owned);
+        let backup = self.use_backup;
+        let (prompt, field_label, input) = if backup {
+            (
+                "Enter one of the backup codes you saved when you turned on two-step verification. Each code works once.",
+                "Backup code",
+                &self.backup_code,
+            )
+        } else {
+            (
+                "Enter the 6-digit code from your authenticator app.",
+                "Code",
+                &self.two_step_code,
+            )
+        };
+        v_flex()
+            .w_full()
+            .gap_4()
+            .child(
+                v_flex()
+                    .gap_1()
+                    .text_sm()
+                    .child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap_1()
+                            .child("Signing in as")
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(email)),
+                    )
+                    .child(div().text_color(theme.muted_foreground).child(prompt)),
+            )
+            .child(
+                v_flex()
+                    .gap_1p5()
+                    .child(label(field_label, cx))
+                    .child(
+                        div()
+                            .w(rems(if backup { 14. } else { 12. }))
+                            .child(Input::new(input).large().disabled(busy)),
+                    )
+                    .children(code_error.map(|e| note(e.into(), true, cx))),
+            )
+            .children(general.map(|e| note(e.into(), true, cx)))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("account-two-step-verify")
+                            .primary()
+                            .label(if busy { "Verifying…" } else { "Verify" })
+                            .loading(busy)
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, _, cx| this.verify_two_step(cx))),
+                    )
+                    .child(
+                        Button::new("account-two-step-back")
+                            .ghost()
+                            .label("Back")
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, window, cx| this.back(window, cx))),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("account-two-step-switch")
+                            .ghost()
+                            .label(if backup {
+                                "Use authenticator app"
+                            } else {
+                                "Use a backup code"
+                            })
+                            .disabled(busy)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.toggle_backup(window, cx)),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn render_kit(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let account = self.library.read(cx).account();
@@ -1077,6 +1338,8 @@ impl AccountView {
                     }),
             )
             .child(divider(cx))
+            .child(self.render_two_step_row(cx))
+            .child(divider(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -1096,6 +1359,87 @@ impl AccountView {
                     ),
             )
             .into_any_element()
+    }
+
+    /// Security → Two-step verification: its state and what can change it.
+    fn render_two_step_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let on = self.library.read(cx).account().two_step_on();
+        let detail = match on {
+            Some(true) => {
+                "Signing in on a new device also needs a code from your authenticator app."
+            }
+            Some(false) => {
+                "Also ask for a code from an authenticator app when signing in on a new device."
+            }
+            None => "Checking…",
+        };
+        let manage = |id: &'static str, text: &'static str, purpose: TwoStepPurpose| {
+            Button::new(id)
+                .outline()
+                .small()
+                .label(text)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.manage_two_step(purpose, window, cx);
+                }))
+        };
+        h_flex()
+            .w_full()
+            .gap_3()
+            .items_center()
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(div().text_sm().child("Two-step verification"))
+                            .when_some(on, |this, on| {
+                                this.child(
+                                    div()
+                                        .id("account-two-step-state")
+                                        .text_xs()
+                                        .px_1p5()
+                                        .rounded(theme.radius)
+                                        .bg(theme.muted)
+                                        .text_color(if on {
+                                            theme.foreground
+                                        } else {
+                                            theme.muted_foreground
+                                        })
+                                        .child(if on { "On" } else { "Off" }),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(detail),
+                    ),
+            )
+            .map(|this| match on {
+                Some(true) => this
+                    .child(manage(
+                        "account-two-step-codes",
+                        "New backup codes…",
+                        TwoStepPurpose::NewBackupCodes,
+                    ))
+                    .child(manage(
+                        "account-two-step-off",
+                        "Turn off…",
+                        TwoStepPurpose::TurnOff,
+                    )),
+                Some(false) => this.child(manage(
+                    "account-two-step-on",
+                    "Turn on…",
+                    TwoStepPurpose::TurnOn,
+                )),
+                None => this,
+            })
     }
 
     fn render_devices(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -1255,6 +1599,11 @@ pub fn page(view: &Entity<AccountView>, cx: &App) -> SettingPage {
             "sync",
             "secret key",
             "emergency kit",
+            "two-step verification",
+            "two-factor",
+            "2fa",
+            "authenticator",
+            "backup codes",
             "devices",
             "sessions",
         ])
@@ -1276,6 +1625,11 @@ pub fn page(view: &Entity<AccountView>, cx: &App) -> SettingPage {
             SettingGroup::new()
                 .title("Check your email")
                 .item(part(AccountView::render_code)),
+        ),
+        Screen::TwoStep => page.group(
+            SettingGroup::new()
+                .title("Two-step verification")
+                .item(part(AccountView::render_two_step)),
         ),
         Screen::EmergencyKit => page.group(
             SettingGroup::new()
@@ -1611,5 +1965,576 @@ impl Render for PasswordPrompt {
                         .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
                 ),
             )
+    }
+}
+
+/// Which change [`TwoStepDialog`] makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TwoStepPurpose {
+    TurnOn,
+    NewBackupCodes,
+    TurnOff,
+}
+
+/// Where [`TwoStepDialog`] is.
+///
+/// ```text
+/// TurnOn:          Password ──▶ Scan ──code accepted──▶ BackupCodes ──Done──▶ closed
+/// NewBackupCodes:  Password ──▶ BackupCodes ──Done──▶ closed
+/// TurnOff:         (confirmed first) Password ──▶ closed
+/// ```
+///
+/// `BackupCodes` can only be left with Done, after "I saved my backup
+/// codes": the codes are never shown again. While a request runs the dialog
+/// can't be dismissed either, so an answer that turns two-step on always
+/// reaches the backup codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TwoStepStep {
+    Password,
+    Scan,
+    BackupCodes,
+}
+
+/// Turning two-step verification on (password → QR code and setup key →
+/// code from the app → backup codes), new backup codes, or turning it off.
+pub struct TwoStepDialog {
+    library: Entity<Library>,
+    purpose: TwoStepPurpose,
+    step: TwoStepStep,
+    focus: gpui_kit::FocusHandle,
+    password: Entity<InputState>,
+    code: Entity<InputState>,
+    setup: Option<std::rc::Rc<TwoStepSetup>>,
+    qr: Option<std::rc::Rc<QrMatrix>>,
+    codes: Vec<Zeroizing<String>>,
+    saved: bool,
+    busy: bool,
+    error: Option<SharedString>,
+    _subscriptions: Vec<Subscription>,
+}
+
+/// Opens [`TwoStepDialog`]. The dialog locks (no Escape, no close button)
+/// while a request runs and while the backup codes are shown.
+pub fn open_two_step_dialog(
+    library: Entity<Library>,
+    purpose: TwoStepPurpose,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Entity<TwoStepDialog>> {
+    if window.has_active_dialog(cx) {
+        return None;
+    }
+    let view = cx.new(|cx| TwoStepDialog::new(library, purpose, window, cx));
+    let opened = view.clone();
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let this = view.read(cx);
+        let locked = this.busy || this.step == TwoStepStep::BackupCodes;
+        dialog
+            .title(this.title())
+            .w(px(480.))
+            .keyboard(!locked)
+            .overlay_closable(!locked)
+            .close_button(!locked)
+            // Enter belongs to the step: the fields submit themselves, and on
+            // the backup codes it means Done (once saved). It never just closes.
+            .on_ok({
+                let view = view.clone();
+                move |_, window, cx| {
+                    view.update(cx, |this, cx| this.confirm(window, cx));
+                    false
+                }
+            })
+            .child(view.clone())
+    });
+    // Opening focuses the dialog itself; the password field goes first.
+    opened.update(cx, |this, cx| {
+        this.password.update(cx, |i, cx| i.focus(window, cx))
+    });
+    Some(opened)
+}
+
+impl TwoStepDialog {
+    fn new(
+        library: Entity<Library>,
+        purpose: TwoStepPurpose,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let password = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder("Password")
+        });
+        let code = cx.new(|cx| InputState::new(window, cx).placeholder("123 456"));
+        let subscriptions = vec![
+            cx.subscribe_in(
+                &password,
+                window,
+                |this, _, event, window, cx| match event {
+                    InputEvent::Change => {
+                        this.error = None;
+                        cx.notify();
+                    }
+                    InputEvent::PressEnter { .. } => this.submit_password(window, cx),
+                    _ => {}
+                },
+            ),
+            cx.subscribe_in(&code, window, |this, _, event, window, cx| match event {
+                InputEvent::Change => this.code_changed(window, cx),
+                InputEvent::PressEnter { .. } => this.submit_code(window, cx),
+                _ => {}
+            }),
+        ];
+        Self {
+            library,
+            purpose,
+            step: TwoStepStep::Password,
+            focus: cx.focus_handle(),
+            password,
+            code,
+            setup: None,
+            qr: None,
+            codes: Vec::new(),
+            saved: false,
+            busy: false,
+            error: None,
+            _subscriptions: subscriptions,
+        }
+    }
+
+    #[must_use]
+    pub fn step(&self) -> TwoStepStep {
+        self.step
+    }
+
+    #[must_use]
+    pub fn purpose(&self) -> TwoStepPurpose {
+        self.purpose
+    }
+
+    /// The `otpauth://` link drawn as the QR code (Scan step).
+    #[must_use]
+    pub fn setup_uri(&self) -> Option<&str> {
+        self.setup.as_deref().map(TwoStepSetup::uri)
+    }
+
+    /// The QR code shown (Scan step).
+    #[must_use]
+    pub fn qr(&self) -> Option<&QrMatrix> {
+        self.qr.as_deref()
+    }
+
+    /// The backup codes shown (BackupCodes step).
+    #[must_use]
+    pub fn backup_codes(&self) -> Vec<String> {
+        self.codes.iter().map(|c| c.to_string()).collect()
+    }
+
+    #[must_use]
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    fn title(&self) -> &'static str {
+        match (self.purpose, self.step) {
+            (_, TwoStepStep::BackupCodes) => "Save your backup codes",
+            (TwoStepPurpose::TurnOn, _) => "Turn on two-step verification",
+            (TwoStepPurpose::NewBackupCodes, _) => "New backup codes",
+            (TwoStepPurpose::TurnOff, _) => "Turn off two-step verification",
+        }
+    }
+
+    fn submit_password(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.step != TwoStepStep::Password {
+            return;
+        }
+        let password = SecretString::from(self.password.read(cx).value().to_string());
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        match self.purpose {
+            TwoStepPurpose::TurnOn => {
+                let task = self
+                    .library
+                    .update(cx, |lib, cx| lib.start_two_step_setup(password, cx));
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = task.await;
+                    _ = this.update_in(cx, |this, window, cx| {
+                        this.busy = false;
+                        match result {
+                            Ok(setup) => {
+                                this.qr = QrMatrix::encode(setup.uri()).map(std::rc::Rc::new);
+                                this.codes = setup.backup_codes().to_vec();
+                                this.setup = Some(std::rc::Rc::new(setup));
+                                this.step = TwoStepStep::Scan;
+                                this.password
+                                    .update(cx, |i, cx| i.set_value("", window, cx));
+                                this.code.update(cx, |i, cx| i.focus(window, cx));
+                            }
+                            Err(message) => this.error = Some(message.into()),
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            TwoStepPurpose::NewBackupCodes => {
+                let task = self
+                    .library
+                    .update(cx, |lib, cx| lib.new_backup_codes(password, cx));
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = task.await;
+                    _ = this.update_in(cx, |this, window, cx| {
+                        this.busy = false;
+                        match result {
+                            Ok(codes) => this.show_codes(codes, window, cx),
+                            Err(message) => this.error = Some(message.into()),
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            TwoStepPurpose::TurnOff => {
+                let task = self
+                    .library
+                    .update(cx, |lib, cx| lib.turn_off_two_step(password, cx));
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = task.await;
+                    _ = this.update_in(cx, |this, window, cx| {
+                        this.busy = false;
+                        match result {
+                            Ok(()) => window.close_dialog(cx),
+                            Err(message) => this.error = Some(message.into()),
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+        }
+    }
+
+    fn show_codes(
+        &mut self,
+        codes: Vec<Zeroizing<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.codes = codes;
+        self.step = TwoStepStep::BackupCodes;
+        self.saved = false;
+        self.password
+            .update(cx, |i, cx| i.set_value("", window, cx));
+        // Keep keyboard focus inside the dialog once the code field is gone.
+        self.focus.focus(window, cx);
+    }
+
+    /// Digits only, "123 456"; the sixth digit submits.
+    fn code_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self.code.read(cx).value();
+        let digits = ottero_core::account::code_digits(&value);
+        let shown = ottero_core::account::group_code(&digits);
+        if shown != value.as_ref() {
+            self.code.update(cx, |i, cx| i.set_value(shown, window, cx));
+        }
+        self.error = None;
+        if digits.len() == 6 {
+            self.submit_code(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn submit_code(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.step != TwoStepStep::Scan {
+            return;
+        }
+        let code = Zeroizing::new(self.code.read(cx).value().to_string());
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        let task = self
+            .library
+            .update(cx, |lib, cx| lib.confirm_two_step_setup(&code, cx));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(()) => {
+                        let codes = std::mem::take(&mut this.codes);
+                        this.show_codes(codes, window, cx);
+                    }
+                    Err(message) => {
+                        this.error = Some(message.into());
+                        this.code.update(cx, |i, cx| i.focus(window, cx));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn copy_codes(&self, window: &mut Window, cx: &mut App) {
+        let all = self
+            .codes
+            .iter()
+            .map(|c| c.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        copy_field("Backup codes", all, true, window, cx);
+    }
+
+    /// Enter: the current step's action (each one ignores a repeat while busy).
+    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.step {
+            TwoStepStep::Password => self.submit_password(window, cx),
+            TwoStepStep::Scan => self.submit_code(window, cx),
+            TwoStepStep::BackupCodes => self.done(window, cx),
+        }
+    }
+
+    fn done(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.step == TwoStepStep::BackupCodes && self.saved {
+            self.codes.clear();
+            window.close_dialog(cx);
+        }
+    }
+
+    fn render_password(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let (description, button, busy_label) = match self.purpose {
+            TwoStepPurpose::TurnOn => (
+                "Enter your Ottero Cloud password to set up an authenticator app.",
+                "Continue",
+                "Checking…",
+            ),
+            TwoStepPurpose::NewBackupCodes => (
+                "Enter your Ottero Cloud password. Your current backup codes will stop working.",
+                "Continue",
+                "Checking…",
+            ),
+            TwoStepPurpose::TurnOff => (
+                "Enter your Ottero Cloud password to turn off two-step verification.",
+                "Turn off",
+                "Turning off…",
+            ),
+        };
+        let submit = Button::new("two-step-password-submit")
+            .label(if self.busy { busy_label } else { button })
+            .loading(self.busy)
+            .disabled(self.busy)
+            .on_click(cx.listener(|this, _, window, cx| this.submit_password(window, cx)));
+        let submit = if self.purpose == TwoStepPurpose::TurnOff {
+            submit.danger()
+        } else {
+            submit.primary()
+        };
+        v_flex()
+            .gap_3()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(description),
+            )
+            .child(Input::new(&self.password).mask_toggle().disabled(self.busy))
+            .children(self.error.clone().map(|e| note(e, true, cx)))
+            .child(h_flex().justify_end().child(submit))
+            .into_any_element()
+    }
+
+    fn render_scan(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let key = self
+            .setup
+            .as_ref()
+            .map(|s| s.setup_key().to_owned())
+            .unwrap_or_default();
+        let grouped = ottero_core::account::group_setup_key(&key);
+        let code_tile = match &self.qr {
+            Some(qr) => qr_tile(qr.clone(), rems(11.), cx).into_any_element(),
+            None => div()
+                .size(rems(11.))
+                .flex_shrink_0()
+                .rounded(theme.radius)
+                .bg(theme.muted)
+                .p_3()
+                .flex()
+                .items_center()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child("The QR code couldn't be drawn. Use the setup key.")
+                .into_any_element(),
+        };
+        v_flex()
+            .gap_4()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child("Scan this QR code with an authenticator app, such as 1Password, Google Authenticator or Microsoft Authenticator."),
+            )
+            .child(
+                h_flex()
+                    .gap_4()
+                    .items_start()
+                    .child(code_tile)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1p5()
+                            .child(label("Setup key", cx))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child("Can't scan? Type this key into the app instead."),
+                            )
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .items_start()
+                                    .px_3()
+                                    .py_2()
+                                    .rounded(theme.radius)
+                                    .bg(theme.muted)
+                                    .child(
+                                        div()
+                                            .id("two-step-setup-key")
+                                            .flex_1()
+                                            .min_w_0()
+                                            .font_family(theme.mono_font_family.clone())
+                                            .text_sm()
+                                            .child(grouped),
+                                    )
+                                    .child(
+                                        Button::new("two-step-copy-key")
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(Lucide::Copy)
+                                            .tooltip("Copy setup key")
+                                            .on_click(move |_, window, cx| {
+                                                copy_field("Setup key", key.clone(), true, window, cx);
+                                            }),
+                                    ),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1p5()
+                    .child(label("Code from the app", cx))
+                    .child(
+                        div()
+                            .w(rems(12.))
+                            .child(Input::new(&self.code).large().disabled(self.busy)),
+                    )
+                    .children(self.error.clone().map(|e| note(e, true, cx))),
+            )
+            .child(
+                h_flex().justify_end().child(
+                    Button::new("two-step-confirm")
+                        .primary()
+                        .label(if self.busy { "Turning on…" } else { "Turn on" })
+                        .loading(self.busy)
+                        .disabled(self.busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.submit_code(window, cx))),
+                ),
+            )
+            .into_any_element()
+    }
+
+    fn render_codes(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let lead = match self.purpose {
+            TwoStepPurpose::TurnOn => "Two-step verification is on.",
+            _ => "Your old backup codes no longer work.",
+        };
+        let half = self.codes.len().div_ceil(2);
+        let column = |codes: &[Zeroizing<String>]| {
+            v_flex()
+                .gap_1()
+                .children(codes.iter().map(|c| div().child(c.to_string())))
+        };
+        let saved = self.saved;
+        v_flex()
+            .gap_4()
+            .child(
+                v_flex()
+                    .gap_1()
+                    .text_sm()
+                    .child(div().font_weight(FontWeight::MEDIUM).child(lead))
+                    .child(div().text_color(theme.muted_foreground).child(
+                        "Each backup code signs you in once if you can't use your authenticator app. Keep them somewhere safe, like your password manager. They won't be shown again.",
+                    )),
+            )
+            .child(
+                h_flex()
+                    .id("two-step-backup-codes")
+                    .w_full()
+                    .justify_center()
+                    .gap_8()
+                    .px_4()
+                    .py_3()
+                    .rounded(theme.radius)
+                    .bg(theme.muted)
+                    .font_family(theme.mono_font_family.clone())
+                    .text_sm()
+                    .child(column(&self.codes[..half]))
+                    .child(column(&self.codes[half..])),
+            )
+            .child(
+                h_flex().child(
+                    Button::new("two-step-copy-codes")
+                        .outline()
+                        .small()
+                        .icon(Lucide::Copy)
+                        .label("Copy all")
+                        .on_click(cx.listener(|this, _, window, cx| this.copy_codes(window, cx))),
+                ),
+            )
+            .child(
+                Checkbox::new("two-step-codes-saved")
+                    .checked(saved)
+                    .label("I saved my backup codes")
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.saved = *checked;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                h_flex().justify_end().child(
+                    Button::new("two-step-done")
+                        .primary()
+                        .label("Done")
+                        .disabled(!saved)
+                        .on_click(cx.listener(|this, _, window, cx| this.done(window, cx))),
+                ),
+            )
+            .into_any_element()
+    }
+}
+
+impl gpui_kit::Focusable for TwoStepDialog {
+    fn focus_handle(&self, _: &App) -> gpui_kit::FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl Render for TwoStepDialog {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = match self.step {
+            TwoStepStep::Password => self.render_password(cx),
+            TwoStepStep::Scan => self.render_scan(cx),
+            TwoStepStep::BackupCodes => self.render_codes(cx),
+        };
+        div()
+            .id("two-step-dialog")
+            .track_focus(&self.focus)
+            .child(content)
     }
 }

@@ -7,20 +7,30 @@
 //! SignedOut ──StartSignIn──▶ SigningIn ──SignedIn──▶ SignedIn
 //!                                     ├──SecretKeyMissing──▶ NeedsSecretKey ──StartSignIn──▶ SigningIn
 //!                                     ├──NotVerified──▶ AwaitingCode     (sign-up never confirmed)
-//!                                     └──KeysMissing──▶ EmergencyKit     (verified, keys never saved)
+//!                                     ├──KeysMissing──▶ EmergencyKit     (verified, keys never saved)
+//!                                     └──TwoStepRequired──▶ TwoStep      (two-step verification is on)
 //! AwaitingCode ──SignedIn──▶ SignedIn         (code confirmed, keys already saved)
 //! AwaitingCode ──KeysMissing──▶ EmergencyKit
-//! SigningUp | SigningIn | NeedsSecretKey ──Failed──▶ Error
+//! AwaitingCode ──TwoStepRequired──▶ TwoStep
+//! TwoStep ──SignedIn──▶ SignedIn              (authenticator or backup code accepted)
+//! TwoStep ──KeysMissing──▶ EmergencyKit
+//! SigningUp | SigningIn | NeedsSecretKey | TwoStep ──Failed──▶ Error
 //! Error ──StartSignUp / StartSignIn──▶ SigningUp / SigningIn   (try again)
 //! SignedIn ──PlanChanged──▶ SignedIn
 //! any but SignedOut ──Cancel / SignOut──▶ SignedOut
 //! SignedIn ──SessionEnded──▶ SignedOut         (revoked elsewhere, blocked, expired)
 //! ```
 //!
+//! `TwoStep` is the second step of signing in when the account has two-step
+//! verification on: the password (and Secret Key) were right, and the server
+//! now wants the 6-digit code from an authenticator app or a backup code.
+//! It fails into `Error { flow: SignIn }` only when that sign-in attempt is
+//! over (it expired, or too many wrong codes): the password is needed again.
+//!
 //! `Error` remembers which form failed (sign-up or sign-in) so the screen
 //! can show it again with the message next to the field. A wrong code or a
-//! failed key upload keeps its screen (`AwaitingCode`, `EmergencyKit`); the
-//! app shows that error in place instead of changing state. Every other pair is refused
+//! failed key upload keeps its screen (`AwaitingCode`, `TwoStep`,
+//! `EmergencyKit`); the app shows that error in place instead of changing state. Every other pair is refused
 //! (`next` returns `None`), so a late network result can't move a screen
 //! the user already left. Network, crypto and storage live in the app; the
 //! state machine only names where the user is.
@@ -353,6 +363,50 @@ pub fn active_label(at: Timestamp, now: Timestamp) -> String {
     }
 }
 
+/// Digits in a typed or pasted authenticator code, at most six
+/// ("123 456", "123-456" and "123456" are the same code).
+#[must_use]
+pub fn code_digits(input: &str) -> String {
+    input.chars().filter(char::is_ascii_digit).take(6).collect()
+}
+
+/// "123 456" while typing: digits only, a space after the third.
+#[must_use]
+pub fn group_code(digits: &str) -> String {
+    if digits.len() > 3 {
+        format!("{} {}", &digits[..3], &digits[3..])
+    } else {
+        digits.to_owned()
+    }
+}
+
+/// A typed backup code in the server's form (`ab12C-De34f`), or `None` if
+/// it can't be one. Spaces are ignored and a missing dash is added; case is
+/// kept because the codes are case-sensitive.
+#[must_use]
+pub fn normalize_backup_code(input: &str) -> Option<String> {
+    let compact: String = input
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect();
+    (compact.len() == 10 && compact.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| format!("{}-{}", &compact[..5], &compact[5..]))
+}
+
+/// A base32 setup key in groups of four for reading aloud or typing into an
+/// authenticator app: "JBSW Y3DP EHPK 3PXP".
+#[must_use]
+pub fn group_setup_key(secret: &str) -> String {
+    secret
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<Vec<_>>()
+        .chunks(4)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Which form a failure belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -382,6 +436,11 @@ pub enum AccountState {
     NeedsSecretKey {
         email: String,
     },
+    /// Two-step verification is on: waiting for the authenticator (or
+    /// backup) code that finishes signing in.
+    TwoStep {
+        email: String,
+    },
     SignedIn {
         email: String,
         plan: Plan,
@@ -403,6 +462,7 @@ pub enum AccountEvent {
     SecretKeyMissing,
     NotVerified,
     KeysMissing,
+    TwoStepRequired,
     SignedIn { plan: Plan },
     PlanChanged { plan: Plan },
     Failed { message: String },
@@ -421,6 +481,7 @@ impl AccountState {
             | Self::EmergencyKit { email }
             | Self::SigningIn { email }
             | Self::NeedsSecretKey { email }
+            | Self::TwoStep { email }
             | Self::SignedIn { email, .. }
             | Self::Error { email, .. } => Some(email),
         }
@@ -440,7 +501,9 @@ impl AccountState {
     fn flow(&self) -> Option<Flow> {
         match self {
             Self::SigningUp { .. } => Some(Flow::SignUp),
-            Self::SigningIn { .. } | Self::NeedsSecretKey { .. } => Some(Flow::SignIn),
+            Self::SigningIn { .. } | Self::NeedsSecretKey { .. } | Self::TwoStep { .. } => {
+                Some(Flow::SignIn)
+            }
             _ => None,
         }
     }
@@ -465,10 +528,16 @@ pub fn next(state: &AccountState, event: AccountEvent) -> Option<AccountState> {
         }),
         (S::SigningIn { .. }, E::SecretKeyMissing) => Some(S::NeedsSecretKey { email: email() }),
         (S::SigningIn { .. }, E::NotVerified) => Some(S::AwaitingCode { email: email() }),
-        (S::SigningIn { .. } | S::AwaitingCode { .. }, E::KeysMissing) => {
+        (S::SigningIn { .. } | S::AwaitingCode { .. }, E::TwoStepRequired) => {
+            Some(S::TwoStep { email: email() })
+        }
+        (S::SigningIn { .. } | S::AwaitingCode { .. } | S::TwoStep { .. }, E::KeysMissing) => {
             Some(S::EmergencyKit { email: email() })
         }
-        (S::SigningIn { .. } | S::AwaitingCode { .. }, E::SignedIn { plan }) => Some(S::SignedIn {
+        (
+            S::SigningIn { .. } | S::AwaitingCode { .. } | S::TwoStep { .. },
+            E::SignedIn { plan },
+        ) => Some(S::SignedIn {
             email: email(),
             plan,
         }),
@@ -477,7 +546,10 @@ pub fn next(state: &AccountState, event: AccountEvent) -> Option<AccountState> {
             plan,
         }),
         (
-            s @ (S::SigningUp { .. } | S::SigningIn { .. } | S::NeedsSecretKey { .. }),
+            s @ (S::SigningUp { .. }
+            | S::SigningIn { .. }
+            | S::NeedsSecretKey { .. }
+            | S::TwoStep { .. }),
             E::Failed { message },
         ) => Some(S::Error {
             email: email(),
@@ -504,6 +576,7 @@ mod tests {
             AccountState::EmergencyKit { email: e() },
             AccountState::SigningIn { email: e() },
             AccountState::NeedsSecretKey { email: e() },
+            AccountState::TwoStep { email: e() },
             AccountState::SignedIn {
                 email: e(),
                 plan: Plan::Free,
@@ -527,6 +600,7 @@ mod tests {
             AccountEvent::SecretKeyMissing,
             AccountEvent::NotVerified,
             AccountEvent::KeysMissing,
+            AccountEvent::TwoStepRequired,
             AccountEvent::SignedIn { plan: Plan::Free },
             AccountEvent::PlanChanged { plan: Plan::Owner },
             AccountEvent::Failed {
@@ -546,6 +620,7 @@ mod tests {
             AccountState::EmergencyKit { .. } => "EmergencyKit",
             AccountState::SigningIn { .. } => "SigningIn",
             AccountState::NeedsSecretKey { .. } => "NeedsSecretKey",
+            AccountState::TwoStep { .. } => "TwoStep",
             AccountState::SignedIn { .. } => "SignedIn",
             AccountState::Error { .. } => "Error",
         }
@@ -561,6 +636,7 @@ mod tests {
             AccountEvent::SecretKeyMissing => "SecretKeyMissing",
             AccountEvent::NotVerified => "NotVerified",
             AccountEvent::KeysMissing => "KeysMissing",
+            AccountEvent::TwoStepRequired => "TwoStepRequired",
             AccountEvent::SignedIn { .. } => "SignedIn",
             AccountEvent::PlanChanged { .. } => "PlanChanged",
             AccountEvent::Failed { .. } => "Failed",
@@ -573,7 +649,7 @@ mod tests {
     /// The whole table: every (state, event) pair and where it leads.
     #[test]
     fn transition_table_is_exact() {
-        let busy_or_flow = ["SigningUp", "SigningIn", "NeedsSecretKey"];
+        let busy_or_flow = ["SigningUp", "SigningIn", "NeedsSecretKey", "TwoStep"];
         let allowed: &[(&str, &str, &str)] = &[
             ("SignedOut", "StartSignUp", "SigningUp"),
             ("Error", "StartSignUp", "SigningUp"),
@@ -587,8 +663,12 @@ mod tests {
             ("SigningIn", "NotVerified", "AwaitingCode"),
             ("SigningIn", "KeysMissing", "EmergencyKit"),
             ("AwaitingCode", "KeysMissing", "EmergencyKit"),
+            ("TwoStep", "KeysMissing", "EmergencyKit"),
+            ("SigningIn", "TwoStepRequired", "TwoStep"),
+            ("AwaitingCode", "TwoStepRequired", "TwoStep"),
             ("SigningIn", "SignedIn", "SignedIn"),
             ("AwaitingCode", "SignedIn", "SignedIn"),
+            ("TwoStep", "SignedIn", "SignedIn"),
             ("SignedIn", "PlanChanged", "SignedIn"),
             ("SignedIn", "SessionEnded", "SignedOut"),
         ];
@@ -661,6 +741,73 @@ mod tests {
             }
         );
         assert!(s.is_signed_in() && !s.is_busy());
+    }
+
+    #[test]
+    fn two_step_sign_in_keeps_the_email_and_expiry_returns_to_the_password() {
+        let s = next(
+            &AccountState::SignedOut,
+            AccountEvent::StartSignIn {
+                email: "a@b.co".into(),
+            },
+        )
+        .expect("start");
+        let two = next(&s, AccountEvent::TwoStepRequired).expect("two-step");
+        assert_eq!(
+            two,
+            AccountState::TwoStep {
+                email: "a@b.co".into()
+            }
+        );
+        assert!(!two.is_busy() && !two.is_signed_in());
+        let expired = next(
+            &two,
+            AccountEvent::Failed {
+                message: "Expired".into(),
+            },
+        )
+        .expect("expired");
+        assert_eq!(
+            expired,
+            AccountState::Error {
+                email: "a@b.co".into(),
+                flow: Flow::SignIn,
+                message: "Expired".into()
+            },
+            "back to the sign-in form"
+        );
+        let done = next(&two, AccountEvent::SignedIn { plan: Plan::Free }).expect("in");
+        assert!(done.is_signed_in());
+        assert_eq!(done.email(), Some("a@b.co"));
+        assert_eq!(
+            next(&two, AccountEvent::Cancel),
+            Some(AccountState::SignedOut)
+        );
+        assert_eq!(next(&two, AccountEvent::SessionEnded), None);
+    }
+
+    #[test]
+    fn codes_and_setup_keys_are_normalized() {
+        assert_eq!(code_digits(" 123 456 "), "123456");
+        assert_eq!(code_digits("123-4567"), "123456");
+        assert_eq!(code_digits("abc"), "");
+        assert_eq!(group_code("1234"), "123 4");
+        assert_eq!(group_code("12"), "12");
+        assert_eq!(
+            normalize_backup_code(" Ab12c De34F "),
+            Some("Ab12c-De34F".into())
+        );
+        assert_eq!(
+            normalize_backup_code("Ab12c-De34F"),
+            Some("Ab12c-De34F".into())
+        );
+        assert_eq!(normalize_backup_code("Ab12c-De34"), None);
+        assert_eq!(normalize_backup_code("Ab12c-De3!F"), None);
+        assert_eq!(normalize_backup_code(""), None);
+        assert_eq!(
+            group_setup_key("JBSWY3DPEHPK3PXPAB"),
+            "JBSW Y3DP EHPK 3PXP AB"
+        );
     }
 
     #[test]

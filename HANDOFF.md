@@ -21,6 +21,15 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
   Verified end to end against the local API (`ottero-cloud/api/dev.sh`) with
   two data folders: sign-up on A, Secret Key sign-in on B, both devices
   listed. See `docs/security.md` → Ottero Cloud account.
+- **Two-step verification (TOTP) in the app (done, not pushed):** sign-in
+  asks for the authenticator code (or a backup code) after the password;
+  Settings → Account → Security → Two-step verification shows On/Off with
+  Turn on… (password → QR code + setup key → code → 10 backup codes behind a
+  required checkbox), New backup codes… and Turn off… (confirm, password).
+  Palette: Turn on/off two-step verification…, New backup codes…. The
+  replacement session token is saved; late answers are dropped and their
+  sessions signed out. QR via `qrcode` (ADR 0013). `scripts/check.sh` passes
+  (unit 156 core + 79 desktop lib, 92 UI). Verified live against the API.
 - Rename to Ottero is done in code, packaging and docs (ADR 0009): crates
   `ottero-*`, binary `ottero`, `Ottero.app` (exe `Ottero`, helper
   `OtteroUpdater.app`), `Ottero.exe`, env vars `OTTERO_*` (`CALMFOLD_DATA_DIR`
@@ -73,7 +82,8 @@ these cases need additional regressions. No implementation fixes applied.
 
 **Ottero Cloud (plan 06):**
 
-1. Push the account commit; owner review of Settings → Account.
+1. Push the account and two-step commits; owner review of Settings → Account
+   (scan the QR code with a real phone app once; not automated here).
 2. Release builds: move token + Secret Key from `account.json` to the OS
    keychain once Developer ID signing exists (security.md).
 3. Password reset with the recovery code (server route + app flow), then the
@@ -166,6 +176,32 @@ OTTERO_DEV_ROUTE=calendar OTTERO_DEV_CALENDAR=week cargo run  # debug: calendar 
 ```
 
 ## Log
+
+### 2026-11-17: Two-step verification (TOTP) in the app
+
+- Core: `AccountState::TwoStep` + `TwoStepRequired` (table test updated),
+  code/backup-code/setup-key helpers.
+- Client: `sign_in` → `SignInOutcome::{Session, TwoStep(challenge)}`; the
+  `better-auth.two_factor` cookie stays in memory and is sent with
+  `Origin` = server origin (found live: Better Auth refuses cookie requests
+  without a trusted origin, `MISSING_OR_NULL_ORIGIN`). enable / confirm
+  (replacement token) / disable (also replaces the session, found in the
+  plugin source) / generate-backup-codes; error mapping for wrong code,
+  wrong/used backup code, lockout (429 `ACCOUNT_TEMPORARILY_LOCKED`), expired
+  challenge, too many tries, changed elsewhere.
+- Fake: RFC 6238 via `ottero_core::vault::totp`, single-use backup codes,
+  5-failure lockout, per-challenge attempt budget, session replacement.
+- UI: TwoStep sign-in screen (auto-submit on 6 digits, paste "123 456",
+  backup-code toggle, Back/Escape), Security row, `TwoStepDialog`
+  (locked while busy and on the backup codes), actions in the palette.
+- Tests: client (in-process HTTP), fake, 6 new UI tests incl. two late-result
+  tests and "unlock needs only the password; sign-in needs the code".
+  `account_other_device_can_be_signed_out_after_confirming` now scrolls to
+  Devices (the new row pushed it below the test window).
+- Live: separate API on :8788 (DB `accounts_2fa`, mail
+  `/tmp/ottero-mail-2fa.jsonl`) because an older dev server was already on
+  :8787. Sign up, turn on (wrong + right code), sign out, sign in with wrong
+  then right code, backup code, turn off, turn on again, in dark and light.
 
 ### 2026-11-17: Account review fixes (ottero-cloud docs/reviews/ACCOUNT-REVIEW-2026-11-17.md)
 

@@ -8,6 +8,13 @@
 //! Secrets: the account key lives only in memory ([`AccountSession::account_key`])
 //! and is dropped on sign-out. Derived keys are held only between the steps
 //! of one flow. Nothing secret is logged; errors are fixed sentences.
+//!
+//! Two-step verification: a sign-in that needs the second step keeps its
+//! challenge cookie in memory (never on disk) until the code is accepted or
+//! the flow is left. Turning two-step on or off makes the server replace the
+//! session; the replacement token is stored at once and starts a new epoch.
+//! A result that arrives after the session changed is dropped, and a session
+//! it created on the server is signed out again.
 
 pub mod client;
 pub mod fake;
@@ -27,7 +34,10 @@ use ottero_crypto::account::{AccountKdf, AccountSecretKey, decode_salt, encode_s
 use ottero_crypto::{ExposeSecret as _, SecretKey, SecretString, Zeroizing};
 
 use crate::library::{Library, LibraryEvent};
-use client::{AccountApi, ApiError, Me, SessionInfo, SessionToken};
+use client::{
+    AccountApi, ApiError, ApiResult, Me, SecondFactor, SessionInfo, SessionToken, TwoStepChallenge,
+    TwoStepSetup,
+};
 use flows::{Derived, Finish, FlowError, Kit, KitSaved};
 use store::{AccountFile, PlanRecord, SignedIn};
 
@@ -58,8 +68,13 @@ pub struct AccountSession {
     epoch: u64,
     derived: Option<Arc<Derived>>,
     verified: bool,
+    /// A session the flow holds before it is saved: for the Emergency Kit,
+    /// or after a two-step code was accepted but the account didn't open yet.
     pending_token: Option<SessionToken>,
     pending_plan: Plan,
+    pending_two_factor: bool,
+    /// The second step of the current sign-in (memory only).
+    challenge: Option<Arc<TwoStepChallenge>>,
     kit: Option<Arc<Kit>>,
     account_key: Option<SecretKey>,
     error: Option<(Field, String)>,
@@ -103,6 +118,8 @@ impl AccountSession {
             verified: false,
             pending_token: None,
             pending_plan: Plan::Free,
+            pending_two_factor: false,
+            challenge: None,
             kit: None,
             account_key: None,
             error: None,
@@ -166,6 +183,13 @@ impl AccountSession {
     #[must_use]
     pub fn is_unlocked(&self) -> bool {
         self.account_key.is_some()
+    }
+
+    /// Two-step verification on this account: `None` until the server has
+    /// answered once.
+    #[must_use]
+    pub fn two_step_on(&self) -> Option<bool> {
+        self.file.signed_in().and_then(|a| a.two_factor)
     }
 
     #[must_use]
@@ -276,6 +300,7 @@ impl AccountSession {
         self.generation = self.generation.wrapping_add(1);
         self.derived = None;
         self.kit = None;
+        self.challenge = None;
         self.verified = false;
         self.code_busy = false;
         self.kit_busy = false;
@@ -300,6 +325,7 @@ impl AccountSession {
                     salt: encode_salt(&derived.salt),
                     wrapped_by_password: Some(wrapped_by_password),
                     plan: Some(PlanRecord::from_me(me)),
+                    two_factor: Some(me.two_factor),
                 })
             });
         self.new_epoch();
@@ -316,9 +342,59 @@ fn field_of(err: &FlowError, typed_secret_key: bool) -> Field {
     match err {
         FlowError::Api(ApiError::WrongCredentials) if typed_secret_key => Field::SecretKey,
         FlowError::Api(ApiError::WrongCredentials) | FlowError::WrongPassword => Field::Password,
-        FlowError::Api(ApiError::WrongCode | ApiError::CodeExpired) => Field::Code,
+        FlowError::Api(
+            ApiError::WrongCode
+            | ApiError::CodeExpired
+            | ApiError::WrongTwoStepCode
+            | ApiError::WrongBackupCode
+            | ApiError::TwoStepLocked,
+        ) => Field::Code,
         _ => Field::General,
     }
+}
+
+/// Errors that end a two-step sign-in attempt: the password is needed again.
+fn ends_two_step(err: &FlowError) -> bool {
+    matches!(
+        err,
+        FlowError::Api(ApiError::TwoStepExpired | ApiError::TwoStepTooManyCodes)
+    )
+}
+
+/// Ends sessions a dropped result created on the server (best effort).
+fn sign_out_orphans(
+    api: &Arc<dyn AccountApi>,
+    tokens: Vec<SessionToken>,
+    cx: &mut Context<Library>,
+) {
+    if tokens.is_empty() {
+        return;
+    }
+    let api = api.clone();
+    cx.background_executor()
+        .spawn(async move {
+            for token in tokens {
+                _ = api.sign_out(&token);
+            }
+        })
+        .detach();
+}
+
+/// The session in a finished flow, if it holds one.
+fn token_of(result: &flows::FlowResult<Finish>) -> Option<SessionToken> {
+    match result {
+        Ok(Finish::SignedIn { token, .. } | Finish::NeedsKit { token, .. }) => Some(token.clone()),
+        _ => None,
+    }
+}
+
+/// What the background needs to prove the password on this device.
+struct Proof {
+    email: String,
+    salt: ottero_crypto::Salt,
+    secret_key: AccountSecretKey,
+    wrapped_by_password: Option<String>,
+    token: SessionToken,
 }
 
 fn wrong_credentials_message(typed_secret_key: bool) -> String {
@@ -482,6 +558,8 @@ impl Library {
                 .await;
             _ = this.update(cx, |lib, cx| {
                 if lib.account.generation != generation {
+                    let api = lib.account.api.clone();
+                    sign_out_orphans(&api, token_of(&result).into_iter().collect(), cx);
                     return;
                 }
                 lib.account.code_busy = false;
@@ -520,6 +598,82 @@ impl Library {
                     lib.account.error = Some((Field::Code, err.message()));
                 }
                 cx.emit(LibraryEvent::AccountChanged);
+            });
+        })
+        .detach();
+    }
+
+    /// The second step of a sign-in: the authenticator code (six digits) or
+    /// a backup code. A wrong code stays on the step; an expired attempt goes
+    /// back to the password.
+    pub fn verify_two_step_code(
+        &mut self,
+        code: &str,
+        factor: SecondFactor,
+        cx: &mut Context<Self>,
+    ) {
+        let session = &mut self.account;
+        if !matches!(session.state, AccountState::TwoStep { .. }) || session.code_busy {
+            return;
+        }
+        let code = match factor {
+            SecondFactor::Authenticator => {
+                let digits = ottero_core::account::code_digits(code);
+                if digits.len() != 6 {
+                    session.error = Some((
+                        Field::Code,
+                        "Enter the 6-digit code from your authenticator app.".into(),
+                    ));
+                    cx.emit(LibraryEvent::AccountChanged);
+                    return;
+                }
+                digits
+            }
+            SecondFactor::BackupCode => {
+                let Some(code) = ottero_core::account::normalize_backup_code(code) else {
+                    session.error = Some((
+                        Field::Code,
+                        "Backup codes have 10 letters and digits, like Ab12c-De34f.".into(),
+                    ));
+                    cx.emit(LibraryEvent::AccountChanged);
+                    return;
+                };
+                code
+            }
+        };
+        let (Some(derived), Some(challenge)) = (session.derived.clone(), session.challenge.clone())
+        else {
+            session.error = Some((Field::Code, "Start again: go back and sign in.".into()));
+            cx.emit(LibraryEvent::AccountChanged);
+            return;
+        };
+        session.code_busy = true;
+        session.error = None;
+        let (api, generation) = (session.api.clone(), session.generation);
+        let earlier = session.pending_token.clone();
+        cx.emit(LibraryEvent::AccountChanged);
+        cx.spawn(async move |this, cx| {
+            let code = Zeroizing::new(code);
+            let task_derived = derived.clone();
+            let (token, result) = cx
+                .background_executor()
+                .spawn(async move {
+                    flows::finish_two_step(&*api, &task_derived, &challenge, factor, &code, earlier)
+                })
+                .await;
+            _ = this.update(cx, |lib, cx| {
+                if lib.account.generation != generation {
+                    // Left the step (Back, sign-in elsewhere): don't keep a session it made.
+                    let api = lib.account.api.clone();
+                    sign_out_orphans(&api, token.into_iter().collect(), cx);
+                    return;
+                }
+                lib.account.code_busy = false;
+                if result.is_err() {
+                    // Accepted but not opened (offline): retry without the code.
+                    lib.account.pending_token = token;
+                }
+                lib.apply_finish(&derived, result, false, cx);
             });
         })
         .detach();
@@ -589,6 +743,8 @@ impl Library {
                 .await;
             _ = this.update(cx, |lib, cx| {
                 if lib.account.generation != generation {
+                    let api = lib.account.api.clone();
+                    sign_out_orphans(&api, token_of(&result).into_iter().collect(), cx);
                     return;
                 }
                 match derived {
@@ -626,12 +782,19 @@ impl Library {
                 {
                     session.notice = Some(err);
                 }
+                session.pending_token = None;
                 session.forget_flow();
                 session.error = None;
                 session.apply(AccountEvent::SignedIn { plan });
                 cx.emit(LibraryEvent::AccountChanged);
                 self.refresh_account(cx);
                 return;
+            }
+            Ok(Finish::NeedsTwoStep { challenge }) => {
+                session.derived = Some(derived.clone());
+                session.challenge = Some(Arc::new(challenge));
+                session.error = None;
+                session.apply(AccountEvent::TwoStepRequired);
             }
             Ok(Finish::NeedsKit { token, me, kit }) => {
                 // The server accepted the keys, so a typed Secret Key is right: keep it.
@@ -645,6 +808,7 @@ impl Library {
                 }
                 session.pending_token = Some(token);
                 session.pending_plan = me.plan();
+                session.pending_two_factor = me.two_factor;
                 session.kit = Some(Arc::new(kit));
                 session.derived = Some(derived.clone());
                 session.apply(AccountEvent::KeysMissing);
@@ -658,15 +822,24 @@ impl Library {
             }
             Err(err) => {
                 let field = field_of(&err, typed_secret_key);
+                let err_kind = err.clone();
                 let message = match err {
                     FlowError::Api(ApiError::WrongCredentials) => {
                         wrong_credentials_message(typed_secret_key)
                     }
                     ref other => other.message(),
                 };
-                if matches!(session.state, AccountState::AwaitingCode { .. }) {
+                let in_place = match session.state {
+                    AccountState::AwaitingCode { .. } => true,
+                    AccountState::TwoStep { .. } => !ends_two_step(&err_kind),
+                    _ => false,
+                };
+                if in_place {
                     session.error = Some((field, message));
                 } else {
+                    if matches!(session.state, AccountState::TwoStep { .. }) {
+                        session.forget_flow();
+                    }
                     session.fail(field, message);
                 }
             }
@@ -739,6 +912,7 @@ impl Library {
                         _ => None,
                     },
                     has_keys: true,
+                    two_factor: session.pending_two_factor,
                 };
                 let plan = session.pending_plan;
                 let saved = session.signed_in(&derived, &token, &me, wrapped, key);
@@ -785,7 +959,10 @@ impl Library {
                 match result {
                     Ok((me, sessions)) => {
                         let record = PlanRecord::from_me(&me);
-                        _ = session.file.update_signed_in(|a| a.plan = Some(record));
+                        _ = session.file.update_signed_in(|a| {
+                            a.plan = Some(record);
+                            a.two_factor = Some(me.two_factor);
+                        });
                         session.apply(AccountEvent::PlanChanged { plan: me.plan() });
                         session.sessions = sessions;
                         session.sessions_loaded = true;
@@ -963,6 +1140,243 @@ impl Library {
         if was_open || pending {
             cx.emit(LibraryEvent::AccountChanged);
         }
+    }
+
+    /// What proving the password needs, or the sentence explaining why it can't.
+    fn proof(&self) -> Result<Proof, String> {
+        let session = &self.account;
+        let (Some(stored), Some(token)) = (session.file.signed_in(), session.file.token()) else {
+            return Err("Sign in first.".into());
+        };
+        if !session.state.is_signed_in() {
+            return Err("Sign in first.".into());
+        }
+        let secret_key = session
+            .file
+            .secret_key(&stored.email)
+            .and_then(|k| AccountSecretKey::parse(&k).ok())
+            .ok_or_else(|| {
+                "This computer doesn't have your Secret Key. Sign out and sign in again with your Emergency Kit.".to_owned()
+            })?;
+        let salt = decode_salt(&stored.salt).map_err(|_| FlowError::DamagedKeys.message())?;
+        Ok(Proof {
+            email: stored.email.clone(),
+            salt,
+            secret_key,
+            wrapped_by_password: stored.wrapped_by_password.clone(),
+            token,
+        })
+    }
+
+    /// Proves `password` off the main thread, then runs `call` with the
+    /// login key. `apply` sees the result only while the session that started
+    /// is still current; otherwise `orphan` names a session to end.
+    fn with_login_key<T: Send + 'static, R: 'static>(
+        &mut self,
+        password: SecretString,
+        cx: &mut Context<Self>,
+        call: impl FnOnce(&dyn AccountApi, &SessionToken, &str) -> ApiResult<T> + Send + 'static,
+        orphan: fn(&T) -> Option<SessionToken>,
+        apply: impl FnOnce(&mut Self, T, &mut Context<Self>) -> Result<R, String> + 'static,
+    ) -> gpui_kit::Task<Result<R, String>> {
+        if password.expose_secret().is_empty() {
+            return gpui_kit::Task::ready(Err("Enter your password.".into()));
+        }
+        let proof = match self.proof() {
+            Ok(p) => p,
+            Err(message) => return gpui_kit::Task::ready(Err(message)),
+        };
+        let session = &self.account;
+        let (api, kdf, epoch) = (session.api.clone(), session.kdf(), session.epoch);
+        let started_with = Zeroizing::new(proof.token.expose().to_owned());
+        cx.spawn(async move |this, cx| {
+            let task_api = api.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let Proof {
+                        email,
+                        salt,
+                        secret_key,
+                        wrapped_by_password,
+                        token,
+                    } = proof;
+                    let wrapped = match wrapped_by_password {
+                        Some(w) => w,
+                        None => {
+                            task_api
+                                .get_keys(&token)?
+                                .ok_or(FlowError::Api(ApiError::Unexpected))?
+                                .by_password
+                        }
+                    };
+                    let (login, key) =
+                        flows::prove_password(kdf, &password, &email, salt, secret_key, &wrapped)?;
+                    let answer = call(&*task_api, &token, &login);
+                    Ok::<_, FlowError>((key, wrapped, answer))
+                })
+                .await;
+            this.update(cx, |lib, cx| {
+                if !lib.account.still_current(epoch, Some(&started_with)) {
+                    if let Ok((_, _, Ok(answer))) = &result {
+                        sign_out_orphans(&api, orphan(answer).into_iter().collect(), cx);
+                    }
+                    return Err("The account changed in the meantime. Try again.".to_owned());
+                }
+                let (key, wrapped, answer) = result.map_err(|e| e.message())?;
+                // The password was right: this also unlocks the account here.
+                if lib.account.account_key.is_none() {
+                    _ = lib
+                        .account
+                        .file
+                        .update_signed_in(|a| a.wrapped_by_password = Some(wrapped));
+                    lib.account.account_key = Some(key);
+                    cx.emit(LibraryEvent::AccountChanged);
+                }
+                match answer {
+                    Ok(answer) => apply(lib, answer, cx),
+                    Err(ApiError::SessionEnded) => {
+                        lib.end_account_session(cx);
+                        Err(ApiError::SessionEnded.message())
+                    }
+                    Err(err) => {
+                        if err == ApiError::TwoStepChanged {
+                            lib.refresh_account(cx);
+                        }
+                        Err(match err {
+                            ApiError::WrongCredentials => FlowError::WrongPassword.message(),
+                            other => other.message(),
+                        })
+                    }
+                }
+            })
+            .map_err(|_| "Ottero is closing.".to_owned())?
+        })
+    }
+
+    /// Turning two-step verification on, step one: the password, then the
+    /// QR code and backup codes to show. Nothing is on until
+    /// [`Self::confirm_two_step_setup`].
+    pub fn start_two_step_setup(
+        &mut self,
+        password: SecretString,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<TwoStepSetup, String>> {
+        self.with_login_key(
+            password,
+            cx,
+            |api, token, login| api.enable_two_factor(token, login),
+            |_| None,
+            |_, setup, _| Ok(setup),
+        )
+    }
+
+    /// Step two: a code from the authenticator app turns it on. The server
+    /// replaces this device's session; the new token is saved here.
+    pub fn confirm_two_step_setup(
+        &mut self,
+        code: &str,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<(), String>> {
+        let digits = ottero_core::account::code_digits(code);
+        if digits.len() != 6 {
+            return gpui_kit::Task::ready(Err(
+                "Enter the 6-digit code from your authenticator app.".into(),
+            ));
+        }
+        let session = &self.account;
+        let Some(token) = session
+            .file
+            .token()
+            .filter(|_| session.state.is_signed_in())
+        else {
+            return gpui_kit::Task::ready(Err("Sign in first.".into()));
+        };
+        let (api, epoch) = (session.api.clone(), session.epoch);
+        let started_with = Zeroizing::new(token.expose().to_owned());
+        cx.spawn(async move |this, cx| {
+            let task_api = api.clone();
+            let digits = Zeroizing::new(digits);
+            let result = cx
+                .background_executor()
+                .spawn(async move { task_api.confirm_two_factor(&token, &digits) })
+                .await;
+            this.update(cx, |lib, cx| {
+                if !lib.account.still_current(epoch, Some(&started_with)) {
+                    // A late answer for a session this device no longer has.
+                    if let Ok(Some(new)) = result {
+                        sign_out_orphans(&api, vec![new], cx);
+                    }
+                    return Err("The account changed in the meantime. Try again.".to_owned());
+                }
+                match result {
+                    Ok(new) => lib.two_step_changed(new, true, cx),
+                    Err(ApiError::SessionEnded) => {
+                        lib.end_account_session(cx);
+                        Err(ApiError::SessionEnded.message())
+                    }
+                    Err(err) => Err(err.message()),
+                }
+            })
+            .map_err(|_| "Ottero is closing.".to_owned())?
+        })
+    }
+
+    /// Turns two-step verification off (after the password); the session is
+    /// replaced as when turning it on.
+    pub fn turn_off_two_step(
+        &mut self,
+        password: SecretString,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<(), String>> {
+        self.with_login_key(
+            password,
+            cx,
+            |api, token, login| api.disable_two_factor(token, login),
+            |new: &Option<SessionToken>| new.clone(),
+            |lib, new, cx| lib.two_step_changed(new, false, cx),
+        )
+    }
+
+    /// Replaces every backup code (after the password). The old ones stop working.
+    pub fn new_backup_codes(
+        &mut self,
+        password: SecretString,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<Vec<Zeroizing<String>>, String>> {
+        self.with_login_key(
+            password,
+            cx,
+            |api, token, login| api.regenerate_backup_codes(token, login),
+            |_| None,
+            |_, codes, _| Ok(codes),
+        )
+    }
+
+    /// Saves the replacement session token and the new two-step state. The
+    /// session changed, so pending refreshes are void (new epoch).
+    fn two_step_changed(
+        &mut self,
+        new_token: Option<SessionToken>,
+        on: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let session = &mut self.account;
+        let saved = session.file.update_signed_in(|a| {
+            if let Some(token) = &new_token {
+                a.token = token.expose().to_owned();
+            }
+            a.two_factor = Some(on);
+        });
+        if new_token.is_some() {
+            session.new_epoch();
+        }
+        if let Err(err) = saved {
+            session.notice = Some(format!("{err:#}"));
+        }
+        cx.emit(LibraryEvent::AccountChanged);
+        self.refresh_account(cx);
+        Ok(())
     }
 
     /// Kit contents for saving, or `None` when the Secret Key isn't open.

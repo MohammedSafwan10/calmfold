@@ -38,6 +38,10 @@ pub struct SignedIn {
     pub wrapped_by_password: Option<String>,
     #[serde(default)]
     pub plan: Option<PlanRecord>,
+    /// Two-step verification on or off, as last seen from `/api/me`
+    /// (`None` until the first answer), so the page can show it offline.
+    #[serde(default)]
+    pub two_factor: Option<bool>,
 }
 
 /// The last plan seen from `/api/me`.
@@ -325,6 +329,7 @@ mod tests {
                 cloud_source: Some("grant".into()),
                 cloud_ends_at: None,
             }),
+            two_factor: Some(false),
         }
     }
 

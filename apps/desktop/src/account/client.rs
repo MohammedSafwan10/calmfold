@@ -47,6 +47,20 @@ pub enum ApiError {
     Unexpected,
     /// `OTTERO_ACCOUNT_URL` is unusable (for example not https in a release build).
     Misconfigured,
+    /// The authenticator code was wrong (sign-in or turning two-step on).
+    WrongTwoStepCode,
+    /// The backup code was wrong or already used.
+    WrongBackupCode,
+    /// Too many wrong codes across sign-ins: the server locks two-step
+    /// verification for a while (15 minutes).
+    TwoStepLocked,
+    /// The second step of this sign-in is over (it expired after 10 minutes,
+    /// or two-step verification was turned off meanwhile): enter the password again.
+    TwoStepExpired,
+    /// Too many wrong codes in this sign-in: enter the password again.
+    TwoStepTooManyCodes,
+    /// Two-step verification was turned on or off elsewhere in the meantime.
+    TwoStepChanged,
 }
 
 impl ApiError {
@@ -67,6 +81,12 @@ impl ApiError {
             Self::Server => "Ottero Cloud had a problem. Try again in a few minutes.".into(),
             Self::Unexpected => "Ottero Cloud sent an answer Ottero doesn't understand. Update Ottero and try again.".into(),
             Self::Misconfigured => "The Ottero Cloud address isn't secure, so Ottero won't use it.".into(),
+            Self::WrongTwoStepCode => "That code isn't right. Check your authenticator app and try again.".into(),
+            Self::WrongBackupCode => "That backup code isn't right, or it was already used.".into(),
+            Self::TwoStepLocked => "Too many wrong codes. Try again in 15 minutes.".into(),
+            Self::TwoStepExpired => "This sign-in timed out. Enter your password again.".into(),
+            Self::TwoStepTooManyCodes => "Too many wrong codes. Enter your password again.".into(),
+            Self::TwoStepChanged => "Two-step verification was changed on another device. Close this and try again.".into(),
         }
     }
 }
@@ -106,6 +126,104 @@ impl std::fmt::Debug for SessionToken {
     }
 }
 
+/// The second step of a sign-in with two-step verification on: the signed
+/// `two_factor` cookie from `sign-in/email` (`name=value`). It proves the
+/// password was right for about 10 minutes. Held in memory only, never
+/// written to disk and never printed.
+pub struct TwoStepChallenge(Zeroizing<String>);
+
+impl TwoStepChallenge {
+    #[must_use]
+    pub fn new(cookie: String) -> Self {
+        Self(Zeroizing::new(cookie))
+    }
+
+    /// The `Cookie` header value.
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for TwoStepChallenge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TwoStepChallenge([redacted])")
+    }
+}
+
+/// What `sign-in/email` answered for a right password.
+#[derive(Debug)]
+pub enum SignInOutcome {
+    Session(SessionToken),
+    /// Two-step verification is on: no session yet, a code comes next.
+    TwoStep(TwoStepChallenge),
+}
+
+/// Which code finishes a two-step sign-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecondFactor {
+    /// The 6-digit code from the authenticator app.
+    Authenticator,
+    /// One of the ten single-use backup codes.
+    BackupCode,
+}
+
+/// `two-factor/enable`: the authenticator secret as an `otpauth://` link
+/// (for the QR code), its base32 setup key, and the backup codes. Not active
+/// until a code from the app confirms it.
+pub struct TwoStepSetup {
+    uri: Zeroizing<String>,
+    secret: Zeroizing<String>,
+    backup_codes: Vec<Zeroizing<String>>,
+}
+
+impl TwoStepSetup {
+    /// Checks the link is a TOTP link with a base32 secret.
+    pub fn new(uri: String, backup_codes: Vec<String>) -> ApiResult<Self> {
+        let uri = Zeroizing::new(uri);
+        let secret = setup_key_of(&uri).ok_or(ApiError::Unexpected)?;
+        if backup_codes.is_empty() {
+            return Err(ApiError::Unexpected);
+        }
+        Ok(Self {
+            uri,
+            secret,
+            backup_codes: backup_codes.into_iter().map(Zeroizing::new).collect(),
+        })
+    }
+
+    #[must_use]
+    pub fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    /// The base32 secret, for typing into an app that can't scan.
+    #[must_use]
+    pub fn setup_key(&self) -> &str {
+        &self.secret
+    }
+
+    #[must_use]
+    pub fn backup_codes(&self) -> &[Zeroizing<String>] {
+        &self.backup_codes
+    }
+}
+
+/// The `secret` of an `otpauth://totp/…` link, upper case, if it is base32.
+#[must_use]
+pub fn setup_key_of(uri: &str) -> Option<Zeroizing<String>> {
+    let parsed = url::Url::parse(uri).ok()?;
+    if parsed.scheme() != "otpauth" || parsed.host_str() != Some("totp") {
+        return None;
+    }
+    let secret = parsed
+        .query_pairs()
+        .find(|(k, _)| k == "secret")
+        .map(|(_, v)| Zeroizing::new(v.trim_end_matches('=').to_uppercase()))?;
+    let base32 = |c: char| c.is_ascii_uppercase() || ('2'..='7').contains(&c);
+    (secret.len() >= 16 && secret.chars().all(base32)).then_some(secret)
+}
+
 /// The public salt and KDF settings for an email (`POST /api/kdf`).
 pub struct KdfInfo {
     pub salt: Salt,
@@ -127,6 +245,8 @@ pub struct Me {
     pub role: String,
     pub cloud: Option<Cloud>,
     pub has_keys: bool,
+    /// Two-step verification is on.
+    pub two_factor: bool,
 }
 
 impl Me {
@@ -193,7 +313,41 @@ pub trait AccountApi: Send + Sync {
     fn sign_up(&self, email: &str, name: &str, auth_key_hex: &str, salt: &str) -> ApiResult<()>;
     fn verify_email(&self, email: &str, code: &str) -> ApiResult<()>;
     fn resend_code(&self, email: &str) -> ApiResult<()>;
-    fn sign_in(&self, email: &str, auth_key_hex: &str) -> ApiResult<SessionToken>;
+    /// A session, or the challenge for the second step when two-step
+    /// verification is on.
+    fn sign_in(&self, email: &str, auth_key_hex: &str) -> ApiResult<SignInOutcome>;
+    /// Finishes a two-step sign-in with an authenticator or backup code.
+    fn verify_second_factor(
+        &self,
+        challenge: &TwoStepChallenge,
+        factor: SecondFactor,
+        code: &str,
+    ) -> ApiResult<SessionToken>;
+    /// Starts turning two-step verification on (inactive until confirmed).
+    fn enable_two_factor(
+        &self,
+        token: &SessionToken,
+        auth_key_hex: &str,
+    ) -> ApiResult<TwoStepSetup>;
+    /// Confirms the setup with a code from the app. The server replaces the
+    /// session; the replacement token comes back (`None`: keep the old one).
+    fn confirm_two_factor(
+        &self,
+        token: &SessionToken,
+        code: &str,
+    ) -> ApiResult<Option<SessionToken>>;
+    /// Turns two-step verification off; the session is replaced as above.
+    fn disable_two_factor(
+        &self,
+        token: &SessionToken,
+        auth_key_hex: &str,
+    ) -> ApiResult<Option<SessionToken>>;
+    /// Replaces every backup code with a new set.
+    fn regenerate_backup_codes(
+        &self,
+        token: &SessionToken,
+        auth_key_hex: &str,
+    ) -> ApiResult<Vec<Zeroizing<String>>>;
     fn me(&self, token: &SessionToken) -> ApiResult<Me>;
     fn put_keys(&self, token: &SessionToken, keys: &WrappedKeys) -> ApiResult<()>;
     /// `None` when the account has no keys yet.
@@ -243,7 +397,31 @@ impl AccountApi for Unconfigured {
     fn resend_code(&self, _: &str) -> ApiResult<()> {
         Err(ApiError::Misconfigured)
     }
-    fn sign_in(&self, _: &str, _: &str) -> ApiResult<SessionToken> {
+    fn sign_in(&self, _: &str, _: &str) -> ApiResult<SignInOutcome> {
+        Err(ApiError::Misconfigured)
+    }
+    fn verify_second_factor(
+        &self,
+        _: &TwoStepChallenge,
+        _: SecondFactor,
+        _: &str,
+    ) -> ApiResult<SessionToken> {
+        Err(ApiError::Misconfigured)
+    }
+    fn enable_two_factor(&self, _: &SessionToken, _: &str) -> ApiResult<TwoStepSetup> {
+        Err(ApiError::Misconfigured)
+    }
+    fn confirm_two_factor(&self, _: &SessionToken, _: &str) -> ApiResult<Option<SessionToken>> {
+        Err(ApiError::Misconfigured)
+    }
+    fn disable_two_factor(&self, _: &SessionToken, _: &str) -> ApiResult<Option<SessionToken>> {
+        Err(ApiError::Misconfigured)
+    }
+    fn regenerate_backup_codes(
+        &self,
+        _: &SessionToken,
+        _: &str,
+    ) -> ApiResult<Vec<Zeroizing<String>>> {
         Err(ApiError::Misconfigured)
     }
     fn me(&self, _: &SessionToken) -> ApiResult<Me> {
@@ -268,6 +446,10 @@ impl AccountApi for Unconfigured {
 
 pub struct HttpAccountClient {
     base: String,
+    /// `scheme://host[:port]` of `base`. Better Auth refuses a request that
+    /// carries a cookie without a trusted `Origin` (CSRF check); the server's
+    /// own address is trusted, so the two-step cookie request names it.
+    origin: String,
     agent: ureq::Agent,
 }
 
@@ -275,6 +457,17 @@ struct Reply {
     status: u16,
     body: Zeroizing<Vec<u8>>,
     auth_token: Option<SessionToken>,
+    /// The `two_factor` cookie of a sign-in that needs the second step.
+    two_step: Option<TwoStepChallenge>,
+}
+
+/// How a request proves who sends it.
+#[derive(Clone, Copy)]
+enum Credential<'a> {
+    None,
+    Bearer(&'a SessionToken),
+    /// The two-step challenge cookie, for the second step of a sign-in.
+    Challenge(&'a TwoStepChallenge),
 }
 
 #[derive(Deserialize, Default)]
@@ -299,7 +492,14 @@ impl HttpAccountClient {
             .user_agent(user_agent())
             .build()
             .into();
-        Self { base, agent }
+        let origin = url::Url::parse(&base)
+            .map(|u| u.origin().ascii_serialization())
+            .unwrap_or_default();
+        Self {
+            base,
+            origin,
+            agent,
+        }
     }
 
     /// From `OTTERO_ACCOUNT_URL` and the build type.
@@ -323,13 +523,34 @@ impl HttpAccountClient {
         body: &serde_json::Value,
         token: Option<&SessionToken>,
     ) -> ApiResult<Reply> {
+        self.send(
+            path,
+            body,
+            token.map_or(Credential::None, Credential::Bearer),
+        )
+    }
+
+    fn send(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+        credential: Credential<'_>,
+    ) -> ApiResult<Reply> {
         let bytes = Zeroizing::new(serde_json::to_vec(body).map_err(|_| ApiError::Unexpected)?);
         let mut request = self
             .agent
             .post(format!("{}{path}", self.base))
             .header("content-type", "application/json");
-        if let Some(token) = token {
-            request = request.header("authorization", format!("Bearer {}", token.expose()));
+        match credential {
+            Credential::None => {}
+            Credential::Bearer(token) => {
+                request = request.header("authorization", format!("Bearer {}", token.expose()));
+            }
+            Credential::Challenge(challenge) => {
+                request = request
+                    .header("cookie", challenge.expose())
+                    .header("origin", self.origin.as_str());
+            }
         }
         read(request.send(bytes.as_slice()))
     }
@@ -370,6 +591,12 @@ fn read(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> ApiRes
         .and_then(|v| v.to_str().ok())
         .filter(|v| !v.is_empty())
         .map(|v| SessionToken::new(v.to_owned()));
+    let two_step = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find_map(two_step_cookie);
     let body = response
         .body_mut()
         .with_config()
@@ -380,7 +607,63 @@ fn read(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> ApiRes
         status,
         body: Zeroizing::new(body),
         auth_token,
+        two_step,
     })
+}
+
+/// `name=value` of a `Set-Cookie` line for the two-step cookie
+/// (`better-auth.two_factor`, or `__Secure-` prefixed over https). An
+/// emptied cookie (the server expiring it) doesn't count.
+fn two_step_cookie(line: &str) -> Option<TwoStepChallenge> {
+    let pair = line.split(';').next()?.trim();
+    let (name, value) = pair.split_once('=')?;
+    let ours = name
+        .trim_start_matches("__Secure-")
+        .trim_start_matches("__Host-")
+        == "better-auth.two_factor";
+    (ours && !value.is_empty()).then(|| TwoStepChallenge::new(pair.to_owned()))
+}
+
+/// Maps a failed two-step reply. `session` is true while signed in
+/// (turning it on), where any other 401 means the session ended.
+fn two_step_error(reply: &Reply, session: bool) -> ApiError {
+    let body = error_of(reply);
+    match (reply.status, body.code.as_deref()) {
+        (_, Some("INVALID_CODE")) => ApiError::WrongTwoStepCode,
+        (_, Some("INVALID_BACKUP_CODE")) => ApiError::WrongBackupCode,
+        (_, Some("ACCOUNT_TEMPORARILY_LOCKED")) => ApiError::TwoStepLocked,
+        (_, Some("TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE")) => ApiError::TwoStepTooManyCodes,
+        (_, Some("INVALID_PASSWORD")) => ApiError::WrongCredentials,
+        (
+            _,
+            Some(
+                "TOTP_ALREADY_ENABLED"
+                | "TOTP_NOT_ENABLED"
+                | "TWO_FACTOR_NOT_ENABLED"
+                | "BACKUP_CODES_NOT_ENABLED",
+            ),
+        ) if session => ApiError::TwoStepChanged,
+        (_, Some("TOTP_NOT_ENABLED" | "TWO_FACTOR_NOT_ENABLED" | "BACKUP_CODES_NOT_ENABLED")) => {
+            ApiError::TwoStepExpired
+        }
+        (401, _) if session => ApiError::SessionEnded,
+        (401, _) => ApiError::TwoStepExpired,
+        _ => general(reply, session),
+    }
+}
+
+/// `{ backupCodes: [...] }` from enable or generate-backup-codes.
+fn backup_codes_of(reply: &Reply) -> ApiResult<Vec<String>> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Body {
+        backup_codes: Vec<String>,
+    }
+    let body: Body = parse(reply)?;
+    if body.backup_codes.is_empty() || body.backup_codes.iter().any(|c| c.len() > 64) {
+        return Err(ApiError::Unexpected);
+    }
+    Ok(body.backup_codes)
 }
 
 fn error_of(reply: &Reply) -> ErrorBody {
@@ -492,14 +775,31 @@ impl AccountApi for HttpAccountClient {
         }
     }
 
-    fn sign_in(&self, email: &str, auth_key_hex: &str) -> ApiResult<SessionToken> {
+    fn sign_in(&self, email: &str, auth_key_hex: &str) -> ApiResult<SignInOutcome> {
+        #[derive(Deserialize, Default)]
+        #[serde(rename_all = "camelCase")]
+        struct Body {
+            #[serde(default)]
+            two_factor_redirect: bool,
+        }
         let reply = self.post(
             "/api/auth/sign-in/email",
             &json!({ "email": email, "password": auth_key_hex }),
             None,
         )?;
         if ok(&reply) {
-            return reply.auth_token.ok_or(ApiError::Unexpected);
+            let body: Body = serde_json::from_slice(&reply.body).unwrap_or_default();
+            if body.two_factor_redirect {
+                // Any token header on this answer is not a session: ignore it.
+                return reply
+                    .two_step
+                    .map(SignInOutcome::TwoStep)
+                    .ok_or(ApiError::Unexpected);
+            }
+            return reply
+                .auth_token
+                .map(SignInOutcome::Session)
+                .ok_or(ApiError::Unexpected);
         }
         let body = error_of(&reply);
         Err(match (reply.status, body.code.as_deref()) {
@@ -507,6 +807,103 @@ impl AccountApi for HttpAccountClient {
             (401, _) => ApiError::WrongCredentials,
             _ => general(&reply, false),
         })
+    }
+
+    fn verify_second_factor(
+        &self,
+        challenge: &TwoStepChallenge,
+        factor: SecondFactor,
+        code: &str,
+    ) -> ApiResult<SessionToken> {
+        let path = match factor {
+            SecondFactor::Authenticator => "/api/auth/two-factor/verify-totp",
+            SecondFactor::BackupCode => "/api/auth/two-factor/verify-backup-code",
+        };
+        let reply = self.send(
+            path,
+            &json!({ "code": code }),
+            Credential::Challenge(challenge),
+        )?;
+        if ok(&reply) {
+            return reply.auth_token.ok_or(ApiError::Unexpected);
+        }
+        Err(two_step_error(&reply, false))
+    }
+
+    fn enable_two_factor(
+        &self,
+        token: &SessionToken,
+        auth_key_hex: &str,
+    ) -> ApiResult<TwoStepSetup> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body {
+            #[serde(rename = "totpURI")]
+            totp_uri: String,
+        }
+        let reply = self.post(
+            "/api/auth/two-factor/enable",
+            &json!({ "password": auth_key_hex }),
+            Some(token),
+        )?;
+        if !ok(&reply) {
+            return Err(two_step_error(&reply, true));
+        }
+        let body: Body = parse(&reply)?;
+        TwoStepSetup::new(body.totp_uri, backup_codes_of(&reply)?)
+    }
+
+    fn confirm_two_factor(
+        &self,
+        token: &SessionToken,
+        code: &str,
+    ) -> ApiResult<Option<SessionToken>> {
+        let reply = self.post(
+            "/api/auth/two-factor/verify-totp",
+            &json!({ "code": code }),
+            Some(token),
+        )?;
+        if ok(&reply) {
+            Ok(reply.auth_token)
+        } else {
+            Err(two_step_error(&reply, true))
+        }
+    }
+
+    fn disable_two_factor(
+        &self,
+        token: &SessionToken,
+        auth_key_hex: &str,
+    ) -> ApiResult<Option<SessionToken>> {
+        let reply = self.post(
+            "/api/auth/two-factor/disable",
+            &json!({ "password": auth_key_hex }),
+            Some(token),
+        )?;
+        if ok(&reply) {
+            Ok(reply.auth_token)
+        } else {
+            Err(two_step_error(&reply, true))
+        }
+    }
+
+    fn regenerate_backup_codes(
+        &self,
+        token: &SessionToken,
+        auth_key_hex: &str,
+    ) -> ApiResult<Vec<Zeroizing<String>>> {
+        let reply = self.post(
+            "/api/auth/two-factor/generate-backup-codes",
+            &json!({ "password": auth_key_hex }),
+            Some(token),
+        )?;
+        if !ok(&reply) {
+            return Err(two_step_error(&reply, true));
+        }
+        Ok(backup_codes_of(&reply)?
+            .into_iter()
+            .map(Zeroizing::new)
+            .collect())
     }
 
     fn me(&self, token: &SessionToken) -> ApiResult<Me> {
@@ -524,6 +921,8 @@ impl AccountApi for HttpAccountClient {
             role: String,
             cloud: Option<CloudBody>,
             has_keys: bool,
+            #[serde(default)]
+            two_factor: bool,
         }
         let reply = self.get("/api/me", token)?;
         if !ok(&reply) {
@@ -540,6 +939,7 @@ impl AccountApi for HttpAccountClient {
                 ends_at: timestamp(c.ends_at.as_deref()),
             }),
             has_keys: body.has_keys,
+            two_factor: body.two_factor,
         })
     }
 
@@ -642,6 +1042,8 @@ mod tests {
         method: String,
         path: String,
         authorization: Option<String>,
+        cookie: Option<String>,
+        origin: Option<String>,
         body: String,
     }
 
@@ -665,7 +1067,8 @@ mod tests {
                 let mut parts = line.split_whitespace();
                 let method = parts.next().unwrap_or_default().to_owned();
                 let path = parts.next().unwrap_or_default().to_owned();
-                let (mut length, mut authorization) = (0usize, None);
+                let (mut length, mut authorization, mut cookie, mut origin) =
+                    (0usize, None, None, None);
                 loop {
                     let mut header = String::new();
                     reader.read_line(&mut header).expect("header");
@@ -677,6 +1080,8 @@ mod tests {
                     match name.to_ascii_lowercase().as_str() {
                         "content-length" => length = value.trim().parse().unwrap_or(0),
                         "authorization" => authorization = Some(value.trim().to_owned()),
+                        "cookie" => cookie = Some(value.trim().to_owned()),
+                        "origin" => origin = Some(value.trim().to_owned()),
                         _ => {}
                     }
                 }
@@ -686,6 +1091,8 @@ mod tests {
                     method,
                     path,
                     authorization,
+                    cookie,
+                    origin,
                     body: String::from_utf8_lossy(&buf).into_owned(),
                 });
                 let mut out = stream;
@@ -760,7 +1167,10 @@ mod tests {
             (500, vec![], r#"{"error":"Something went wrong"}"#),
         ]);
         let api = HttpAccountClient::new(base);
-        let token = api.sign_in("sam@example.com", HEX).expect("token");
+        let SignInOutcome::Session(token) = api.sign_in("sam@example.com", HEX).expect("token")
+        else {
+            panic!("a session");
+        };
         assert_eq!(token.expose(), "raw123.sig=");
         assert_eq!(token.session_part(), "raw123");
         assert_eq!(format!("{token:?}"), "SessionToken([redacted])");
@@ -963,5 +1373,262 @@ mod tests {
         let api = HttpAccountClient::new(base);
         assert!(api.sign_in("a@b.co", HEX).is_err());
         assert_eq!(seen.lock().expect("seen").len(), 1);
+    }
+
+    const URI: &str = "otpauth://totp/Ottero:sam%40example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Ottero&digits=6&period=30";
+
+    #[test]
+    fn two_step_sign_in_sends_the_challenge_cookie_and_ignores_the_first_token() {
+        let (base, seen) = server(vec![
+            // Captured from the real API: the first step carries an emptied
+            // session cookie, the signed two-step cookie, and no session.
+            (
+                200,
+                vec![
+                    ("set-auth-token", "not-a-session"),
+                    (
+                        "set-cookie",
+                        "better-auth.session_token=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",
+                    ),
+                    (
+                        "set-cookie",
+                        "better-auth.two_factor=2fa-abc.sig%3D; Max-Age=600; Path=/; HttpOnly; SameSite=Lax",
+                    ),
+                ],
+                r#"{"twoFactorRedirect":true,"twoFactorMethods":["totp"]}"#,
+            ),
+            (
+                401,
+                vec![],
+                r#"{"message":"Invalid code","code":"INVALID_CODE"}"#,
+            ),
+            (
+                200,
+                vec![("set-auth-token", "sess.sig")],
+                r#"{"token":"sess"}"#,
+            ),
+            (
+                401,
+                vec![],
+                r#"{"message":"Invalid backup code","code":"INVALID_BACKUP_CODE"}"#,
+            ),
+            (
+                401,
+                vec![],
+                r#"{"message":"Invalid two factor cookie","code":"INVALID_TWO_FACTOR_COOKIE"}"#,
+            ),
+            (
+                400,
+                vec![],
+                r#"{"message":"Too many attempts. Please request a new code.","code":"TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE"}"#,
+            ),
+            (
+                429,
+                vec![],
+                r#"{"message":"Too many failed verification attempts.","code":"ACCOUNT_TEMPORARILY_LOCKED"}"#,
+            ),
+            (
+                429,
+                vec![],
+                r#"{"message":"Too many requests. Please try again later."}"#,
+            ),
+            (
+                200,
+                vec![(
+                    "set-cookie",
+                    "__Secure-better-auth.two_factor=2fa-x.sig; Path=/; Secure",
+                )],
+                r#"{"twoFactorRedirect":true}"#,
+            ),
+            (200, vec![], r#"{"twoFactorRedirect":true}"#),
+        ]);
+        let api = HttpAccountClient::new(base.clone());
+        let SignInOutcome::TwoStep(challenge) = api.sign_in("sam@example.com", HEX).expect("ok")
+        else {
+            panic!("needs the second step");
+        };
+        assert_eq!(challenge.expose(), "better-auth.two_factor=2fa-abc.sig%3D");
+        assert_eq!(format!("{challenge:?}"), "TwoStepChallenge([redacted])");
+        let verify = |factor, code| {
+            api.verify_second_factor(&challenge, factor, code)
+                .map(|_| ())
+        };
+        assert_eq!(
+            verify(SecondFactor::Authenticator, "000000"),
+            Err(ApiError::WrongTwoStepCode)
+        );
+        let token = api
+            .verify_second_factor(&challenge, SecondFactor::Authenticator, "287082")
+            .expect("session");
+        assert_eq!(token.expose(), "sess.sig");
+        assert_eq!(
+            verify(SecondFactor::BackupCode, "aaaaa-bbbbb"),
+            Err(ApiError::WrongBackupCode)
+        );
+        assert_eq!(
+            verify(SecondFactor::Authenticator, "1"),
+            Err(ApiError::TwoStepExpired)
+        );
+        assert_eq!(
+            verify(SecondFactor::Authenticator, "1"),
+            Err(ApiError::TwoStepTooManyCodes)
+        );
+        assert_eq!(
+            verify(SecondFactor::Authenticator, "1"),
+            Err(ApiError::TwoStepLocked)
+        );
+        assert_eq!(
+            verify(SecondFactor::Authenticator, "1"),
+            Err(ApiError::TooManyAttempts),
+            "the rate limiter is not the lockout"
+        );
+        let SignInOutcome::TwoStep(secure) = api.sign_in("a@b.co", HEX).expect("ok") else {
+            panic!("https cookie name");
+        };
+        assert_eq!(secure.expose(), "__Secure-better-auth.two_factor=2fa-x.sig");
+        assert_eq!(
+            api.sign_in("a@b.co", HEX).map(|_| ()),
+            Err(ApiError::Unexpected),
+            "a redirect without its cookie can't continue"
+        );
+        let seen = seen.lock().expect("seen");
+        assert_eq!(seen[1].path, "/api/auth/two-factor/verify-totp");
+        assert_eq!(
+            seen[1].cookie.as_deref(),
+            Some("better-auth.two_factor=2fa-abc.sig%3D")
+        );
+        assert!(
+            seen[1].authorization.is_none(),
+            "no bearer on the second step"
+        );
+        assert_eq!(
+            seen[1].origin.as_deref(),
+            Some(base.as_str()),
+            "the server's own origin passes its CSRF check"
+        );
+        assert!(
+            seen[0].origin.is_none(),
+            "only cookie requests name an origin"
+        );
+        assert_eq!(seen[2].body, r#"{"code":"287082"}"#);
+        assert_eq!(seen[3].path, "/api/auth/two-factor/verify-backup-code");
+    }
+
+    #[test]
+    fn turning_two_step_on_and_off_uses_the_login_key_and_keeps_the_new_token() {
+        let enabled = format!(
+            r#"{{"method":"totp","totpURI":"{URI}","backupCodes":["aaaaa-11111","bbbbb-22222"]}}"#
+        );
+        let enabled: &'static str = Box::leak(enabled.into_boxed_str());
+        let (base, seen) = server(vec![
+            (200, vec![], enabled),
+            (
+                401,
+                vec![],
+                r#"{"message":"Invalid code","code":"INVALID_CODE"}"#,
+            ),
+            (
+                200,
+                vec![("set-auth-token", "new.sig")],
+                r#"{"token":"new"}"#,
+            ),
+            (
+                400,
+                vec![],
+                r#"{"message":"TOTP is already enabled","code":"TOTP_ALREADY_ENABLED"}"#,
+            ),
+            (
+                200,
+                vec![],
+                r#"{"status":true,"backupCodes":["ccccc-33333"]}"#,
+            ),
+            (
+                200,
+                vec![("set-auth-token", "after-off.sig")],
+                r#"{"status":true}"#,
+            ),
+            (
+                400,
+                vec![],
+                r#"{"message":"Invalid password","code":"INVALID_PASSWORD"}"#,
+            ),
+            (
+                401,
+                vec![],
+                r#"{"message":"Unauthorized","code":"UNAUTHORIZED"}"#,
+            ),
+            (
+                200,
+                vec![],
+                r#"{"totpURI":"https://evil.example/","backupCodes":["a"]}"#,
+            ),
+            (200, vec![], r#"{"status":true}"#),
+        ]);
+        let api = HttpAccountClient::new(base);
+        let token = SessionToken::new("old.sig".into());
+        let setup = api.enable_two_factor(&token, HEX).expect("setup");
+        assert_eq!(setup.uri(), URI);
+        assert_eq!(setup.setup_key(), "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
+        assert_eq!(setup.backup_codes().len(), 2);
+        assert_eq!(
+            api.confirm_two_factor(&token, "000000").map(|_| ()),
+            Err(ApiError::WrongTwoStepCode),
+            "a wrong code is not a lost session"
+        );
+        let new = api
+            .confirm_two_factor(&token, "287082")
+            .expect("on")
+            .expect("replacement token");
+        assert_eq!(new.expose(), "new.sig");
+        assert_eq!(
+            api.enable_two_factor(&new, HEX).map(|_| ()),
+            Err(ApiError::TwoStepChanged)
+        );
+        let codes = api.regenerate_backup_codes(&new, HEX).expect("codes");
+        assert_eq!(codes.len(), 1);
+        assert_eq!(codes[0].as_str(), "ccccc-33333");
+        let after = api.disable_two_factor(&new, HEX).expect("off");
+        assert_eq!(
+            after.map(|t| t.expose().to_owned()).as_deref(),
+            Some("after-off.sig")
+        );
+        assert_eq!(
+            api.disable_two_factor(&new, HEX).map(|_| ()),
+            Err(ApiError::WrongCredentials)
+        );
+        assert_eq!(
+            api.disable_two_factor(&new, HEX).map(|_| ()),
+            Err(ApiError::SessionEnded)
+        );
+        assert_eq!(
+            api.enable_two_factor(&new, HEX).map(|_| ()),
+            Err(ApiError::Unexpected),
+            "only an otpauth TOTP link is shown as a QR code"
+        );
+        assert_eq!(
+            api.regenerate_backup_codes(&new, HEX).map(|_| ()),
+            Err(ApiError::Unexpected),
+            "no codes in the answer"
+        );
+        let seen = seen.lock().expect("seen");
+        assert_eq!(seen[0].path, "/api/auth/two-factor/enable");
+        assert_eq!(seen[0].body, format!(r#"{{"password":"{HEX}"}}"#));
+        assert_eq!(seen[0].authorization.as_deref(), Some("Bearer old.sig"));
+        assert_eq!(seen[3].authorization.as_deref(), Some("Bearer new.sig"));
+        assert_eq!(seen[4].path, "/api/auth/two-factor/generate-backup-codes");
+        assert_eq!(seen[5].path, "/api/auth/two-factor/disable");
+    }
+
+    #[test]
+    fn setup_keys_come_only_from_totp_links() {
+        assert_eq!(
+            setup_key_of(URI).as_deref().map(String::as_str),
+            Some("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+        );
+        assert!(setup_key_of("otpauth://hotp/x?secret=GEZDGNBVGY3TQOJQ").is_none());
+        assert!(setup_key_of("otpauth://totp/x?secret=short").is_none());
+        assert!(setup_key_of("otpauth://totp/x?secret=GEZDGNBVGY3TQOJ1").is_none());
+        assert!(setup_key_of("otpauth://totp/x").is_none());
+        assert!(TwoStepSetup::new(URI.into(), vec![]).is_err());
     }
 }

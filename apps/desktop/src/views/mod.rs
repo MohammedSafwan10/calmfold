@@ -21,6 +21,7 @@ pub mod holiday_settings;
 pub mod note_editor;
 pub mod notes;
 pub mod passwords;
+pub mod qr;
 pub mod settings;
 pub mod task_detail;
 pub mod task_row;

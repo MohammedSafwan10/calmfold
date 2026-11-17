@@ -10,7 +10,10 @@ use ottero_crypto::account::{
 };
 use ottero_crypto::{CryptoError, Salt, SecretKey, SecretString, Zeroizing};
 
-use super::client::{AccountApi, ApiError, Me, SessionToken, WrappedKeys};
+use super::client::{
+    AccountApi, ApiError, Me, SecondFactor, SessionToken, SignInOutcome, TwoStepChallenge,
+    WrappedKeys,
+};
 
 /// A failure in a flow, before it is placed next to a field.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +84,9 @@ pub enum Finish {
         me: Me,
         kit: Kit,
     },
+    /// The password was right and two-step verification is on: the
+    /// authenticator or a backup code comes next.
+    NeedsTwoStep { challenge: TwoStepChallenge },
 }
 
 fn derive(
@@ -143,9 +149,44 @@ pub fn new_kit(keys: &AccountKeys) -> FlowResult<Kit> {
     })
 }
 
-/// Signs in with already-derived keys and opens (or creates) the account key.
+/// Signs in with already-derived keys and opens (or creates) the account
+/// key, unless two-step verification asks for a code first.
 pub fn finish_sign_in(api: &dyn AccountApi, derived: &Derived) -> FlowResult<Finish> {
-    let token = api.sign_in(&derived.email, &derived.keys.auth_key().to_hex())?;
+    match api.sign_in(&derived.email, &derived.keys.auth_key().to_hex())? {
+        SignInOutcome::Session(token) => open_account(api, derived, token),
+        SignInOutcome::TwoStep(challenge) => Ok(Finish::NeedsTwoStep { challenge }),
+    }
+}
+
+/// The second step: the code turns the challenge into a session (unless an
+/// earlier try already did, `session`), then the account opens as usual.
+/// Returns the session whenever there is one, so a retry after a network
+/// failure doesn't spend the code again.
+pub fn finish_two_step(
+    api: &dyn AccountApi,
+    derived: &Derived,
+    challenge: &TwoStepChallenge,
+    factor: SecondFactor,
+    code: &str,
+    session: Option<SessionToken>,
+) -> (Option<SessionToken>, FlowResult<Finish>) {
+    let token = match session {
+        Some(token) => token,
+        None => match api.verify_second_factor(challenge, factor, code) {
+            Ok(token) => token,
+            Err(err) => return (None, Err(err.into())),
+        },
+    };
+    let result = open_account(api, derived, token.clone());
+    (Some(token), result)
+}
+
+/// With a session: the plan, then the account key (or a new kit).
+fn open_account(
+    api: &dyn AccountApi,
+    derived: &Derived,
+    token: SessionToken,
+) -> FlowResult<Finish> {
     let me = api.me(&token)?;
     match api.get_keys(&token)? {
         Some(wrapped) => {
@@ -254,6 +295,28 @@ pub fn unlock(
         CryptoError::Decrypt => FlowError::WrongPassword,
         _ => FlowError::DamagedKeys,
     })
+}
+
+/// Proves the password like [`unlock`] and also returns the login key
+/// (hex) that two-step settings send as the `password`. Checking the account
+/// key first means a mistyped password never reaches the server.
+pub fn prove_password(
+    kdf: AccountKdf,
+    password: &SecretString,
+    email: &str,
+    salt: Salt,
+    secret_key: AccountSecretKey,
+    wrapped_by_password: &str,
+) -> FlowResult<(Zeroizing<String>, SecretKey)> {
+    let derived = derive(password, email, salt, secret_key, kdf)?;
+    let key =
+        unwrap_account_key(derived.keys.wrap_key(), wrapped_by_password).map_err(
+            |err| match err {
+                CryptoError::Decrypt => FlowError::WrongPassword,
+                _ => FlowError::DamagedKeys,
+            },
+        )?;
+    Ok((derived.keys.auth_key().to_hex(), key))
 }
 
 /// The Secret Key text a user typed, canonical for storage.
