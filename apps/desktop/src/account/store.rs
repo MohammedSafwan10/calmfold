@@ -2,11 +2,13 @@
 //! email and a few public values (salt, wrapped account key, last plan) so
 //! the account page and "Unlock Ottero Cloud" work offline.
 //!
-//! The file is written atomically with 0600 permissions on Unix, in debug
-//! and release builds. Development builds never use the system keychain
-//! (docs/security.md, Keychain policy); release builds move the token and
-//! Secret Key to the OS keychain in a later step. The account key itself is
-//! never written: it exists only in memory while unlocked.
+//! The file is written atomically with 0600 permissions on Unix. The two
+//! secrets (session token, Secret Keys) go to the platform store when the
+//! build has one (`secrets::platform_slot`: Windows Credential Manager in
+//! release builds) and stay in this file otherwise; a file written by an
+//! older version has its secrets moved into the store on first open. The
+//! account key itself is never written: it exists only in memory while
+//! unlocked.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -18,6 +20,7 @@ use ottero_crypto::Zeroizing;
 use serde::{Deserialize, Serialize};
 
 use super::client::{Cloud, Me, SessionToken};
+use super::secrets::{SecretSlot, Secrets};
 
 const VERSION: u32 = 1;
 
@@ -25,6 +28,8 @@ const VERSION: u32 = 1;
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct SignedIn {
     pub email: String,
+    /// Empty in the file when a platform store holds it.
+    #[serde(default)]
     pub token: String,
     /// Public KDF salt (base64url).
     pub salt: String,
@@ -92,6 +97,8 @@ struct Data {
 pub struct AccountFile {
     path: Option<PathBuf>,
     data: Data,
+    /// Holds the token and Secret Keys instead of the file, when present.
+    slot: Option<Box<dyn SecretSlot>>,
 }
 
 impl AccountFile {
@@ -100,13 +107,21 @@ impl AccountFile {
         Self {
             path: None,
             data: Data::default(),
+            slot: None,
         }
+    }
+
+    /// `account.json` at `path`, with secrets in this build's platform store.
+    #[must_use]
+    pub fn open(path: PathBuf) -> Self {
+        Self::open_with(path, super::secrets::platform_slot())
     }
 
     /// Reads `path`. A damaged file is moved aside (never overwritten, it
     /// may hold the only copy of a Secret Key) and Ottero starts signed out.
+    /// With a `slot`, secrets found in the file are moved into it.
     #[must_use]
-    pub fn open(path: PathBuf) -> Self {
+    pub fn open_with(path: PathBuf, slot: Option<Box<dyn SecretSlot>>) -> Self {
         let data = match std::fs::read(&path) {
             Ok(bytes) => {
                 let bytes = Zeroizing::new(bytes);
@@ -128,9 +143,69 @@ impl AccountFile {
             }
             Err(_) => Data::default(),
         };
-        Self {
+        let mut file = Self {
             path: Some(path),
             data,
+            slot,
+        };
+        file.attach_slot();
+        file
+    }
+
+    /// Fills the in-memory copy from the slot and moves any secrets left in
+    /// the file into it. If the slot can't be read, the sign-in still works
+    /// from whatever the file holds; nothing is deleted.
+    fn attach_slot(&mut self) {
+        let Some(slot) = &self.slot else { return };
+        let in_file = self.file_secrets();
+        let stored = match slot.load() {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("ottero: {err:#}");
+                self.slot = None;
+                return;
+            }
+        };
+        let mut merged = stored.clone();
+        if merged.token.is_none() {
+            merged.token = in_file.token.clone();
+        }
+        for (email, key) in &in_file.secret_keys {
+            merged
+                .secret_keys
+                .entry(email.clone())
+                .or_insert_with(|| key.clone());
+        }
+        if merged != stored && slot.save(&merged).is_err() {
+            self.slot = None; // keep using the file rather than lose a Secret Key
+            return;
+        }
+        self.apply_secrets(&merged);
+        if !in_file.is_empty() {
+            _ = self.save(); // rewrites the file without its secrets
+        }
+    }
+
+    fn file_secrets(&self) -> Secrets {
+        Secrets {
+            token: self
+                .data
+                .account
+                .as_ref()
+                .map(|a| a.token.clone())
+                .filter(|t| !t.is_empty()),
+            secret_keys: self.data.secret_keys.clone(),
+        }
+    }
+
+    fn apply_secrets(&mut self, secrets: &Secrets) {
+        self.data.secret_keys = secrets.secret_keys.clone();
+        match (&mut self.data.account, &secrets.token) {
+            (Some(a), Some(t)) => a.token = t.clone(),
+            // The token is gone from the store (removed by the user or another
+            // copy): this device is signed out; the Secret Keys stay.
+            (Some(_), None) => self.data.account = None,
+            _ => {}
         }
     }
 
@@ -189,7 +264,20 @@ impl AccountFile {
             return Ok(());
         };
         self.data.version = VERSION;
-        let bytes = Zeroizing::new(serde_json::to_vec_pretty(&self.data)?);
+        let data = match &self.slot {
+            Some(slot) => {
+                // Secrets first, so a crash never leaves them only in memory.
+                slot.save(&self.file_secrets())?;
+                let mut public = self.data.clone();
+                public.secret_keys.clear();
+                if let Some(a) = public.account.as_mut() {
+                    a.token = String::new();
+                }
+                public
+            }
+            None => self.data.clone(),
+        };
+        let bytes = Zeroizing::new(serde_json::to_vec_pretty(&data)?);
         write_private(&path, &bytes)
             .context("Couldn't save your Ottero Cloud sign-in on this computer.")
     }
@@ -278,6 +366,96 @@ mod tests {
         file.set_signed_in(account()).expect("save");
         let mode = std::fs::metadata(&path).expect("meta").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    fn slot() -> std::sync::Arc<super::super::secrets::MemorySlot> {
+        std::sync::Arc::new(super::super::secrets::MemorySlot::default())
+    }
+
+    #[test]
+    fn with_a_platform_store_the_file_holds_no_secrets() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("account.json");
+        let store = slot();
+        let mut file = AccountFile::open_with(path.clone(), Some(Box::new(store.clone())));
+        file.set_secret_key("sam@example.com", "O1-AAAAAA-BBBBB-CCCCC-DDDDD-EEEEE")
+            .expect("save");
+        file.set_signed_in(account()).expect("save");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(!text.contains("tok.sig"), "token not in the file");
+        assert!(!text.contains("O1-AAAAAA"), "Secret Key not in the file");
+        assert!(
+            text.contains("B465J6Y1apD8t4WQw10Jzg"),
+            "public salt stays in the file"
+        );
+
+        let reopened = AccountFile::open_with(path.clone(), Some(Box::new(store.clone())));
+        assert!(
+            reopened.signed_in() == Some(&account()),
+            "token comes back from the store"
+        );
+        assert!(reopened.secret_key("sam@example.com").is_some());
+
+        let mut file = reopened;
+        file.sign_out().expect("sign out");
+        let held = store.load().expect("load");
+        assert!(
+            held.token.is_none(),
+            "sign-out removes the token from the store"
+        );
+        assert_eq!(held.secret_keys.len(), 1, "the Secret Key stays");
+    }
+
+    #[test]
+    fn secrets_from_an_older_file_move_into_the_store() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("account.json");
+        let mut old = AccountFile::open_with(path.clone(), None);
+        old.set_secret_key("sam@example.com", "O1-AAAAAA-BBBBB-CCCCC-DDDDD-EEEEE")
+            .expect("save");
+        old.set_signed_in(account()).expect("save");
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("read")
+                .contains("tok.sig")
+        );
+
+        let store = slot();
+        let upgraded = AccountFile::open_with(path.clone(), Some(Box::new(store.clone())));
+        assert!(upgraded.signed_in() == Some(&account()));
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            !text.contains("tok.sig") && !text.contains("O1-AAAAAA"),
+            "file rewritten without secrets"
+        );
+        let held = store.load().expect("load");
+        assert_eq!(held.token.as_deref(), Some("tok.sig"));
+        assert!(held.secret_keys.contains_key("sam@example.com"));
+    }
+
+    #[test]
+    fn an_unreadable_store_falls_back_to_the_file_without_losing_anything() {
+        struct Broken;
+        impl SecretSlot for Broken {
+            fn load(&self) -> Result<Secrets> {
+                anyhow::bail!("locked")
+            }
+            fn save(&self, _: &Secrets) -> Result<()> {
+                anyhow::bail!("locked")
+            }
+        }
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("account.json");
+        let mut old = AccountFile::open_with(path.clone(), None);
+        old.set_signed_in(account()).expect("save");
+        let file = AccountFile::open_with(path.clone(), Some(Box::new(Broken)));
+        assert!(file.signed_in() == Some(&account()));
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("read")
+                .contains("tok.sig"),
+            "nothing deleted"
+        );
     }
 
     #[test]

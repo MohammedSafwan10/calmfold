@@ -57,4 +57,6 @@ jobs:
         shell: bash
         env:
           OTTERO_CHECK_PROFILE: ci
+          # Windows runners also round-trip a throwaway Credential Manager entry.
+          OTTERO_TEST_WINDOWS_CREDENTIALS: ${{ runner.os == 'Windows' && '1' || '' }}
         run: scripts/check.sh

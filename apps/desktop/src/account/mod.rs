@@ -13,6 +13,7 @@ pub mod client;
 pub mod fake;
 pub mod flows;
 pub mod kit;
+pub mod secrets;
 pub mod store;
 
 use std::sync::Arc;

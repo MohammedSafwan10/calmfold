@@ -43,6 +43,8 @@ url.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 velopack.workspace = true
+keyring-core.workspace = true
+windows-native-keyring-store.workspace = true
 
 [features]
 # Frame/input-latency recording for scripts/perf.sh. Never in shipped builds.

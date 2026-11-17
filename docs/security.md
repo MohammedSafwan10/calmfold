@@ -174,14 +174,14 @@ be described as proven merely because a clean upgrade passed.
   drops the token and the in-memory key and keeps the Secret Key, so signing in
   again needs only the password. A damaged file is moved aside, never
   overwritten.
-- **Why a file for now.** Development builds must not touch the keychain (see
-  Keychain policy), and release builds aren't Developer ID signed yet, so the
-  keychain would prompt on every update. The file is readable only by the
-  user, and the Secret Key alone can't sign in or decrypt anything without the
-  password; the token alone opens no data (everything synced is encrypted
-  under the account key). **Follow-up:** release builds move the token and
-  Secret Key to the macOS Data Protection keychain / Windows Credential
-  Manager once signing exists; debug builds keep the file.
+- **Where the secrets live** (ADR 0012). Windows release builds keep the
+  session token and Secret Keys in Windows Credential Manager (Local
+  persistence, encrypted with the Windows login); `account.json` then holds
+  only public values. macOS release builds keep them in `account.json` until
+  releases are Developer ID signed, because keychain items are bound to the
+  code signature and Ottero's ad-hoc signature changes with every update.
+  Development builds always use the file. The Secret Key alone can't sign in
+  or decrypt anything without the password; the token alone opens no data.
 - **Emergency Kit** is a printable HTML page written with mode 0600 to a path
   the user picks, then opened in the browser to print or save as PDF. The
   recovery code appears only during sign-up; later kits hold email and
