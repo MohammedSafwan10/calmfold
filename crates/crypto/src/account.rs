@@ -597,6 +597,34 @@ mod tests {
         );
     }
 
+    /// A `wrapped_by_password` made by the web admin panel's crypto module
+    /// (ottero-cloud `web/src/crypto/account.ts`) with a fixed nonce, under
+    /// the wrap key of `derivation_vector_with_test_params`. Both clients
+    /// must read each other's wraps byte for byte.
+    #[test]
+    fn unwraps_a_fixed_vector_from_the_web_client() {
+        const WRAPPED: &str = "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnQpQAMCMy1n4EkKzkblhskxQuq1QMNHRIXZMeayND2b0wa-IrCr_SYOVlLkSBvw8m";
+        let k = keys(
+            "correct horse battery staple",
+            " Sam@Example.com ",
+            &fixed_secret(),
+        );
+        let opened = unwrap_account_key(k.wrap_key(), WRAPPED).unwrap();
+        assert_eq!(
+            hex(opened.expose()),
+            "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc"
+        );
+        let other = keys(
+            "correct horse battery staplf",
+            "sam@example.com",
+            &fixed_secret(),
+        );
+        assert_eq!(
+            unwrap_account_key(other.wrap_key(), WRAPPED).map(|_| ()),
+            Err(CryptoError::Decrypt)
+        );
+    }
+
     #[test]
     fn auth_and_wrap_keys_differ_and_hex_is_lowercase() {
         let k = keys("pw-123456789", "a@b.co", &fixed_secret());
