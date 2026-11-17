@@ -152,6 +152,47 @@ be described as proven merely because a clean upgrade passed.
 - Do **not** code-sign with whatever identity happens to be on the machine.
   Signing setup will be a deliberate release step with the owner's own identity.
 
+## Ottero Cloud account (as built, plan 06 step 3)
+
+- **Keys.** One password plus a 128-bit Secret Key (ADR 0010, format and
+  vectors in ADR 0011, `ottero_crypto::account`). Argon2id (256 MiB, t=3)
+  runs on the device in the background; HKDF splits the result into an auth
+  key (sent as the server's "password", which the server hashes again) and a
+  wrap key (never sent). The server stores the salt, the hashed auth key and
+  the account key wrapped twice (by the wrap key and by the recovery code). It
+  never sees the password, the Secret Key, the recovery code or the account key.
+  A `kdf` string other than `argon2id:m=262144,t=3,p=1:v1` is refused.
+- **Sign-in on a new device** derives the auth key from the password and the
+  typed Secret Key, signs in, downloads the wrapped key and opens it. A wrong
+  password or Secret Key fails at the server or at the AEAD tag; the message
+  never says which.
+- **On this device** `account.json` in the data folder (mode 0600, written
+  atomically) holds the email, session token, salt, the wrapped account key,
+  the cached plan and the Secret Key per email. The account key itself is only
+  in memory: after a restart Settings → Account asks for the password to
+  "Unlock Ottero Cloud" (offline: it opens the cached wrapped key). Sign out
+  drops the token and the in-memory key and keeps the Secret Key, so signing in
+  again needs only the password. A damaged file is moved aside, never
+  overwritten.
+- **Why a file for now.** Development builds must not touch the keychain (see
+  Keychain policy), and release builds aren't Developer ID signed yet, so the
+  keychain would prompt on every update. The file is readable only by the
+  user, and the Secret Key alone can't sign in or decrypt anything without the
+  password; the token alone opens no data (everything synced is encrypted
+  under the account key). **Follow-up:** release builds move the token and
+  Secret Key to the macOS Data Protection keychain / Windows Credential
+  Manager once signing exists; debug builds keep the file.
+- **Emergency Kit** is a printable HTML page written with mode 0600 to a path
+  the user picks, then opened in the browser to print or save as PDF. The
+  recovery code appears only during sign-up; later kits hold email and
+  Secret Key and require the password first.
+- **Network.** `OTTERO_ACCOUNT_URL` (debug default `http://127.0.0.1:8787`,
+  release default `https://account.nexdark.com`; release builds refuse
+  anything but https). ureq with rustls and timeouts. Tokens, codes, keys and
+  response bodies are never logged; errors are fixed sentences.
+- The local password vault still unlocks with its own master password;
+  moving it under the account key is a later step.
+
 ## Sync (Phase 4)
 
 End-to-end encrypted: the server stores opaque blobs and metadata needed for

@@ -40,6 +40,8 @@ pub enum LibraryEvent {
     DeveloperChanged,
     /// Locked, unlocked, or an item changed.
     VaultChanged,
+    /// Ottero Cloud sign-in state, plan, devices or a flow step changed.
+    AccountChanged,
 }
 
 pub struct Library {
@@ -53,6 +55,8 @@ pub struct Library {
     vault_activity: SystemTime,
     /// Where "Start a new vault" keeps the old encrypted vault.
     archive_dir: std::path::PathBuf,
+    /// Ottero Cloud sign-in (`crate::account`).
+    pub(crate) account: crate::account::AccountSession,
 }
 
 impl EventEmitter<LibraryEvent> for Library {}
@@ -75,6 +79,7 @@ impl Library {
             kdf: KdfParams::RECOMMENDED,
             vault_activity: SystemTime::now(),
             archive_dir: std::env::temp_dir().join("ottero-vault-archives"),
+            account: crate::account::AccountSession::detached(),
         }
     }
 

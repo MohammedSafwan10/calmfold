@@ -113,8 +113,9 @@ item payload = XChaCha20-Poly1305(collection_key, plaintext,
   re-encrypted); the vault's own master password is then retired on that
   device and the account password unlocks it. Vault items sync as encrypted
   blobs and stay locked until the app is unlocked on each device.
-- Recovery key: 32 random bytes shown as 8 groups of words (BIP39 list),
-  derived into `recovery_wrap_key` with HKDF; the server stores only its wrap.
+- Recovery code: 32 random bytes plus a checksum, shown as 8 groups of 7
+  Crockford characters (ADR 0011 explains why not BIP39 words), derived into
+  `recovery_wrap_key` with HKDF; the server stores only its wrap.
 - Changing the password re-wraps `account_key` only; no data is re-encrypted.
   Removing a compromised device rotates `account_key` and the collection keys
   (re-wrap, then background re-encryption).
@@ -221,8 +222,22 @@ Roles: `owner` (everything), `admin` (no role changes, no deletions),
 2. [ ] `ottero-cloud` repo; PostgreSQL + account API (Better Auth, entitlements,
        Brevo email, rate limits) on Coolify at `account.nexdark.com`; owner
        account; backups.
-3. [ ] App: Settings → Account (sign up, verify, sign in, sign out), key
+3. [x] App: Settings → Account (sign up, verify, sign in, sign out), key
        derivation and recovery kit in `crates/crypto`; tokens per keychain policy.
+   - [x] `ottero_crypto::account`: Argon2id + Secret Key + HKDF, wrapped
+         account key, recovery code; fixed vectors (ADR 0011).
+   - [x] `ottero_core::account`: email/password rules, state machine.
+   - [x] `apps/desktop/src/account/`: HTTP client, `account.json` (0600),
+         `Library` methods, Emergency Kit (printable HTML).
+   - [x] Settings → Account: intro, create account, code, Emergency Kit,
+         sign in (+ Secret Key on a new device), signed-in page with
+         plan, Secret Key, kit, devices and sign-out; actions + palette.
+   - [x] Tests: crypto/core units, client against an in-process server,
+         6 UI flows; real end-to-end run against the local API on two
+         data folders (2026-11-17).
+   - [ ] Later: release builds keep token + Secret Key in the OS keychain;
+         password reset with the recovery code; vault under the account key;
+         QR device approval (step 8).
 4. [ ] Account website + admin panel (dashboard, users, detail, actions, audit).
 5. [ ] Razorpay plans, checkout, webhooks, trial, grace period.
 6. [ ] `crates/sync-protocol`; sync server (push/pull, WebSocket, quotas)

@@ -5,6 +5,7 @@
 //! window. [`start`] does all of it and is shared by `main` and the UI tests,
 //! so tests exercise the real app.
 
+pub mod account;
 pub mod actions;
 pub mod focus;
 pub mod holidays;
@@ -59,6 +60,18 @@ pub fn start(
     store: Store,
     cx: &mut App,
 ) -> Result<(AnyWindowHandle, Entity<AppShell>)> {
+    let api = std::sync::Arc::from(account::client::HttpAccountClient::from_env());
+    start_with_account_api(paths, store, api, cx)
+}
+
+/// [`start`] with a given Ottero Cloud server, so tests never reach a real
+/// one (a local dev server may be listening on the default debug URL).
+pub fn start_with_account_api(
+    paths: &AppPaths,
+    store: Store,
+    account_api: std::sync::Arc<dyn account::client::AccountApi>,
+    cx: &mut App,
+) -> Result<(AnyWindowHandle, Entity<AppShell>)> {
     gpui_kit::init(cx);
     ottero_ui::init(paths.appearance.clone(), cx);
     ui_state::initialize_navigation(
@@ -77,6 +90,10 @@ pub fn start(
     let library = cx.new(|_| {
         let mut lib = Library::new(store);
         lib.set_archive_dir(paths.data_dir.join("vault-archives"));
+        lib.set_account_session(account::AccountSession::new(
+            account::store::AccountFile::open(paths.data_dir.join("account.json")),
+            account_api,
+        ));
         lib
     });
     let options = WindowOptions {

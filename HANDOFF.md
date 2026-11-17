@@ -5,9 +5,22 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 ## Current state (2026-11-17)
 
 - App: **Ottero by Nexdark Labs** (formerly Calmfold, formerly Keepstone).
-  Branch `main`, repo still `MohammedSafwan10/calmfold` (not renamed yet).
-  Version 0.1.3 (unreleased). `scripts/check.sh` passes (350 tests); CI runs
-  on macOS and Windows.
+  Branch `main`, repo `MohammedSafwan10/ottero`. Version 0.1.3 (released).
+  `scripts/check.sh` passes (390 tests, 83 UI); CI runs on macOS and Windows.
+- **Ottero Cloud accounts in the app (plan 06 step 3, done, not pushed):**
+  Settings → Account is the first page: intro, Create account (strength
+  meter, confirm), 6-digit code (paste-friendly, resend after 30 s, change
+  email), Emergency Kit (Secret Key + recovery code, copy, printable HTML kit,
+  required checkbox before keys upload), Sign in (asks for the Secret Key when
+  this device has none), signed-in page (avatar, plan/Owner, sync "Coming
+  next", Secret Key behind the password, kit, devices with sign-out). Actions
+  + palette: Open account settings, Create account, Sign in, Sign out…, Copy
+  Secret Key, Save Emergency Kit…. Crypto in `ottero_crypto::account`
+  (ADR 0011, vectors cross-checked with Node/noble). Local state in
+  `account.json` (0600); account key only in memory (Unlock after restart).
+  Verified end to end against the local API (`ottero-cloud/api/dev.sh`) with
+  two data folders: sign-up on A, Secret Key sign-in on B, both devices
+  listed. See `docs/security.md` → Ottero Cloud account.
 - Rename to Ottero is done in code, packaging and docs (ADR 0009): crates
   `ottero-*`, binary `ottero`, `Ottero.app` (exe `Ottero`, helper
   `OtteroUpdater.app`), `Ottero.exe`, env vars `OTTERO_*` (`CALMFOLD_DATA_DIR`
@@ -48,6 +61,14 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
   reporting enabled. Shared `.kiro/skills` remains tracked; local state ignored.
 
 ## Next steps (in order)
+
+**Ottero Cloud (plan 06):**
+
+1. Push the account commit; owner review of Settings → Account.
+2. Release builds: move token + Secret Key from `account.json` to the OS
+   keychain once Developer ID signing exists (security.md).
+3. Password reset with the recovery code (server route + app flow), then the
+   vault under the account key, then sync (steps 6–7).
 
 **Ottero rename follow-ups (before releasing 0.1.3):**
 
@@ -136,6 +157,26 @@ OTTERO_DEV_ROUTE=calendar OTTERO_DEV_CALENDAR=week cargo run  # debug: calendar 
 ```
 
 ## Log
+
+### 2026-11-17: Ottero Cloud sign-up, sign-in and account page
+
+- `crates/crypto/src/account.rs`: Secret Key (O1 + Crockford), recovery code
+  (checksummed), Argon2id ⊕ HKDF(Secret Key) → auth/wrap keys, account key
+  wraps; 17 tests incl. RFC 5869, fixed vectors (test + real params), tamper.
+  New deps `hkdf`, `unicode-normalization`, `base64` (ADR 0011).
+- `crates/core/src/account.rs`: email/password rules, `AccountState`
+  machine with exhaustive transition table, plan labels, device labels.
+- `apps/desktop/src/account/`: ureq client (timeouts, typed errors, https-only
+  in release, tests against an in-process HTTP server), `account.json` store,
+  flows on the background executor, `FakeAccountApi`, kit HTML.
+  `ottero_desktop::start_with_account_api` lets UI tests inject a server;
+  `start` uses `OTTERO_ACCOUNT_URL`. UI tests never touch the network.
+- `views/account.rs` + Settings page 0. Settings page indexes moved by one.
+- Verified: check.sh; real two-instance run (screens in dark and light);
+  wrong Secret Key typo and wrong key messages; copy buttons proven by UI test
+  (real clicks via `click.swift` were unreliable on small icon buttons).
+- Not verified: Windows; the kit's print layout in a browser this session;
+  production server (never used).
 
 ### 2026-11-17: Ottero 0.1.3 released; site live; faster CI
 

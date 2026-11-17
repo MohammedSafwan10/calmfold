@@ -15,6 +15,11 @@ icon_assets!(
     AppIcons,
     [
         ArchiveRestore,
+        Cloud,
+        Laptop,
+        Monitor,
+        Smartphone,
+        Mail,
         Cake,
         Gift,
         Heading,

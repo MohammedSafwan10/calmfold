@@ -6,9 +6,11 @@
 //! * Key derivation: Argon2id v1.3 ([`derive_key`]).
 //! * Encryption: XChaCha20-Poly1305 with a random 24-byte nonce per message
 //!   ([`seal`] / [`open`]), wrapped in a versioned envelope.
+//! * Ottero Cloud account keys: Argon2id + Secret Key + HKDF ([`account`]).
 //! * All key material lives in types that zero their memory on drop and never
 //!   print their contents.
 
+pub mod account;
 mod envelope;
 mod error;
 mod kdf;

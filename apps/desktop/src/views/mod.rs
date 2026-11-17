@@ -1,6 +1,7 @@
 //! Feature screens. Each screen is an `Entity` that owns its own state and
 //! reads data through [`crate::library::Library`].
 
+pub mod account;
 pub mod calendar;
 pub mod calendar_grid;
 pub mod calendar_layout;

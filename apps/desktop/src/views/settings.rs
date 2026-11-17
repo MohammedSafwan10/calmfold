@@ -1,6 +1,6 @@
 //! Settings screen, built on GPUI Kit's searchable `Settings` component.
 //!
-//! Pages: General, Workspace, Appearance, Features, Privacy & data, Keyboard,
+//! Pages: Account, General, Workspace, Appearance, Features, Privacy & data, Keyboard,
 //! About. Feature preferences stay grouped under Features; search covers all pages.
 
 use std::path::PathBuf;
@@ -39,6 +39,8 @@ pub struct SettingsView {
     changelog_version: usize,
     _layout_observer: Subscription,
     _updates_observer: Subscription,
+    _account_observer: Subscription,
+    account: Entity<crate::views::account::AccountView>,
     data_dir: PathBuf,
     focus: FocusHandle,
     /// Created on first render (it needs a window).
@@ -49,9 +51,12 @@ impl SettingsView {
     pub fn new(
         data_dir: PathBuf,
         layout: Entity<crate::ui_state::LayoutStore>,
+        account: Entity<crate::views::account::AccountView>,
         cx: &mut Context<Self>,
     ) -> Self {
         let observer = cx.observe(&layout, |_, _, cx| cx.notify());
+        // The Account page is drawn here from the account view's state.
+        let account_observer = cx.observe(&account, |_, _, cx| cx.notify());
         let updates_observer = cx.observe_global::<crate::updates::Updates>(|_, cx| cx.notify());
         Self {
             reorder_focus: crate::nav::entries()
@@ -64,14 +69,49 @@ impl SettingsView {
             changelog_version: 0,
             _layout_observer: observer,
             _updates_observer: updates_observer,
+            _account_observer: account_observer,
+            account,
             data_dir,
             focus: cx.focus_handle(),
             holiday_pickers: None,
         }
     }
+    /// Page indexes in `render`'s list.
+    const ACCOUNT_PAGE: usize = 0;
+    const WORKSPACE_PAGE: usize = 2;
+    const ABOUT_PAGE: usize = 7;
+
+    #[must_use]
+    pub fn account(&self) -> &Entity<crate::views::account::AccountView> {
+        &self.account
+    }
+
+    /// Shows Settings → Account (and, signed out, the given form).
+    pub fn open_account(
+        &mut self,
+        mode: Option<crate::views::account::Mode>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_changelog = false;
+        self.initial_page = Self::ACCOUNT_PAGE;
+        self.generation = self.generation.wrapping_add(1);
+        self.account.update(cx, |a, cx| match mode {
+            Some(mode) => a.open(mode, window, cx),
+            None => cx.notify(),
+        });
+        self.library_refresh(cx);
+        cx.notify();
+    }
+
+    fn library_refresh(&self, cx: &mut Context<Self>) {
+        let library = self.account.read(cx).library().clone();
+        library.update(cx, crate::library::Library::refresh_account);
+    }
+
     pub fn open_workspace(&mut self, cx: &mut Context<Self>) {
         self.show_changelog = false;
-        self.initial_page = 1;
+        self.initial_page = Self::WORKSPACE_PAGE;
         self.generation = self.generation.wrapping_add(1);
         cx.notify();
     }
@@ -84,7 +124,7 @@ impl SettingsView {
 
     fn close_changelog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_changelog = false;
-        self.initial_page = 6;
+        self.initial_page = Self::ABOUT_PAGE;
         self.generation = self.generation.wrapping_add(1);
         self.focus.focus(window, cx);
         cx.notify();
@@ -1080,6 +1120,7 @@ impl Render for SettingsView {
                 })
                 .with_group_variant(GroupBoxVariant::Outline)
                 .pages(vec![
+                    super::account::page(&self.account, cx),
                     super::workspace_settings::general_page(self.layout.clone()),
                     super::workspace_settings::workspace_page(
                         self.layout.clone(),

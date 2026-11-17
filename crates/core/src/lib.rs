@@ -4,6 +4,7 @@
 //! clock, and knows nothing about SQLite or the UI. Callers pass the current
 //! time in, which keeps every rule deterministic and testable.
 
+pub mod account;
 pub mod clock;
 pub mod developer;
 mod error;

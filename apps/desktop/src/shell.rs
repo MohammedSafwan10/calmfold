@@ -125,7 +125,10 @@ impl AppShell {
             cx.new(|cx| FocusView::new(library.clone(), focus_ctrl.clone(), window, cx));
         let passwords = cx.new(|cx| PasswordsView::new(library.clone(), window, cx));
         let developer = cx.new(|cx| DeveloperView::new(library.clone(), window, cx));
-        let settings = cx.new(|cx| SettingsView::new(paths.data_dir.clone(), layout.clone(), cx));
+        let account =
+            cx.new(|cx| crate::views::account::AccountView::new(library.clone(), window, cx));
+        let settings =
+            cx.new(|cx| SettingsView::new(paths.data_dir.clone(), layout.clone(), account, cx));
 
         let subscriptions = vec![
             cx.subscribe_in(&developer, window, |this, _, nav, window, cx| {
@@ -578,6 +581,25 @@ impl AppShell {
         self.layout.update(cx, |layout, cx| {
             layout.toggle_panel(ui_state::NOTES_LIST, cx)
         });
+    }
+
+    #[must_use]
+    pub fn settings(&self) -> &Entity<SettingsView> {
+        &self.settings
+    }
+
+    /// Settings → Account, optionally on a form.
+    pub fn open_account(
+        &mut self,
+        mode: Option<crate::views::account::Mode>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate(Route::Settings, window, cx);
+        if self.route() == Route::Settings {
+            self.settings
+                .update(cx, |settings, cx| settings.open_account(mode, window, cx));
+        }
     }
 
     /// ⌘K toggles the palette. It never stacks: a second press closes it, and it
@@ -1253,6 +1275,42 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["preferences"],
         ),
         cmd(
+            "Open account settings",
+            Lucide::CircleUser,
+            Box::new(crate::actions::OpenAccountSettings),
+            &["account", "ottero cloud", "profile", "devices", "plan"],
+        ),
+        cmd(
+            "Create Ottero Cloud account",
+            Lucide::Cloud,
+            Box::new(crate::actions::CreateAccount),
+            &["account", "sign up", "register", "cloud", "sync"],
+        ),
+        cmd(
+            "Sign in to Ottero Cloud",
+            Lucide::Cloud,
+            Box::new(crate::actions::SignInToCloud),
+            &["account", "log in", "login", "cloud", "sync"],
+        ),
+        cmd(
+            "Sign out of Ottero Cloud…",
+            Lucide::Cloud,
+            Box::new(crate::actions::SignOutOfCloud),
+            &["account", "log out", "logout", "cloud"],
+        ),
+        cmd(
+            "Copy Secret Key",
+            Lucide::KeyRound,
+            Box::new(crate::actions::CopySecretKey),
+            &["account", "cloud", "secret key", "new device"],
+        ),
+        cmd(
+            "Save Emergency Kit…",
+            Lucide::Download,
+            Box::new(crate::actions::SaveEmergencyKit),
+            &["account", "cloud", "secret key", "recovery", "print"],
+        ),
+        cmd(
             "Customize sidebar",
             Lucide::PanelLeft,
             Box::new(CustomizeSidebar),
@@ -1552,6 +1610,40 @@ pub fn register_commands(cx: &mut App) {
     });
     cx.on_action(|_: &GoSettings, cx| {
         with_shell(cx, |s, w, cx| s.navigate(Route::Settings, w, cx))
+    });
+    cx.on_action(|_: &crate::actions::OpenAccountSettings, cx| {
+        with_shell(cx, |s, w, cx| s.open_account(None, w, cx))
+    });
+    cx.on_action(|_: &crate::actions::CreateAccount, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.open_account(Some(crate::views::account::Mode::SignUp), w, cx)
+        })
+    });
+    cx.on_action(|_: &crate::actions::SignInToCloud, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.open_account(Some(crate::views::account::Mode::SignIn), w, cx)
+        })
+    });
+    cx.on_action(|_: &crate::actions::SignOutOfCloud, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.open_account(None, w, cx);
+            let account = s.settings.read(cx).account().clone();
+            account.update(cx, |a, cx| a.confirm_sign_out(w, cx));
+        })
+    });
+    cx.on_action(|_: &crate::actions::CopySecretKey, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.open_account(None, w, cx);
+            let account = s.settings.read(cx).account().clone();
+            account.update(cx, |a, cx| a.show_secret_key(true, w, cx));
+        })
+    });
+    cx.on_action(|_: &crate::actions::SaveEmergencyKit, cx| {
+        with_shell(cx, |s, w, cx| {
+            s.open_account(None, w, cx);
+            let account = s.settings.read(cx).account().clone();
+            account.update(cx, |a, cx| a.save_kit(w, cx));
+        })
     });
     cx.on_action(|_: &CustomizeSidebar, cx| {
         with_shell(cx, |s, w, cx| {

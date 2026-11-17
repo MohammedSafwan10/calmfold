@@ -42,6 +42,12 @@ actions!(
         ExportVaultBackup,
         RestoreVaultBackup,
         GoSettings,
+        OpenAccountSettings,
+        CreateAccount,
+        SignInToCloud,
+        SignOutOfCloud,
+        CopySecretKey,
+        SaveEmergencyKit,
         CustomizeSidebar,
         CheckForUpdates,
         ShowChangelog,
@@ -394,6 +400,7 @@ pub fn set_menus(cx: &mut App) {
     cx.set_menus([
         Menu::new("Ottero").items([
             MenuItem::action("Settings…", GoSettings),
+            MenuItem::action("Account…", OpenAccountSettings),
             MenuItem::action("Check for Updates…", CheckForUpdates),
             MenuItem::separator(),
             MenuItem::action("Quit Ottero", Quit),

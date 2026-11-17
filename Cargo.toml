@@ -74,6 +74,10 @@ getrandom = "0.4"
 totp-rs = { version = "6", default-features = false, features = ["std", "otpauth", "zeroize"] }
 zxcvbn = { version = "3.1", default-features = false }
 csv = "1.4"
+# Ottero Cloud account keys (ADR 0011): HKDF-SHA256, NFKC passwords, base64url wire format.
+hkdf = "0.12"
+unicode-normalization = "0.1"
+base64 = "0.22"
 
 # Updates: minisign signatures on the update feed, SHA-256 of downloads,
 # a small blocking HTTPS client (rustls, no OpenSSL).
