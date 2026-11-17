@@ -5,8 +5,6 @@
 //! matter which element has focus (the palette lives in an overlay outside the
 //! shell's element tree).
 
-use calmfold_core::NoteId;
-use calmfold_ui::appearance::{self, ThemePreference};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::base::InteractiveElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -25,6 +23,8 @@ use gpui_kit::{
     Focusable as _, Global, InteractiveElement as _, IntoElement, Keystroke, ParentElement as _,
     Render, Styled as _, Subscription, TestSupportExt as _, WeakEntity, Window, div, px, rems,
 };
+use ottero_core::NoteId;
+use ottero_ui::appearance::{self, ThemePreference};
 
 use crate::actions::{
     ChangeMasterPassword, CheckForUpdates, CopyProjectEnvironment, CreateRecoveryKey,
@@ -216,7 +216,7 @@ impl AppShell {
     pub fn save_everything(&mut self, cx: &mut Context<Self>) {
         self.layout.update(cx, |layout, _| layout.save_now());
         if let Err(err) = self.notes.update(cx, |notes, cx| notes.save_pending(cx)) {
-            eprintln!("calmfold: could not save the open note on exit: {err:#}");
+            eprintln!("ottero: could not save the open note on exit: {err:#}");
         }
     }
 
@@ -224,7 +224,7 @@ impl AppShell {
     /// drafts intact. Unlike the OS quit callback, this path can refuse exit.
     pub fn prepare_update_restart(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.focus_ctrl.read(cx).timer().is_idle() {
-            calmfold_ui::feedback::error_toast(
+            ottero_ui::feedback::error_toast(
                 "Finish or reset your timer before restarting to update.",
                 window,
                 cx,
@@ -234,7 +234,7 @@ impl AppShell {
         // Sheets own their own autosave/error state (including task details).
         // Do not close one implicitly or quit before its draft can be reviewed.
         if window.has_active_sheet(cx) || window.has_active_dialog(cx) {
-            calmfold_ui::feedback::error_toast(
+            ottero_ui::feedback::error_toast(
                 "Close the open editor or dialog before restarting to update.",
                 window,
                 cx,
@@ -246,7 +246,7 @@ impl AppShell {
             .update(cx, |notes, cx| notes.save_pending(cx))
             .is_err()
         {
-            calmfold_ui::feedback::error_toast(
+            ottero_ui::feedback::error_toast(
                 "Your note couldn't be saved. The update was not installed.",
                 window,
                 cx,
@@ -329,8 +329,7 @@ impl AppShell {
                 self.route == Route::Notes
                     && self.notes.read(cx).open_note_title(cx).as_deref()
                         == Some(
-                            crate::library::daily_note_title(calmfold_core::clock::today())
-                                .as_str(),
+                            crate::library::daily_note_title(ottero_core::clock::today()).as_str(),
                         )
             }
             NavTarget::NotesAll => {
@@ -465,7 +464,7 @@ impl AppShell {
     pub fn new_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let library = self.library.clone();
         let shell = cx.entity().downgrade();
-        calmfold_ui::feedback::prompt_text(
+        ottero_ui::feedback::prompt_text(
             "New project",
             "Project name",
             "",
@@ -474,7 +473,7 @@ impl AppShell {
             cx,
             move |name, window, cx| {
                 let result = library.update(cx, |lib, cx| lib.create_project(&name, cx));
-                if let Some(id) = calmfold_ui::feedback::report(result, window, cx) {
+                if let Some(id) = ottero_ui::feedback::report(result, window, cx) {
                     _ = shell.update(cx, |s, cx| {
                         s.open_target(NavTarget::Project(id), window, cx)
                     });
@@ -899,7 +898,7 @@ impl AppShell {
                 let t = ctrl.timer();
                 t.is_active().then(|| {
                     let remaining =
-                        calmfold_core::format_mm_ss(t.remaining_secs(calmfold_core::clock::now()));
+                        ottero_core::format_mm_ss(t.remaining_secs(ottero_core::clock::now()));
                     let running = t.is_running();
                     let label = if t.label.is_empty() {
                         t.kind.label().to_owned()
@@ -1322,7 +1321,7 @@ fn update_notice(status: &crate::updates::Status, window: &mut Window, cx: &mut 
     let notification = match status {
         Status::Ready { version, .. } => Notification::new()
             .message(format!(
-                "Calmfold {version} is ready. It installs when you restart."
+                "Ottero {version} is ready. It installs when you restart."
             ))
             .action(|_, _, cx| {
                 Button::new("update-restart")
@@ -1336,12 +1335,12 @@ fn update_notice(status: &crate::updates::Status, window: &mut Window, cx: &mut 
             })
             .autohide(false),
         Status::Available { version } => Notification::new().message(format!(
-            "Calmfold {version} is available. Install the latest GitHub release once to enable in-app updates."
+            "Ottero {version} is available. Install the latest GitHub release once to enable in-app updates."
         )),
         Status::Unsupported if crate::updates::manual_pending(cx) => Notification::new()
             .message("Automatic updates aren't available for this platform."),
         Status::UpToDate if crate::updates::manual_pending(cx) => Notification::new().message(
-            format!("Calmfold {} is up to date.", env!("CARGO_PKG_VERSION")),
+            format!("Ottero {} is up to date.", env!("CARGO_PKG_VERSION")),
         ),
         Status::Failed { message } => Notification::new()
             .with_type(NotificationType::Error)
@@ -1364,7 +1363,7 @@ fn with_shell(
             shell.update(cx, |shell, cx| f(shell, window, cx))
         });
         if updated.is_err() {
-            eprintln!("calmfold: command ignored, main window is unavailable");
+            eprintln!("ottero: command ignored, main window is unavailable");
         }
     });
 }
@@ -1450,7 +1449,7 @@ pub fn register_commands(cx: &mut App) {
     cx.on_action(|_: &FocusFinish, cx| {
         with_shell(cx, |s, w, cx| {
             if let Err(err) = s.focus_ctrl.update(cx, |f, cx| f.finish_now(true, cx)) {
-                calmfold_ui::feedback::error_toast(
+                ottero_ui::feedback::error_toast(
                     format!("Couldn't save focus session: {err}"),
                     w,
                     cx,
@@ -1479,8 +1478,8 @@ pub fn register_commands(cx: &mut App) {
     });
     cx.on_action(|_: &CreateRecoveryKey, cx| {
         with_shell(cx, |s, w, cx| {
-            if s.library.read(cx).vault_state() != calmfold_core::vault::lock::LockState::Unlocked {
-                calmfold_ui::feedback::error_toast("Unlock the vault first.", w, cx);
+            if s.library.read(cx).vault_state() != ottero_core::vault::lock::LockState::Unlocked {
+                ottero_ui::feedback::error_toast("Unlock the vault first.", w, cx);
                 return;
             }
             s.navigate(Route::Passwords, w, cx);
@@ -1492,7 +1491,7 @@ pub fn register_commands(cx: &mut App) {
                     Ok(key) => {
                         _ = passwords.update(cx, |p, cx| p.show_recovery_key(key, cx));
                     }
-                    Err(err) => calmfold_ui::feedback::error_toast(format!("{err:#}"), window, cx),
+                    Err(err) => ottero_ui::feedback::error_toast(format!("{err:#}"), window, cx),
                 });
             })
             .detach();
@@ -1528,7 +1527,7 @@ pub fn register_commands(cx: &mut App) {
             let snapshot = crate::updates::snapshot_path(cx)
                 .and_then(|path| s.library.read(cx).backup_for_update(&path));
             if snapshot.is_err() {
-                calmfold_ui::feedback::error_toast(
+                ottero_ui::feedback::error_toast(
                     "Couldn't create a recovery snapshot. The update was not installed.",
                     w,
                     cx,
@@ -1538,7 +1537,7 @@ pub fn register_commands(cx: &mut App) {
             match crate::updates::apply(cx) {
                 Ok(true) => cx.quit(),
                 Ok(false) => {}
-                Err(err) => calmfold_ui::feedback::error_toast(format!("{err:#}"), w, cx),
+                Err(err) => ottero_ui::feedback::error_toast(format!("{err:#}"), w, cx),
             }
         })
     });

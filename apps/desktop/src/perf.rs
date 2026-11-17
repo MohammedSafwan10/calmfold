@@ -10,7 +10,7 @@
 //! - **slow views / tasks / actions**: anything on the main thread that took
 //!   long enough to cost a frame, by name or source location.
 //!
-//! Every 500 ms the totals are written to `CALMFOLD_PERF_OUT` as JSON.
+//! Every 500 ms the totals are written to `OTTERO_PERF_OUT` as JSON.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -175,9 +175,9 @@ fn ms(d: Duration) -> f64 {
     (d.as_secs_f64() * 1e5).round() / 100.
 }
 
-/// Starts recording if `CALMFOLD_PERF_OUT` is set.
+/// Starts recording if `OTTERO_PERF_OUT` is set.
 pub fn install(window: AnyWindowHandle, cx: &mut App) {
-    let Some(out) = std::env::var_os("CALMFOLD_PERF_OUT") else {
+    let Some(out) = std::env::var_os("OTTERO_PERF_OUT") else {
         return;
     };
     gpui_kit::profiler::set_trace_enabled(true);

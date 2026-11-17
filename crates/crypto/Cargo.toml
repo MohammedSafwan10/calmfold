@@ -1,6 +1,6 @@
 [package]
-name = "calmfold-crypto"
-description = "Key derivation and authenticated encryption for the Calmfold vault."
+name = "ottero-crypto"
+description = "Key derivation and authenticated encryption for the Ottero vault."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

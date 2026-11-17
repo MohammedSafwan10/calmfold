@@ -1,6 +1,6 @@
 # Code of Conduct
 
-Calmfold welcomes people with different backgrounds and levels of experience.
+Ottero welcomes people with different backgrounds and levels of experience.
 These expectations apply to project issues, pull requests and discussions.
 
 - Be respectful and specific. Explain disagreements about the work without

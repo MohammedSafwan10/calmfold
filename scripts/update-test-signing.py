@@ -22,7 +22,7 @@ def create(directory: Path):
         return signature
     def minisign(path):
         signature = sign(hashlib.blake2b(path.read_bytes()).digest())
-        comment = b"calmfold disposable fixture"
+        comment = b"ottero disposable fixture"
         global_sig = sign(signature + comment)
         Path(str(path) + ".minisig").write_text("untrusted comment: fixture\n" + base64.b64encode(b"ED" + key_id + signature).decode() + "\ntrusted comment: " + comment.decode() + "\n" + base64.b64encode(global_sig).decode() + "\n")
     return public, minisign

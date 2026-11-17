@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.1.3",
+    "date": "2026-11-17",
+    "title": "Calmfold is now Ottero",
+    "summary": "A new name and icon. Your notes, tasks, vault and settings come with you.",
+    "sections": [
+      {
+        "title": "Improved",
+        "emoji": "◈",
+        "items": [
+          "Calmfold is now Ottero by Nexdark Labs, with a new app icon.",
+          "Your data folder, database, vault and theme choice move over on first launch; nothing to export or re-import.",
+          "Installed Calmfold copies update to Ottero in place, and older vault backups still open."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.1.2",
     "date": "2026-11-16",
     "title": "More room for your work",
@@ -51,7 +68,7 @@
     "version": "0.1.0",
     "date": "2026-11-09",
     "title": "A quieter daily companion",
-    "summary": "The beginning of Calmfold.",
+    "summary": "The beginning of Ottero.",
     "sections": [
       {
         "title": "New",

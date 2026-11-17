@@ -8,10 +8,6 @@ use crate::actions::{
 };
 use crate::library::{Library, LibraryEvent};
 use anyhow::{Result, bail};
-use calmfold_core::vault::environment::{EnvVariable, EnvironmentSecrets, MAX_ENV_VARIABLES};
-use calmfold_core::{ProjectId, VaultItemId};
-use calmfold_crypto::Zeroizing;
-use calmfold_ui::feedback::{self, Confirm};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -26,6 +22,10 @@ use gpui_kit::{
     ParentElement as _, Render, ScrollStrategy, StatefulInteractiveElement as _, Styled as _,
     Subscription, TestSupportExt as _, Window, div, rems,
 };
+use ottero_core::vault::environment::{EnvVariable, EnvironmentSecrets, MAX_ENV_VARIABLES};
+use ottero_core::{ProjectId, VaultItemId};
+use ottero_crypto::Zeroizing;
+use ottero_ui::feedback::{self, Confirm};
 use std::{collections::HashSet, ops::Range, rc::Rc};
 
 struct VariableRow {

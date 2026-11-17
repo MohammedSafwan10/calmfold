@@ -6,7 +6,7 @@
 use gpui_kit::{Action, App, KeyBinding, Menu, MenuItem, actions};
 
 actions!(
-    calmfold,
+    ottero,
     [
         OpenCommandPalette,
         NewNote,
@@ -65,7 +65,7 @@ actions!(
 
 // Formatting in the note editor (bound only inside it, context "NoteEditor").
 actions!(
-    calmfold_format,
+    ottero_format,
     [
         FormatBold,
         FormatItalic,
@@ -88,7 +88,7 @@ actions!(
 // Calendar navigation (bound only on the calendar grid, context "CalendarGrid",
 // so typing in quick add never triggers them).
 actions!(
-    calmfold_calendar,
+    ottero_calendar,
     [
         CalendarToday,
         CalendarPreviousPeriod,
@@ -108,7 +108,7 @@ actions!(
 
 // Habit list keys (context "HabitList", never in the quick-add field).
 actions!(
-    calmfold_habits,
+    ottero_habits,
     [
         HabitSelectPrevious,
         HabitSelectNext,
@@ -120,7 +120,7 @@ actions!(
 
 // Vault list keys (context "VaultList", never in a text field).
 actions!(
-    calmfold_vault,
+    ottero_vault,
     [
         VaultPreviousItem,
         VaultNextItem,
@@ -392,11 +392,11 @@ pub fn bind(cx: &mut App) {
 
 pub fn set_menus(cx: &mut App) {
     cx.set_menus([
-        Menu::new("Calmfold").items([
+        Menu::new("Ottero").items([
             MenuItem::action("Settings…", GoSettings),
             MenuItem::action("Check for Updates…", CheckForUpdates),
             MenuItem::separator(),
-            MenuItem::action("Quit Calmfold", Quit),
+            MenuItem::action("Quit Ottero", Quit),
         ]),
         Menu::new("File").items([
             MenuItem::action("New Note", NewNote),

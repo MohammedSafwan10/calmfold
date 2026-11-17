@@ -1,12 +1,12 @@
 // Prints the CGWindowID of the first on-screen window owned by a process name.
-// Used by scripts/screenshot.sh to capture only Calmfold's window.
-// Usage: swift scripts/window-id.swift calmfold
+// Used by scripts/screenshot.sh to capture only Ottero's window.
+// Usage: swift scripts/window-id.swift ottero
 import CoreGraphics
 import Foundation
 
-let owner = CommandLine.arguments.dropFirst().first ?? "calmfold"
+let owner = CommandLine.arguments.dropFirst().first ?? "ottero"
 // Optional target when a disposable review app and the user's app both run.
-let targetPID = ProcessInfo.processInfo.environment["CALMFOLD_WINDOW_PID"].flatMap(Int.init)
+let targetPID = ProcessInfo.processInfo.environment["OTTERO_WINDOW_PID"].flatMap(Int.init)
 // Prefer on-screen windows; fall back to any window (e.g. on another Space).
 let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 let all = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []

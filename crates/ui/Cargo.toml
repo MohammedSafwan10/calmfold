@@ -1,6 +1,6 @@
 [package]
-name = "calmfold-ui"
-description = "Calmfold design system: themes, tokens, appearance settings and reusable components."
+name = "ottero-ui"
+description = "Ottero design system: themes, tokens, appearance settings and reusable components."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

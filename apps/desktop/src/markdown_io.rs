@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
-use calmfold_core::{MAX_BODY_BYTES, Note};
+use ottero_core::{MAX_BODY_BYTES, Note};
 
 /// Writes `notes` into `dir`. Never overwrites: name clashes get " (2)" etc.
 pub fn export(notes: &[Note], dir: &Path) -> Result<usize> {
@@ -100,7 +100,7 @@ fn free_path(dir: &Path, stem: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use calmfold_core::Timestamp;
+    use ottero_core::Timestamp;
 
     #[test]
     fn file_names_are_safe() {

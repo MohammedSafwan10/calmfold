@@ -1,6 +1,6 @@
 [package]
-name = "calmfold-storage"
-description = "SQLite persistence and migrations for Calmfold."
+name = "ottero-storage"
+description = "SQLite persistence and migrations for Ottero."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-calmfold-core.workspace = true
+ottero-core.workspace = true
 rusqlite.workspace = true
 rusqlite_migration.workspace = true
 jiff.workspace = true

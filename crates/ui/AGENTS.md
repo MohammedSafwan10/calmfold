@@ -1,11 +1,11 @@
-# calmfold-ui
+# ottero-ui
 
 The design system. Feature screens compose these pieces; they do not invent
 their own colors, fonts, or feedback patterns.
 
 ## Contents
 
-- `themes/calmfold.json`: Calmfold Dark (default) and Light. Monochrome;
+- `themes/ottero.json`: Ottero Dark (default) and Light. Monochrome;
   color is reserved for meaning (danger, success, warning). Only file allowed
   to contain hex colors.
 - `fonts.rs`: bundled Inter + JetBrains Mono (OFL in `assets/fonts/*/OFL.txt`).

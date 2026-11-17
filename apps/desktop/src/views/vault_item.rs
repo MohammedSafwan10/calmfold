@@ -13,15 +13,6 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use calmfold_core::VaultItemId;
-use calmfold_core::vault::health::estimate;
-use calmfold_core::vault::template::Template;
-use calmfold_core::vault::{
-    CustomField, FieldKind, ItemFields, ItemKind, VaultItem, host, openable_url, totp,
-};
-use calmfold_crypto::Zeroizing;
-use calmfold_ui::components::{empty_state, section_label};
-use calmfold_ui::feedback::{self, Confirm};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
@@ -37,6 +28,15 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, Task as GpuiTask, Window, div,
     rems,
 };
+use ottero_core::VaultItemId;
+use ottero_core::vault::health::estimate;
+use ottero_core::vault::template::Template;
+use ottero_core::vault::{
+    CustomField, FieldKind, ItemFields, ItemKind, VaultItem, host, openable_url, totp,
+};
+use ottero_crypto::Zeroizing;
+use ottero_ui::components::{empty_state, section_label};
+use ottero_ui::feedback::{self, Confirm};
 
 use super::environment::EnvironmentEditor;
 use crate::library::Library;
@@ -47,7 +47,7 @@ use crate::views::task_row::notify_err;
 /// Uniform random `0..n` from the OS CSPRNG, `None` if it failed (the
 /// generator then refuses to produce anything).
 pub fn random_below(n: u32) -> Option<u32> {
-    calmfold_crypto::random_below(n).ok()
+    ottero_crypto::random_below(n).ok()
 }
 
 /// Shown when the OS random source fails.
@@ -469,13 +469,13 @@ impl VaultItemPane {
 
     pub fn start_environment(
         &mut self,
-        project: calmfold_core::ProjectId,
+        project: ottero_core::ProjectId,
         name: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.start_template(Template::Environment, window, cx);
-        let env = calmfold_core::vault::environment::EnvironmentSecrets::new(
+        let env = ottero_core::vault::environment::EnvironmentSecrets::new(
             Some(project),
             "Development",
             vec![],
@@ -488,7 +488,7 @@ impl VaultItemPane {
         self.form.title.update(cx, |input, cx| {
             let title = format!("{name} · Development");
             input.set_value(
-                if title.chars().count() <= calmfold_core::MAX_TITLE_CHARS {
+                if title.chars().count() <= ottero_core::MAX_TITLE_CHARS {
                     title
                 } else {
                     name.to_owned()
@@ -612,14 +612,14 @@ impl VaultItemPane {
                     .library
                     .update(cx, |lib, cx| {
                         lib.update_vault_item(id, cx, |item| {
-                            item.update(&fields, calmfold_core::clock::now())
+                            item.update(&fields, ottero_core::clock::now())
                         })
                     })
                     .map(|()| None),
                 None => Ok(None),
             },
         };
-        calmfold_crypto::Zeroize::zeroize(&mut fields);
+        ottero_crypto::Zeroize::zeroize(&mut fields);
         match result {
             Ok(created) => {
                 self.form.clear(window, cx);
@@ -649,7 +649,7 @@ impl VaultItemPane {
     pub fn trash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.id else { return };
         let library = self.library.clone();
-        let now = calmfold_core::clock::now();
+        let now = ottero_core::clock::now();
         let result = library.update(cx, |lib, cx| {
             lib.update_vault_item(id, cx, |i| i.trash(now).map(|()| true))
         });
@@ -659,7 +659,7 @@ impl VaultItemPane {
                 notify_err(
                     library.update(cx, |lib, cx| {
                         lib.update_vault_item(id, cx, |i| {
-                            i.restore(calmfold_core::clock::now());
+                            i.restore(ottero_core::clock::now());
                             Ok(true)
                         })
                     }),
@@ -675,7 +675,7 @@ impl VaultItemPane {
         notify_err(
             self.library.update(cx, |lib, cx| {
                 lib.update_vault_item(id, cx, |i| {
-                    i.restore(calmfold_core::clock::now());
+                    i.restore(ottero_core::clock::now());
                     Ok(true)
                 })
             }),
@@ -719,7 +719,7 @@ impl VaultItemPane {
         notify_err(
             self.library.update(cx, |lib, cx| {
                 lib.update_vault_item(id, cx, |i| {
-                    i.set_favorite(fav, calmfold_core::clock::now())
+                    i.set_favorite(fav, ottero_core::clock::now())
                         .map(|()| true)
                 })
             }),

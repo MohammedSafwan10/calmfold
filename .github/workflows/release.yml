@@ -36,7 +36,7 @@ jobs:
         run: scripts/check.sh
   build:
     env:
-      CALMFOLD_SPARKLE_DIR: ${{ github.workspace }}/.native-tools/sparkle
+      OTTERO_SPARKLE_DIR: ${{ github.workspace }}/.native-tools/sparkle
     # Do not spend time packaging a candidate whose quality/native gates failed.
     needs: [engines, quality]
     strategy:
@@ -69,7 +69,7 @@ jobs:
         run: |
           scripts/bundle-mac.sh
           mkdir -p dist
-          ditto -c -k --keepParent target/release/Calmfold.app "dist/Calmfold-${VERSION}-macos-arm64.zip"
+          ditto -c -k --keepParent target/release/Ottero.app "dist/Ottero-${VERSION}-macos-arm64.zip"
       - name: Sign and verify Sparkle archive and appcast
         if: runner.os == 'macOS'
         env:
@@ -91,19 +91,23 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo build --locked --release -p calmfold-desktop --bin calmfold
+          cargo build --locked --release -p ottero-desktop --bin ottero
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet tool install --tool-path "$env:RUNNER_TEMP/vpk" vpk --version 1.2.161
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Force target/release-payload | Out-Null
-          Copy-Item target/release/calmfold.exe target/release-payload/Calmfold.exe
+          Copy-Item target/release/ottero.exe target/release-payload/Ottero.exe
           Copy-Item LICENSE,NOTICE target/release-payload/
           python scripts/release-source.py target/release-payload
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/third-party-notices.py target/release-payload/THIRD_PARTY_NOTICES.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packVersion $env:VERSION --packDir target/release-payload --mainExe Calmfold.exe --outputDir dist --channel win --runtime win-x64 --icon assets/brand/calmfold.ico
+          & "$env:RUNNER_TEMP/vpk/vpk.exe" pack --packId Calmfold --packTitle Ottero --packVersion $env:VERSION --packDir target/release-payload --mainExe Ottero.exe --outputDir dist --channel win --runtime win-x64 --icon assets/brand/ottero.ico
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # packId stays Calmfold (installed apps' identity, ADR 0009); only the
+          # downloaded installer file names carry the product name.
+          Rename-Item dist/Calmfold-win-Setup.exe Ottero-win-Setup.exe -ErrorAction Stop
+          Rename-Item dist/Calmfold-win-Portable.zip Ottero-win-Portable.zip -ErrorAction Stop
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ runner.os }}

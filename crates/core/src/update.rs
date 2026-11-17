@@ -3,7 +3,7 @@
 //!
 //! A release publishes `stable.json` (version, notes, and per platform a
 //! download URL, SHA-256 and size) and `stable.json.minisig`, signed with
-//! Calmfold's release key. A download is trusted only when
+//! Ottero's release key. A download is trusted only when
 //! 1. the feed's minisign signature verifies with the public key built into
 //!    the app ([`RELEASE_KEY`]),
 //! 2. its version is newer than the running one, and
@@ -17,7 +17,7 @@ use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Calmfold's release signing key (`minisign`, key id D46787DCA0DB66A3).
+/// Ottero's release signing key (`minisign`, key id D46787DCA0DB66A3).
 /// The secret half never leaves the release machine and CI.
 pub const RELEASE_KEY: &str = "RWSjZtug3Idn1JE3I3J+oLz/+Gm43DS0PSppGsO3rBrnt4L7eBtFluOz";
 
@@ -130,7 +130,7 @@ pub struct Feed {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UpdateError {
-    #[error("The update information isn't signed by Calmfold.")]
+    #[error("The update information isn't signed by Ottero.")]
     BadSignature,
     #[error("The update information couldn't be read.")]
     BadFeed,
@@ -213,7 +213,7 @@ pub fn verify_download(bytes: &[u8], expected: &Download) -> Result<(), UpdateEr
 }
 
 /// The feed key for this build: `windows-x64`, `macos-arm64`, … or `None`
-/// where Calmfold has no release build.
+/// where Ottero has no release build.
 #[must_use]
 pub fn platform() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {

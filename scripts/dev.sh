@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # Runs the dev app and rebuilds + relaunches it whenever source changes.
 #
-#   scripts/dev.sh              # your dev data ("Calmfold Dev" folder)
+#   scripts/dev.sh              # your dev data ("Ottero Dev" folder)
 #   scripts/dev.sh --sample     # throwaway folder filled with sample notes/tasks
 #
 # Rust has no true hot reload; a change costs a few seconds of incremental
 # build, then the window reopens. Notes autosave and layout persists, so you
-# land back where you were (use CALMFOLD_DEV_ROUTE=notes|tasks|settings to pick a screen).
+# land back where you were (use OTTERO_DEV_ROUTE=notes|tasks|settings to pick a screen).
 # Needs watchexec:  cargo install watchexec-cli --locked
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
 if [ "${1:-}" = "--sample" ]; then
-  export CALMFOLD_DATA_DIR="${TMPDIR:-/tmp}/calmfold-sample"
-  if [ ! -f "$CALMFOLD_DATA_DIR/calmfold.sqlite3" ]; then
-    cargo run -q -p calmfold-storage --example seed -- "$CALMFOLD_DATA_DIR/calmfold.sqlite3"
+  export OTTERO_DATA_DIR="${TMPDIR:-/tmp}/ottero-sample"
+  if [ ! -f "$OTTERO_DATA_DIR/ottero.sqlite3" ]; then
+    cargo run -q -p ottero-storage --example seed -- "$OTTERO_DATA_DIR/ottero.sqlite3"
   fi
 fi
 
@@ -26,4 +26,4 @@ exec watchexec \
   --watch apps --watch crates \
   --exts rs,toml,json,sql \
   --debounce 300ms \
-  -- cargo run -q -p calmfold-desktop
+  -- cargo run -q -p ottero-desktop

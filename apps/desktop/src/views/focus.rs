@@ -1,13 +1,5 @@
 //! Focus screen: calm countdown ring, optional task link, and today's session log.
 
-use calmfold_core::focus::{MAX_DURATION_MINS, MIN_DURATION_MINS};
-use calmfold_core::{
-    Date, FOCUS_DURATION_PRESETS, FocusKind, FocusSession, FocusSessionId, Task, TaskStatus, clock,
-    format_duration, format_mm_ss,
-};
-use calmfold_storage::TaskFilter;
-use calmfold_ui::components::{empty_state, page_header, section_label};
-use calmfold_ui::feedback;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::combobox::{Combobox, ComboboxEvent, ComboboxState};
@@ -26,6 +18,14 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, div,
     rems,
 };
+use ottero_core::focus::{MAX_DURATION_MINS, MIN_DURATION_MINS};
+use ottero_core::{
+    Date, FOCUS_DURATION_PRESETS, FocusKind, FocusSession, FocusSessionId, Task, TaskStatus, clock,
+    format_duration, format_mm_ss,
+};
+use ottero_storage::TaskFilter;
+use ottero_ui::components::{empty_state, page_header, section_label};
+use ottero_ui::feedback;
 
 use crate::actions::FOCUS_CONTEXT;
 use crate::focus::{FocusController, FocusEvent};
@@ -36,12 +36,12 @@ use crate::views::task_row::notify_err;
 /// Stable IDs keep duplicate task titles distinct in the searchable picker.
 #[derive(Clone)]
 struct FocusTaskItem {
-    id: calmfold_core::TaskId,
+    id: ottero_core::TaskId,
     title: SharedString,
 }
 
 impl SearchableListItem for FocusTaskItem {
-    type Value = calmfold_core::TaskId;
+    type Value = ottero_core::TaskId;
     fn title(&self) -> SharedString {
         self.title.clone()
     }
@@ -200,7 +200,7 @@ impl FocusView {
                 self.load_error = false;
             }
             Err(err) => {
-                eprintln!("calmfold: couldn't load focus sessions: {err:#}");
+                eprintln!("ottero: couldn't load focus sessions: {err:#}");
                 self.sessions_today.clear();
                 self.load_error = true;
             }
@@ -239,7 +239,7 @@ impl FocusView {
 
     fn mark_linked_task_done(
         &mut self,
-        task_id: calmfold_core::TaskId,
+        task_id: ottero_core::TaskId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -930,12 +930,12 @@ impl Render for FocusView {
     }
 }
 
-fn today_bounds(today: Date) -> (calmfold_core::Timestamp, calmfold_core::Timestamp) {
+fn today_bounds(today: Date) -> (ottero_core::Timestamp, ottero_core::Timestamp) {
     let tz = jiff::tz::TimeZone::system();
     let start = today
         .at(0, 0, 0, 0)
         .to_zoned(tz.clone())
-        .map_or(calmfold_core::Timestamp::UNIX_EPOCH, |z| z.timestamp());
+        .map_or(ottero_core::Timestamp::UNIX_EPOCH, |z| z.timestamp());
     let end = today
         .tomorrow()
         .ok()
@@ -944,7 +944,7 @@ fn today_bounds(today: Date) -> (calmfold_core::Timestamp, calmfold_core::Timest
     (start, end)
 }
 
-fn format_local_time(ts: calmfold_core::Timestamp) -> String {
+fn format_local_time(ts: ottero_core::Timestamp) -> String {
     ts.to_zoned(jiff::tz::TimeZone::system())
         .strftime("%H:%M")
         .to_string()

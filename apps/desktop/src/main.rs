@@ -4,8 +4,8 @@
 fn main() {
     #[cfg(windows)]
     velopack::VelopackApp::build().run();
-    if let Err(err) = calmfold_desktop::run() {
-        eprintln!("calmfold: {err:#}");
+    if let Err(err) = ottero_desktop::run() {
+        eprintln!("ottero: {err:#}");
         std::process::exit(1);
     }
 }

@@ -145,7 +145,7 @@ pub fn render(
         }
         Err(_) => {
             content = content.child(Label::new(
-                "Release notes couldn’t be loaded. You can keep using Calmfold.",
+                "Release notes couldn’t be loaded. You can keep using Ottero.",
             ))
         }
     }
@@ -274,7 +274,7 @@ mod tests {
         let releases = RELEASES.as_ref().expect("valid bundled notes");
         assert_eq!(releases[0].version, env!("CARGO_PKG_VERSION"));
         for pair in releases.windows(2) {
-            assert!(calmfold_core::update::is_newer(
+            assert!(ottero_core::update::is_newer(
                 &pair[0].version,
                 &pair[1].version
             ));

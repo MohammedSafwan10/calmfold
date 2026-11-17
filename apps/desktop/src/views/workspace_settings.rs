@@ -1,6 +1,5 @@
 //! Workspace navigation controls, all drawn from the feature catalog.
 use crate::{nav, ui_state::LayoutStore};
-use calmfold_ui::feedback;
 use gpui_kit::InteractiveElement as _;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::Disableable as _;
@@ -12,6 +11,7 @@ use gpui_kit::{
     App, Entity, IntoElement, ParentElement as _, SharedString, Styled as _, TestSupportExt as _,
     div,
 };
+use ottero_ui::feedback;
 
 pub fn general_page(layout: Entity<LayoutStore>) -> SettingPage {
     let get = layout.clone();
@@ -37,7 +37,7 @@ pub fn general_page(layout: Entity<LayoutStore>) -> SettingPage {
                     },
                 ),
             )
-            .description("Choose where Calmfold opens. Hidden features can still be opened.")
+            .description("Choose where Ottero opens. Hidden features can still be opened.")
             .keywords(["startup", "start page", "home", "launch", "open"]),
         ),
     )

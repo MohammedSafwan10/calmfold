@@ -6,7 +6,7 @@ Goal: a fast, good-looking shell every later feature plugs into.
 
 - [x] Cargo workspace, pinned toolchain, strict lints, `scripts/check.sh`
 - [x] gpui-kit 0.9.0 (GPUI pre 0.3.11), optimized deps in debug
-- [x] Calmfold Dark/Light monochrome themes, Inter + JetBrains Mono bundled
+- [x] Ottero Dark/Light monochrome themes, Inter + JetBrains Mono bundled
 - [x] Appearance settings persisted (mode, fonts, sizes, width, motion)
 - [x] Shell: custom title bar, data-driven sidebar with child links + badges,
       collapse (animated, fixed toggle spot), drag-resize, persisted layout

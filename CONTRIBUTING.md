@@ -1,6 +1,6 @@
-# Contributing to Calmfold
+# Contributing to Ottero
 
-Calmfold is a small, actively developed personal app. Useful bug reports,
+Ottero is a small, actively developed personal app. Useful bug reports,
 focused fixes and thoughtful design improvements are welcome. Discuss a new
 feature or architectural change in an issue before starting a large pull request.
 Contributions are submitted under the project’s [GPLv3 license](LICENSE), unless
@@ -15,12 +15,12 @@ Studio C++ build tools and CMake.
 
 ```sh
 git clone https://github.com/MohammedSafwan10/calmfold.git
-cd calmfold
+cd calmfold   # the repository keeps its old name for now
 cargo run
 ```
 
-Debug builds use a separate **Calmfold Dev** data folder. For experiments, set
-`CALMFOLD_DATA_DIR` to a new disposable directory. Never run seeds or migration
+Debug builds use a separate **Ottero Dev** data folder. For experiments, set
+`OTTERO_DATA_DIR` to a new disposable directory. Never run seeds or migration
 experiments against your personal database or vault.
 
 ## Make a focused change
@@ -61,7 +61,7 @@ code yourself and be able to explain the implementation and its dependencies.
 
 ## Report a problem
 
-Include the Calmfold version, OS/architecture, steps to reproduce, expected
+Include the Ottero version, OS/architecture, steps to reproduce, expected
 behavior and what happened. Remove personal content from logs and screenshots.
 Keep feature requests focused on the problem they would solve.
 

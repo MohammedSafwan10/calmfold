@@ -1,7 +1,7 @@
-use calmfold_core::links::{normalize_target, unique_targets};
-use calmfold_core::note::preview_text;
-use calmfold_core::tags::{extract_tags, normalize_tag};
-use calmfold_core::{Note, NoteId, Timestamp};
+use ottero_core::links::{normalize_target, unique_targets};
+use ottero_core::note::preview_text;
+use ottero_core::tags::{extract_tags, normalize_tag};
+use ottero_core::{Note, NoteId, Timestamp};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::codec::{fts_query, opt_ts_from_sql, ts_from_sql, ts_to_sql, uuid_from_sql};
@@ -356,7 +356,7 @@ fn preview(body_head: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use calmfold_core::clock;
+    use ottero_core::clock;
 
     fn store() -> Store {
         Store::open_in_memory().expect("store")

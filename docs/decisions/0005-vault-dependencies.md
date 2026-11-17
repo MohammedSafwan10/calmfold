@@ -27,7 +27,7 @@ requires an ADR before adding anything crypto-adjacent.
   for passphrases. 12.9 bits per word.
 - **`csv` 1** for importing Bitwarden / 1Password / Chrome exports.
 - **Random choice** uses `random_bytes` with rejection sampling
-  (`calmfold_crypto::random_below`), so every character and word is uniform.
+  (`ottero_crypto::random_below`), so every character and word is uniform.
 
 ## Not now
 

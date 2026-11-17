@@ -15,7 +15,7 @@ metadata = json.loads(subprocess.check_output(['cargo','metadata','--locked','--
 active = {node['id'] for node in metadata['resolve']['nodes']}
 own = set(metadata['workspace_members'])
 texts = {}
-lines = ['Calmfold — third-party notices', '',
+lines = ['Ottero — third-party notices', '',
          'Dependency declarations for the build host '+host+'. Includes build/test dependencies resolved for the workspace.',
          'Upstream components retain their own licenses. This inventory does not replace the original terms.', '']
 

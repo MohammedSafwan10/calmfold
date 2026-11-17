@@ -12,23 +12,23 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::time::SystemTime;
 
-use calmfold_core::vault::lock::LockState;
-use calmfold_core::vault::{ItemFields, VaultItem};
-use calmfold_core::{Exception, VaultItemId};
-use calmfold_crypto::{KdfParams, SecretString};
+use ottero_core::vault::lock::LockState;
+use ottero_core::vault::{ItemFields, VaultItem};
+use ottero_core::{Exception, VaultItemId};
+use ottero_crypto::{KdfParams, SecretString};
 
 use crate::vault::{
     ArchiveFile, KdfInput, RECOVERY_KDF, VaultFilter, VaultSession, VaultSort, derive,
 };
-use calmfold_core::vault::recovery;
-use calmfold_crypto::Zeroizing;
+use ottero_core::vault::recovery;
+use ottero_crypto::Zeroizing;
 
-use calmfold_core::{
+use ottero_core::{
     Date, DateTime, Event, EventId, FocusSession, FocusSessionId, Habit, HabitId, Note, NoteId,
     Occurrence, Priority, Project, ProjectId, Recurrence, Schedule, Stats, Task, TaskFocusStats,
     TaskId, TaskStatus, Timestamp, clock, parse_event, parse_habit, parse_quick_add,
 };
-use calmfold_storage::{NoteSummary, Progress, Store, TaskCounts, TaskFilter};
+use ottero_storage::{NoteSummary, Progress, Store, TaskCounts, TaskFilter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryEvent {
@@ -65,7 +65,7 @@ impl Library {
     #[must_use]
     pub fn new(store: Store) -> Self {
         let vault = VaultSession::load(&store).unwrap_or_else(|err| {
-            eprintln!("calmfold: couldn't read the vault header: {err:#}");
+            eprintln!("ottero: couldn't read the vault header: {err:#}");
             // Locked, never "set up": setup must not overwrite a header it couldn't read.
             VaultSession::locked()
         });
@@ -74,7 +74,7 @@ impl Library {
             vault,
             kdf: KdfParams::RECOMMENDED,
             vault_activity: SystemTime::now(),
-            archive_dir: std::env::temp_dir().join("calmfold-vault-archives"),
+            archive_dir: std::env::temp_dir().join("ottero-vault-archives"),
         }
     }
 
@@ -82,7 +82,7 @@ impl Library {
     pub fn developer_projects(
         &self,
         archived: bool,
-    ) -> Result<Vec<calmfold_core::developer::DeveloperProject>> {
+    ) -> Result<Vec<ottero_core::developer::DeveloperProject>> {
         Ok(self.store.developer_projects(archived)?)
     }
     pub fn developer_candidates(&self) -> Result<Vec<Project>> {
@@ -104,7 +104,7 @@ impl Library {
     pub fn developer_project(
         &self,
         id: ProjectId,
-    ) -> Result<Option<calmfold_core::developer::DeveloperProject>> {
+    ) -> Result<Option<ottero_core::developer::DeveloperProject>> {
         Ok(self.store.developer_project(id)?)
     }
     pub fn create_developer_project(
@@ -124,7 +124,7 @@ impl Library {
         if self.store.developer_project(project.id())?.is_some() {
             anyhow::bail!("This project already has a developer workspace.");
         }
-        let mut workspace = calmfold_core::developer::DeveloperProject::new(project);
+        let mut workspace = ottero_core::developer::DeveloperProject::new(project);
         let title = setup_note_title(workspace.project().name());
         let note = Note::new(&title, "", now)?;
         workspace.set_setup_note(note.id(), now);
@@ -138,7 +138,7 @@ impl Library {
         &mut self,
         id: ProjectId,
         name: &str,
-        links: Vec<calmfold_core::developer::ProjectLink>,
+        links: Vec<ottero_core::developer::ProjectLink>,
         folder: &str,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -151,7 +151,7 @@ impl Library {
         // Keep the task project's name and the developer workspace in one transaction.
         let mut p = w.project().clone();
         p.rename(name, now)?;
-        let w = calmfold_core::developer::DeveloperProject::from_parts(
+        let w = ottero_core::developer::DeveloperProject::from_parts(
             p,
             w.links().to_vec(),
             w.folder().to_owned(),
@@ -206,20 +206,20 @@ impl Library {
     /// Bounded file import. Returns zeroizing text; errors never include bytes or paths.
     pub fn read_environment_file(
         path: &std::path::Path,
-    ) -> Result<calmfold_crypto::Zeroizing<String>> {
+    ) -> Result<ottero_crypto::Zeroizing<String>> {
         use std::io::Read as _;
         let file = std::fs::File::open(path)
             .map_err(|_| anyhow::anyhow!("Couldn't open that environment file."))?;
-        let mut bytes = calmfold_crypto::Zeroizing::new(Vec::new());
-        file.take((calmfold_core::vault::environment::MAX_ENV_BYTES + 1) as u64)
+        let mut bytes = ottero_crypto::Zeroizing::new(Vec::new());
+        file.take((ottero_core::vault::environment::MAX_ENV_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|_| anyhow::anyhow!("Couldn't read that environment file."))?;
-        if bytes.len() > calmfold_core::vault::environment::MAX_ENV_BYTES {
+        if bytes.len() > ottero_core::vault::environment::MAX_ENV_BYTES {
             anyhow::bail!("This environment file exceeds the 1 MiB limit.");
         }
         let text = std::str::from_utf8(&bytes)
             .map_err(|_| anyhow::anyhow!("Choose a UTF-8 environment file."))?;
-        Ok(calmfold_crypto::Zeroizing::new(text.to_owned()))
+        Ok(ottero_crypto::Zeroizing::new(text.to_owned()))
     }
     /// Deliberate plaintext export, called only after the native path prompt.
     /// Refuses to overwrite; a private temporary file is persisted atomically.
@@ -929,7 +929,7 @@ impl Library {
     pub fn import_ics(&mut self, text: &str, cx: &mut Context<Self>) -> Result<IcsReport> {
         let local = jiff::tz::TimeZone::system();
         let zone = |name: &str| jiff::tz::db().get(name).ok();
-        let parsed = calmfold_core::ics::parse_ics(text, &local, &zone, clock::now())
+        let parsed = ottero_core::ics::parse_ics(text, &local, &zone, clock::now())
             .map_err(|msg| anyhow::anyhow!(msg))?;
         let mut report = IcsReport {
             skipped: parsed.skipped,
@@ -1029,7 +1029,7 @@ impl Library {
     pub fn set_event_occasion(
         &mut self,
         id: EventId,
-        occasion: Option<calmfold_core::Occasion>,
+        occasion: Option<ottero_core::Occasion>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.update_event(id, cx, |e| e.set_occasion(occasion, clock::now()))
@@ -1165,7 +1165,7 @@ impl Library {
         &mut self,
         id: EventId,
         cx: &mut Context<Self>,
-        change: impl FnOnce(&mut Event) -> calmfold_core::DomainResult<()>,
+        change: impl FnOnce(&mut Event) -> ottero_core::DomainResult<()>,
     ) -> Result<()> {
         let mut event = self
             .store
@@ -1355,7 +1355,7 @@ impl Library {
             .to_zoned(jiff::tz::TimeZone::system())
             .strftime("%Y-%m-%d-%H%M%S")
             .to_string();
-        let path = self.archive_dir.join(format!("vault-{stamp}.cfvault"));
+        let path = self.archive_dir.join(format!("vault-{stamp}.otvault"));
         self.vault.archive_and_reset(&mut self.store, &path, now)?;
         cx.emit(LibraryEvent::VaultChanged);
         Ok(path)
@@ -1369,17 +1369,16 @@ impl Library {
     }
 
     /// Archived vaults, newest first: (path, archived at, item count).
-    pub fn vault_archives(&self) -> Vec<(std::path::PathBuf, calmfold_core::Timestamp, usize)> {
+    pub fn vault_archives(&self) -> Vec<(std::path::PathBuf, ottero_core::Timestamp, usize)> {
         let Ok(entries) = std::fs::read_dir(&self.archive_dir) else {
             return Vec::new();
         };
         let mut out: Vec<_> = entries
             .flatten()
             .map(|e| e.path())
-            // `.ksvault` is the name from before the Calmfold rename.
             .filter(|p| {
                 p.extension()
-                    .is_some_and(|x| x == "cfvault" || x == "ksvault")
+                    .is_some_and(|x| crate::vault::ARCHIVE_EXTENSIONS.iter().any(|e| x == *e))
             })
             .filter_map(|p| {
                 let a = ArchiveFile::read(&p).ok()?;
@@ -1399,7 +1398,7 @@ impl Library {
         cx: &mut Context<Self>,
     ) -> gpui_kit::Task<Result<Option<usize>>> {
         if !self.vault.is_unlocked() {
-            return gpui_kit::Task::ready(Err(calmfold_core::DomainError::VaultState {
+            return gpui_kit::Task::ready(Err(ottero_core::DomainError::VaultState {
                 state: self.vault.state().label(),
             }
             .into()));
@@ -1571,7 +1570,7 @@ impl Library {
         &mut self,
         id: VaultItemId,
         cx: &mut Context<Self>,
-        change: impl FnOnce(&mut VaultItem) -> calmfold_core::DomainResult<bool>,
+        change: impl FnOnce(&mut VaultItem) -> ottero_core::DomainResult<bool>,
     ) -> Result<()> {
         self.vault.update(&mut self.store, id, change)?;
         self.touch_vault();
@@ -1627,14 +1626,14 @@ impl Library {
         Ok(n)
     }
 
-    pub fn vault_health(&mut self) -> calmfold_core::vault::health::Report {
+    pub fn vault_health(&mut self) -> ottero_core::vault::health::Report {
         self.vault.health(clock::now())
     }
 
     pub fn vault_strength(
         &mut self,
         id: VaultItemId,
-    ) -> Option<calmfold_core::vault::health::Strength> {
+    ) -> Option<ottero_core::vault::health::Strength> {
         self.vault.strength_of(id)
     }
 
@@ -1645,7 +1644,7 @@ impl Library {
         let today = clock::today();
         let habits = self.store.habits(archived)?;
         let from = today
-            .checked_add(jiff::Span::new().days(-calmfold_core::habit::HISTORY_DAYS))
+            .checked_add(jiff::Span::new().days(-ottero_core::habit::HISTORY_DAYS))
             .unwrap_or(today);
         let mut checkins = self.store.checkins(from..today.tomorrow()?)?;
         let firsts = self.store.first_checkins()?;
@@ -1721,10 +1720,10 @@ impl Library {
             .habit(id)?
             .context("That habit no longer exists")?;
         if habit.is_archived() {
-            return Err(calmfold_core::DomainError::Archived.into());
+            return Err(ottero_core::DomainError::Archived.into());
         }
         if day > clock::today() {
-            return Err(calmfold_core::DomainError::FutureCheckIn.into());
+            return Err(ottero_core::DomainError::FutureCheckIn.into());
         }
         self.store
             .set_checkin(id, day, count.min(habit.target()))
@@ -1785,7 +1784,7 @@ impl Library {
         &mut self,
         id: HabitId,
         cx: &mut Context<Self>,
-        change: impl FnOnce(&mut Habit) -> calmfold_core::DomainResult<()>,
+        change: impl FnOnce(&mut Habit) -> ottero_core::DomainResult<()>,
     ) -> Result<()> {
         let mut habit = self
             .store
@@ -1873,7 +1872,7 @@ impl IcsReport {
         }
         if self.simplified > 0 {
             parts.push(format!(
-                "{} repeating event{} used a rule Calmfold can't follow yet, so only the first date was added.",
+                "{} repeating event{} used a rule Ottero can't follow yet, so only the first date was added.",
                 self.simplified,
                 plural(self.simplified)
             ));
@@ -1921,13 +1920,13 @@ pub fn daily_note_title(date: Date) -> String {
 /// A fresh recovery key, formatted for the user.
 fn new_recovery_key() -> Result<Zeroizing<String>> {
     let mut bytes = Zeroizing::new([0u8; recovery::KEY_BYTES]);
-    calmfold_crypto::random_bytes(&mut bytes[..]).context("Couldn't get secure random numbers")?;
+    ottero_crypto::random_bytes(&mut bytes[..]).context("Couldn't get secure random numbers")?;
     Ok(recovery::format(&bytes))
 }
 
 fn setup_note_title(project: &str) -> String {
     let title = format!("{project} — Setup");
-    if title.chars().count() <= calmfold_core::MAX_TITLE_CHARS {
+    if title.chars().count() <= ottero_core::MAX_TITLE_CHARS {
         title
     } else {
         project.to_owned()

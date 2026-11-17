@@ -38,7 +38,7 @@ fn backfill_tags(tx: &Transaction) -> HookResult {
     let mut insert =
         tx.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?1, ?2)")?;
     for (id, body) in notes {
-        for tag in calmfold_core::tags::extract_tags(&body) {
+        for tag in ottero_core::tags::extract_tags(&body) {
             insert.execute(rusqlite::params![id, tag])?;
         }
     }

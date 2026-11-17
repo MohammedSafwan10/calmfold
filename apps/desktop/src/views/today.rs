@@ -13,10 +13,6 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use calmfold_core::habit_insights::{HabitHistory, day_rate};
-use calmfold_core::{Date, DateTime, Occurrence, Task, TaskId, clock};
-use calmfold_storage::{NoteSummary, Progress, TaskCounts, TaskFilter};
-use calmfold_ui::appearance;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::chart::BarChart;
@@ -29,6 +25,10 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task as GpuiTask,
     TestSupportExt as _, Window, div, px, relative, rems,
 };
+use ottero_core::habit_insights::{HabitHistory, day_rate};
+use ottero_core::{Date, DateTime, Occurrence, Task, TaskId, clock};
+use ottero_storage::{NoteSummary, Progress, TaskCounts, TaskFilter};
+use ottero_ui::appearance;
 
 use crate::library::{CalendarSpan, HabitSummary, Library};
 use crate::views::calendar_layout::{format_span, format_time};
@@ -197,8 +197,8 @@ impl TodayView {
     fn occasion_icon(&self, occ: &Occurrence) -> Option<Lucide> {
         let o = self.span.events.get(&occ.event)?.occasion()?;
         Some(match o.kind {
-            calmfold_core::OccasionKind::Birthday => Lucide::Cake,
-            calmfold_core::OccasionKind::Anniversary => Lucide::Gift,
+            ottero_core::OccasionKind::Birthday => Lucide::Cake,
+            ottero_core::OccasionKind::Anniversary => Lucide::Gift,
         })
     }
 
@@ -206,7 +206,7 @@ impl TodayView {
         self.span
             .events
             .get(&occ.event)
-            .is_some_and(calmfold_core::Event::is_routine)
+            .is_some_and(ottero_core::Event::is_routine)
     }
 
     /// "in 25 min", "in 2 h 10 min", "now".
@@ -493,7 +493,7 @@ impl TodayView {
             .into_any_element()
     }
 
-    fn now_marker(&self, clock: calmfold_ui::appearance::ClockFormat, cx: &App) -> AnyElement {
+    fn now_marker(&self, clock: ottero_ui::appearance::ClockFormat, cx: &App) -> AnyElement {
         let theme = cx.theme();
         h_flex()
             .gap_2()
@@ -516,7 +516,7 @@ impl TodayView {
     fn agenda_row(
         &self,
         occ: &Occurrence,
-        clock: calmfold_ui::appearance::ClockFormat,
+        clock: ottero_ui::appearance::ClockFormat,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme().clone();

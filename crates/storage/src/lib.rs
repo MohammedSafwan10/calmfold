@@ -1,4 +1,4 @@
-//! SQLite persistence for Calmfold.
+//! SQLite persistence for Ottero.
 //!
 //! One [`Store`] owns one connection. It is `Send`, so the app can move it to a
 //! background thread later without API changes. All writes that touch more
@@ -91,10 +91,10 @@ mod update_backup_tests {
     fn snapshot_includes_wal_data_and_search_without_overwriting_existing_files() {
         let dir = tempfile::tempdir().expect("dir");
         let mut store = Store::open(&dir.path().join("live.sqlite3")).expect("store");
-        let note = calmfold_core::Note::new(
+        let note = ottero_core::Note::new(
             "Recovery",
             "recently committed text",
-            calmfold_core::clock::now(),
+            ottero_core::clock::now(),
         )
         .expect("note");
         store.save_note(&note).expect("save");

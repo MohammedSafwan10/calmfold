@@ -31,7 +31,7 @@ pub mod vault_item;
 pub mod vault_recovery;
 pub mod workspace_settings;
 
-use calmfold_core::NoteId;
+use ottero_core::NoteId;
 
 /// Top-level destinations shown in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,13 +89,13 @@ impl Route {
 pub enum Navigate {
     To(Route),
     OpenNote(NoteId),
-    ProjectTasks(calmfold_core::ProjectId),
+    ProjectTasks(ottero_core::ProjectId),
 }
 
 /// Formats a due date relative to `today`: "Today", "Tomorrow", "Yesterday",
 /// a weekday within the next week, otherwise "Nov 20" (or "Nov 20, 2027").
 #[must_use]
-pub fn relative_day(day: calmfold_core::Date, today: calmfold_core::Date) -> String {
+pub fn relative_day(day: ottero_core::Date, today: ottero_core::Date) -> String {
     let diff = (day - today).get_days();
     match diff {
         0 => "Today".into(),
@@ -111,7 +111,7 @@ pub fn relative_day(day: calmfold_core::Date, today: calmfold_core::Date) -> Str
 mod tests {
     use super::*;
 
-    fn d(s: &str) -> calmfold_core::Date {
+    fn d(s: &str) -> ottero_core::Date {
         s.parse().expect("date")
     }
 

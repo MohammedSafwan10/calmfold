@@ -5,11 +5,6 @@
 
 use std::path::PathBuf;
 
-use calmfold_ui::appearance::{
-    self, AppearanceSettings, ClockFormat, ContentWidth, LineSpacing, MonoFont, MotionPreference,
-    ThemePreference, UiFont, WeekStart,
-};
-use calmfold_ui::components::segmented;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::ThemeMode;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -25,6 +20,11 @@ use gpui_kit::{
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
     Subscription, TestSupportExt as _, Window, div,
 };
+use ottero_ui::appearance::{
+    self, AppearanceSettings, ClockFormat, ContentWidth, LineSpacing, MonoFont, MotionPreference,
+    ThemePreference, UiFont, WeekStart,
+};
+use ottero_ui::components::segmented;
 
 use crate::actions::{
     CALENDAR_SHORTCUTS, EDITING_SHORTCUTS, HABIT_SHORTCUTS, SHORTCUTS, ShortcutGroup,
@@ -471,7 +471,7 @@ impl SettingsView {
     }
 
     fn password_groups() -> Vec<SettingGroup> {
-        use calmfold_core::vault::lock::{AutoLock, ClipboardClear};
+        use ottero_core::vault::lock::{AutoLock, ClipboardClear};
         let auto: &'static [(AutoLock, &'static str)] = &[
             (AutoLock::OneMinute, "1 min"),
             (AutoLock::FiveMinutes, "5 min"),
@@ -495,10 +495,10 @@ impl SettingsView {
                 )
             }),
         )
-        .description("Lock the vault when you haven't used Calmfold for this long.")
+        .description("Lock the vault when you haven't used Ottero for this long.")
         .keywords(["vault", "auto-lock", "timeout", "security", "passwords"]);
         let hide = SettingItem::new(
-            "Lock when Calmfold is in the background",
+            "Lock when Ottero is in the background",
             SettingField::switch(
                 |cx| crate::vault_prefs::get(cx).lock_on_hide,
                 |on, cx| crate::vault_prefs::update(cx, |p| p.lock_on_hide = on),
@@ -517,7 +517,7 @@ impl SettingsView {
                 )
             }),
         )
-        .description("Only if the clipboard still holds what Calmfold copied.")
+        .description("Only if the clipboard still holds what Ottero copied.")
         .keywords(["clipboard", "copy", "vault", "security"]);
         let master = SettingItem::new(
             "Master password",
@@ -775,7 +775,7 @@ impl SettingsView {
                 .gap_3()
                 .items_center()
                 .child(
-                    gpui_kit::img(calmfold_ui::assets::APP_ICON)
+                    gpui_kit::img(ottero_ui::assets::APP_ICON)
                         .size(gpui_kit::rems(3.5))
                         .flex_shrink_0(),
                 )
@@ -785,7 +785,7 @@ impl SettingsView {
                             div()
                                 .text_lg()
                                 .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                .child("Calmfold"),
+                                .child("Ottero"),
                         )
                         .child(
                             div()
@@ -877,7 +877,7 @@ impl SettingsView {
         )
         .keywords(["update", "automatic", "background"]);
         SettingPage::new("About").icon(Lucide::Info).group(
-            SettingGroup::new().title("Calmfold").items(vec![
+            SettingGroup::new().title("Ottero").items(vec![
                 header, version, updates, automatic, changelog, maker, fonts, icons,
             ]),
         )
@@ -898,7 +898,7 @@ fn theme_cards(mode: ThemeMode, cx: &App) -> impl IntoElement {
     } else {
         settings.light_theme.clone()
     };
-    let cards = calmfold_ui::theme::choices(mode, cx)
+    let cards = ottero_ui::theme::choices(mode, cx)
         .into_iter()
         .map(|choice| {
             let c = &choice.config.colors;
@@ -1072,7 +1072,7 @@ impl Render for SettingsView {
             return div();
         };
         div().track_focus(&self.focus).size_full().child(
-            Settings::new(("calmfold-settings", self.generation))
+            Settings::new(("ottero-settings", self.generation))
                 .sidebar_width(window.rem_size() * 13.)
                 .default_selected_index(gpui_kit::component::setting::SelectIndex {
                     page_ix: self.initial_page,

@@ -3,9 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use calmfold_core::vault::generator::Options;
-use calmfold_core::vault::lock::{AutoLock, ClipboardClear};
 use gpui_kit::{App, Global};
+use ottero_core::vault::generator::Options;
+use ottero_core::vault::lock::{AutoLock, ClipboardClear};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub struct VaultPrefs {
     pub auto_lock: AutoLock,
     pub clipboard: ClipboardClear,
-    /// Lock when Calmfold goes to the background.
+    /// Lock when Ottero goes to the background.
     pub lock_on_hide: bool,
     pub generator: Options,
     pub sort: crate::vault::VaultSort,
@@ -75,7 +75,7 @@ pub fn update(cx: &mut App, edit: impl FnOnce(&mut VaultPrefs)) {
             std::fs::rename(tmp, &file)
         });
     if let Err(err) = write {
-        eprintln!("calmfold: couldn't save vault settings: {err}");
+        eprintln!("ottero: couldn't save vault settings: {err}");
     }
     cx.refresh_windows();
 }

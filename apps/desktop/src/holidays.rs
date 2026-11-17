@@ -1,6 +1,6 @@
 //! Which holidays the calendar shows, and where the user is.
 //!
-//! The data is `calmfold_core::holidays` (offline). The settings live in
+//! The data is `ottero_core::holidays` (offline). The settings live in
 //! the appearance file: on/off, observances on/off, and the user's
 //! countries. On first launch the country is guessed from the computer's
 //! time zone (no location permission, nothing sent anywhere). jiff reads it
@@ -15,10 +15,10 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use calmfold_core::Date;
-use calmfold_core::holidays::{self, Holiday, HolidayKind};
-use calmfold_ui::appearance;
 use gpui_kit::{App, Global};
+use ottero_core::Date;
+use ottero_core::holidays::{self, Holiday, HolidayKind};
+use ottero_ui::appearance;
 
 /// Test override for the detected country (the test machine's zone varies).
 #[derive(Default)]

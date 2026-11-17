@@ -1,4 +1,4 @@
-# calmfold-crypto
+# ottero-crypto
 
 Key derivation and authenticated encryption for the password vault. Mistakes
 here lose user data or leak it, so the rules are strict.
@@ -26,5 +26,5 @@ ciphertext can't be moved to another record.
 
 ## Test
 
-`cargo test -p calmfold-crypto`. Tamper, wrong-key, wrong-AAD, truncation and
+`cargo test -p ottero-crypto`. Tamper, wrong-key, wrong-AAD, truncation and
 parameter-bound tests must keep passing.

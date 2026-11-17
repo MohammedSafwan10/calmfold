@@ -11,13 +11,15 @@
 *.app/
 
 # Local app data used during development (never commit user data)
-/.calmfold-dev/
+/.ottero-dev/
 *.sqlite
 *.sqlite3
 *.db
 *.db-shm
 *.db-wal
 *.ksvault
+*.cfvault
+*.otvault
 
 # Secrets and env
 .env

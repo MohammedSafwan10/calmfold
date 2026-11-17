@@ -13,10 +13,10 @@ use gpui_kit::{
 };
 use std::collections::HashMap;
 
-use calmfold_core::{Date, ProjectId, Task, TaskId, clock};
-use calmfold_storage::{Progress, TaskFilter};
-use calmfold_ui::components::{empty_state, page_header, segmented};
-use calmfold_ui::feedback::{self, Confirm};
+use ottero_core::{Date, ProjectId, Task, TaskId, clock};
+use ottero_storage::{Progress, TaskFilter};
+use ottero_ui::components::{empty_state, page_header, segmented};
+use ottero_ui::feedback::{self, Confirm};
 
 use crate::library::{Library, LibraryEvent};
 use crate::views::task_row::{notify_err, task_row};
@@ -165,7 +165,7 @@ impl TasksView {
                 self.load_error = false;
             }
             Err(err) => {
-                eprintln!("calmfold: failed to load tasks: {err:#}");
+                eprintln!("ottero: failed to load tasks: {err:#}");
                 self.tasks.clear();
                 self.load_error = true;
             }
@@ -291,7 +291,7 @@ fn quick_add_hint(
     library: &Entity<Library>,
     cx: &gpui_kit::App,
 ) -> Option<SharedString> {
-    let parsed = calmfold_core::parse_quick_add(text, today);
+    let parsed = ottero_core::parse_quick_add(text, today);
     if !parsed.has_extras() {
         return None;
     }
@@ -348,7 +348,7 @@ impl Render for TasksView {
             ),
             _ if self.load_error => (
                 "Couldn't load tasks",
-                "Your tasks are still on disk. Restart Calmfold; if this keeps happening, check the data folder in Settings.",
+                "Your tasks are still on disk. Restart Ottero; if this keeps happening, check the data folder in Settings.",
             ),
             TaskTab::Today => (
                 "Nothing due today",

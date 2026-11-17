@@ -1,15 +1,15 @@
 //! Disposable Developer/vault fixture for visual review. Refuses existing files.
-//! cargo run -p calmfold-desktop --example seed_developer -- /tmp/calmfold-review/calmfold.sqlite3
-//! CALMFOLD_DATA_DIR=/tmp/calmfold-review CALMFOLD_DEV_ROUTE=developer cargo run
-//! Preview vault password is `calmfold-preview-only`; contains no real secrets.
+//! cargo run -p ottero-desktop --example seed_developer -- /tmp/ottero-review/ottero.sqlite3
+//! OTTERO_DATA_DIR=/tmp/ottero-review OTTERO_DEV_ROUTE=developer cargo run
+//! Preview vault password is `ottero-preview-only`; contains no real secrets.
 #![allow(clippy::expect_used)]
-use calmfold_core::developer::{DeveloperProject, ProjectLink};
-use calmfold_core::vault::environment::EnvironmentSecrets;
-use calmfold_core::vault::{ItemFields, ItemKind};
-use calmfold_core::{Note, Project, Task, clock};
-use calmfold_crypto::{KdfParams, SecretString};
-use calmfold_desktop::vault::{KdfInput, VaultSession, derive};
-use calmfold_storage::Store;
+use ottero_core::developer::{DeveloperProject, ProjectLink};
+use ottero_core::vault::environment::EnvironmentSecrets;
+use ottero_core::vault::{ItemFields, ItemKind};
+use ottero_core::{Note, Project, Task, clock};
+use ottero_crypto::{KdfParams, SecretString};
+use ottero_desktop::vault::{KdfInput, VaultSession, derive};
+use ottero_storage::Store;
 fn main() {
     let path = std::path::PathBuf::from(
         std::env::args()
@@ -21,7 +21,7 @@ fn main() {
     let mut store = Store::open(&path).expect("store");
     let now = clock::now();
     let mut first = None;
-    for name in ["Calmfold", "Personal website", "Home server"] {
+    for name in ["Ottero", "Personal website", "Home server"] {
         let mut project = DeveloperProject::new(Project::new(name, now).expect("project"));
         let note = Note::new(&format!("{name} — Setup"), "", now).expect("note");
         project.set_setup_note(note.id(), now);
@@ -32,7 +32,7 @@ fn main() {
                         .expect("link"),
                     ProjectLink::new("Website", "https://nexdark.com").expect("link"),
                 ],
-                "/tmp/calmfold-preview",
+                "/tmp/ottero-preview",
                 now,
             )
             .expect("details");
@@ -47,7 +47,7 @@ fn main() {
     let mut vault = VaultSession::load(&store).expect("vault");
     let input = KdfInput::fresh(KdfParams::RECOMMENDED).expect("input");
     let key = derive(
-        &SecretString::from("calmfold-preview-only".to_owned()),
+        &SecretString::from("ottero-preview-only".to_owned()),
         &input.salt,
         input.params,
     )
@@ -55,11 +55,11 @@ fn main() {
     vault
         .finish_setup(&mut store, input, &key, None, now)
         .expect("setup");
-    let parsed = EnvironmentSecrets::parse("DATABASE_URL=postgres://localhost/calmfold\nAPI_TOKEN=demo-only\nAPP_URL=http://localhost:3000\nLOG_LEVEL=info\nPRIVATE_KEY='demo line one\ndemo line two'\n").expect("parse");
+    let parsed = EnvironmentSecrets::parse("DATABASE_URL=postgres://localhost/ottero\nAPI_TOKEN=demo-only\nAPP_URL=http://localhost:3000\nLOG_LEVEL=info\nPRIVATE_KEY='demo line one\ndemo line two'\n").expect("parse");
     let environment = EnvironmentSecrets::new(first, "Development", parsed.variables().to_vec())
         .expect("environment");
     let fields = ItemFields {
-        title: "Calmfold · Development".into(),
+        title: "Ottero · Development".into(),
         environment: Some(environment),
         ..ItemFields::new(ItemKind::Note)
     };

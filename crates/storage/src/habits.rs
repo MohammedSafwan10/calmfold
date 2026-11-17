@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use calmfold_core::habit::Schedule;
-use calmfold_core::{Date, Habit, HabitId, HabitRecord};
+use ottero_core::habit::Schedule;
+use ottero_core::{Date, Habit, HabitId, HabitRecord};
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::codec::{date_to_sql, opt_ts_from_sql, ts_from_sql, ts_to_sql, uuid_from_sql};
@@ -198,7 +198,7 @@ fn raw_habit(row: &Row<'_>) -> rusqlite::Result<RawHabit> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use calmfold_core::{Timestamp, Weekdays};
+    use ottero_core::{Timestamp, Weekdays};
 
     fn at(secs: i64) -> Timestamp {
         Timestamp::from_second(secs).expect("ts")

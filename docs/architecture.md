@@ -29,10 +29,10 @@ user input → View (Entity) → Library method → core rule → Store (SQLite)
   feature needs slow work (Argon2, indexing, sync), run it with
   `cx.background_spawn` and apply the result on the foreground.
 
-## Startup (`calmfold_desktop::start`)
+## Startup (`ottero_desktop::start`)
 
 1. Resolve data folder (`paths.rs`) and open/migrate SQLite (fails fast, before the window).
-2. `gpui_kit::init`, then `calmfold_ui::init` (fonts → themes → saved appearance).
+2. `gpui_kit::init`, then `ottero_ui::init` (fonts → themes → saved appearance).
 3. Bind keys, set menus, register app-level command handlers.
 4. Open the window with `AppShell`; register it as the command target.
 
@@ -59,8 +59,8 @@ and the command palette therefore run identical code.
 
 Data folder (`Settings → General → Data folder`):
 
-- `calmfold.sqlite3` (+ `-wal`, `-shm`): notes, tasks, events, habits, and the vault (ciphertext only).
-- `vault.json`: vault preferences (auto-lock, clipboard); `vault-archives/*.cfvault`: archived vaults.
+- `ottero.sqlite3` (+ `-wal`, `-shm`): notes, tasks, events, habits, and the vault (ciphertext only).
+- `vault.json`: vault preferences (auto-lock, clipboard); `vault-archives/*.otvault` (older `.cfvault`/`.ksvault` still open): archived vaults.
 - `appearance.json`: appearance settings.
 - `layout.json`: sidebar width/collapsed.
 - Its `navigation` object stores stable catalog IDs for sidebar order,
@@ -70,7 +70,7 @@ Data folder (`Settings → General → Data folder`):
   Appearance reset cannot reset workspace choices. Unknown or repeated IDs
   are resolved safely; missing/new catalog entries remain accessible in More.
 
-Debug builds use a separate `Calmfold Dev` folder; `CALMFOLD_DATA_DIR` overrides.
+Debug builds use a separate `Ottero Dev` folder; `OTTERO_DATA_DIR` overrides.
 A Keepstone folder from before the rename is moved here on first launch (`paths.rs`).
 
 Developer extends existing task projects with `developer_projects` metadata

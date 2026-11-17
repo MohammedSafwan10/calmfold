@@ -1,4 +1,4 @@
-//! Cryptographic primitives for the Calmfold vault.
+//! Cryptographic primitives for the Ottero vault.
 //!
 //! This crate wraps audited RustCrypto implementations. It does not invent
 //! algorithms. Read `crates/crypto/AGENTS.md` before changing anything here.

@@ -171,10 +171,14 @@ impl AppearanceSettings {
         self.mono_font_size = self
             .mono_font_size
             .clamp(*Self::MONO_FONT_SIZES.start(), *Self::MONO_FONT_SIZES.end());
-        // The house themes were called "Keepstone Light/Dark" before the rename.
+        // The house themes were called "Keepstone Light/Dark", then
+        // "Calmfold Light/Dark", before the Ottero rename.
         for name in [&mut self.light_theme, &mut self.dark_theme] {
-            if let Some(rest) = name.strip_prefix("Keepstone ") {
-                *name = format!("Calmfold {rest}");
+            if let Some(rest) = ["Keepstone ", "Calmfold "]
+                .into_iter()
+                .find_map(|old| name.strip_prefix(old))
+            {
+                *name = format!("Ottero {rest}");
             }
         }
         self
@@ -187,7 +191,7 @@ impl AppearanceSettings {
             Ok(text) => serde_json::from_str::<Self>(&text)
                 .map(Self::sanitized)
                 .unwrap_or_else(|err| {
-                    eprintln!("calmfold: ignoring invalid {}: {err}", path.display());
+                    eprintln!("ottero: ignoring invalid {}: {err}", path.display());
                     Self::default()
                 }),
             Err(_) => Self::default(),
@@ -293,7 +297,7 @@ pub fn update(cx: &mut App, edit: impl FnOnce(&mut AppearanceSettings)) {
     }
     state.settings = next;
     if let Err(err) = state.settings.save(&state.file) {
-        eprintln!("calmfold: failed to save appearance: {err}");
+        eprintln!("ottero: failed to save appearance: {err}");
     }
     apply(None, cx);
 }
@@ -358,7 +362,32 @@ mod tests {
         .sanitized();
         assert_eq!(
             (s.light_theme.as_str(), s.dark_theme.as_str()),
-            ("Calmfold Light", "Calmfold Dark")
+            ("Ottero Light", "Ottero Dark")
+        );
+        let s = AppearanceSettings {
+            light_theme: "Calmfold Light".into(),
+            dark_theme: "Calmfold Dark".into(),
+            ..AppearanceSettings::default()
+        }
+        .sanitized();
+        assert_eq!(
+            (s.light_theme.as_str(), s.dark_theme.as_str()),
+            ("Ottero Light", "Ottero Dark")
+        );
+    }
+
+    #[test]
+    fn saved_calmfold_theme_names_load_as_ottero() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("appearance.json");
+        let mut saved = serde_json::to_value(AppearanceSettings::default()).expect("json");
+        saved["light_theme"] = "Calmfold Light".into();
+        saved["dark_theme"] = "Calmfold Dark".into();
+        fs::write(&path, saved.to_string()).expect("write");
+        let s = AppearanceSettings::load(&path);
+        assert_eq!(
+            (s.light_theme.as_str(), s.dark_theme.as_str()),
+            (crate::theme::LIGHT, crate::theme::DARK)
         );
     }
 

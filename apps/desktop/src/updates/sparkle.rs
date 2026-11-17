@@ -32,20 +32,20 @@ pub fn bundled_app() -> Option<PathBuf> {
         .map(|p| p.to_path_buf())
 }
 
-pub fn check(feed: &calmfold_core::update::Feed, cx: &mut App) -> Result<bool> {
+pub fn check(feed: &ottero_core::update::Feed, cx: &mut App) -> Result<bool> {
     let Some(app) = bundled_app() else {
         return Ok(false);
     };
     if !cx.has_global::<Session>() {
         let mut child = Command::new(
-            app.join("Contents/Helpers/CalmfoldUpdater.app/Contents/MacOS/CalmfoldUpdater"),
+            app.join("Contents/Helpers/OtteroUpdater.app/Contents/MacOS/OtteroUpdater"),
         )
         .arg(&app)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .context("The native updater is missing. Reinstall Calmfold.")?;
+        .context("The native updater is missing. Reinstall Ottero.")?;
         let input = child.stdin.take().context("updater input")?;
         let output = child.stdout.take().context("updater output")?;
         cx.set_global(Session {
@@ -85,7 +85,7 @@ pub fn check(feed: &calmfold_core::update::Feed, cx: &mut App) -> Result<bool> {
                         "initialized" | "checking" => Status::Checking,
                         "found" | "downloading" => Status::Downloading { version },
                         "verifying" => Status::Verifying { version },
-                        "ready" if calmfold_core::update::parse_version(&version).is_some() => {
+                        "ready" if ottero_core::update::parse_version(&version).is_some() => {
                             Status::Ready {
                                 version,
                                 notes: Vec::new(),
@@ -95,7 +95,7 @@ pub fn check(feed: &calmfold_core::update::Feed, cx: &mut App) -> Result<bool> {
                         "installing" => Status::Installing { version },
                         "failed" => {
                             let dir = cx.global::<super::Updates>().dir.clone();
-                            super::record_failure(&dir, calmfold_core::clock::now(), cx);
+                            super::record_failure(&dir, ottero_core::clock::now(), cx);
                             Status::Failed {
                                 message: if event.message.is_empty() {
                                     "The native update failed. Try again.".into()

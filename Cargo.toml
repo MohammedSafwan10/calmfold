@@ -12,7 +12,7 @@ default-members = ["apps/desktop"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.92"
 license = "GPL-3.0-only"
@@ -21,10 +21,10 @@ authors = ["Mohammed Safwan"]
 
 [workspace.dependencies]
 # Internal crates
-calmfold-core = { path = "crates/core" }
-calmfold-storage = { path = "crates/storage" }
-calmfold-crypto = { path = "crates/crypto" }
-calmfold-ui = { path = "crates/ui" }
+ottero-core = { path = "crates/core" }
+ottero-storage = { path = "crates/storage" }
+ottero-crypto = { path = "crates/crypto" }
+ottero-ui = { path = "crates/ui" }
 
 # UI. gpui-kit re-exports a pinned GPUI snapshot (gpui-pre). Never add `gpui` directly.
 gpui-kit = { version = "0.9.0", features = ["syntect"] }
@@ -86,7 +86,7 @@ ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] 
 # Dev
 tempfile = "3"
 
-# Calmfold's patched copy of zorite-editor (ADR 0004, vendor/zorite-editor/PATCHES.md).
+# Ottero's patched copy of zorite-editor (ADR 0004, vendor/zorite-editor/PATCHES.md).
 [patch.crates-io]
 zorite-editor = { path = "vendor/zorite-editor" }
 
@@ -111,7 +111,7 @@ debug = "line-tables-only"
 opt-level = 2
 debug = false
 
-[profile.dev.package.calmfold-desktop]
+[profile.dev.package.ottero-desktop]
 opt-level = 0
 
 # Release speed with symbols, for profiling (scripts/perf.sh, `sample`).

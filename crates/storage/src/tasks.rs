@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use calmfold_core::{
+use ottero_core::{
     Date, Priority, Project, ProjectId, Recurrence, Task, TaskId, TaskRecord, TaskStatus, Timestamp,
 };
 use rusqlite::{OptionalExtension, Row, params};
@@ -383,7 +383,7 @@ fn raw_task(row: &Row<'_>) -> rusqlite::Result<RawTask> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use calmfold_core::{Timestamp, clock};
+    use ottero_core::{Timestamp, clock};
 
     fn at(secs: i64) -> Timestamp {
         Timestamp::from_second(secs).expect("ts")
@@ -608,7 +608,7 @@ mod tests {
     #[test]
     fn file_database_persists_across_reopen() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("nested/calmfold.sqlite3");
+        let path = dir.path().join("nested/ottero.sqlite3");
         let task = Task::new("Persist me", clock::now()).expect("task");
         {
             let mut store = Store::open(&path).expect("open");

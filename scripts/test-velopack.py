@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Real Windows portable installations: SDK upgrade/relaunch and authenticated rejection."""
+"""Real Windows portable installations: SDK upgrade/relaunch and authenticated rejection.
+The old package runs as Calmfold.exe and the new one as Ottero.exe (same packId),
+so a pass also proves the rename update path (ADR 0009)."""
 import argparse
 import hashlib
 import http.server
@@ -30,7 +32,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *_): pass
 
 def smoke(old_dir, new_dir, tamper):
-    with tempfile.TemporaryDirectory(prefix="calmfold-velopack-test-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="ottero-velopack-test-") as tmp:
         root = Path(tmp)
         web = root / "web"; web.mkdir()
         portable = next(old_dir.glob("*Portable.zip"))
@@ -63,7 +65,7 @@ def smoke(old_dir, new_dir, tamper):
         (root / "feed-url").write_text(base + "/stable.json")
         (root / "feed-key").write_text(public)
         (root / "userdata.txt").write_text("private fixture data stays outside installation")
-        env = {**os.environ, "CALMFOLD_NATIVE_TEST_ROOT": str(root)}
+        env = {**os.environ, "OTTERO_NATIVE_TEST_ROOT": str(root)}
         app = subprocess.Popen([str(executable), "--test-root", str(root)], env=env)
         try:
             wait_for(lambda: (root / "started.log").exists(), "old installed app startup")
@@ -82,7 +84,9 @@ def smoke(old_dir, new_dir, tamper):
                 (root / "install").touch()
                 wait_for(lambda: "1.0.1 " in (root / "started.log").read_text(), "new Windows version relaunched")
                 assert (install / "current/sibling.txt").read_text() == "new sibling"
-                print("PASS: real Velopack install upgraded 1.0.0 -> 1.0.1, replaced siblings and relaunched", flush=True)
+                assert (install / "current/Ottero.exe").exists(), "renamed main executable missing after update"
+                assert not executable.exists(), "pre-rename executable left behind"
+                print("PASS: real Velopack install upgraded 1.0.0 (Calmfold.exe) -> 1.0.1 (Ottero.exe), replaced siblings and relaunched", flush=True)
             assert (root / "userdata.txt").read_text() == "private fixture data stays outside installation"
         finally:
             (root / "stop").touch()

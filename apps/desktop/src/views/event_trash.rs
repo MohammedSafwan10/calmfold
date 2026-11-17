@@ -2,9 +2,6 @@
 //! events…, or ⌘K). Deleting an event moves it here; Restore puts it back,
 //! "Delete forever" and "Empty trash" are permanent and confirmed first.
 
-use calmfold_core::{Event, EventId};
-use calmfold_ui::appearance;
-use calmfold_ui::feedback::{self, Confirm};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{
@@ -15,6 +12,9 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Subscription, Window, div, px,
 };
+use ottero_core::{Event, EventId};
+use ottero_ui::appearance;
+use ottero_ui::feedback::{self, Confirm};
 
 use crate::library::{Library, LibraryEvent};
 use crate::views::event_detail::summary;
@@ -62,7 +62,7 @@ impl EventTrash {
                 self.error = false;
             }
             Err(err) => {
-                eprintln!("calmfold: couldn't load deleted events: {err:#}");
+                eprintln!("ottero: couldn't load deleted events: {err:#}");
                 self.error = true;
             }
         }

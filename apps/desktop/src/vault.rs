@@ -1,30 +1,31 @@
 //! The unlocked vault in memory, and the crypto glue between the domain
-//! (`calmfold_core::vault`), the crypto crate and storage.
+//! (`ottero_core::vault`), the crypto crate and storage.
 //!
 //! Key hierarchy (ADR 0005): master password → Argon2id → KEK → unwraps the
 //! random vault key → seals each item (AAD = item id). The slow step,
 //! [`derive`], is a free function so callers run it on a background thread;
 //! everything else here is fast and runs on the main thread.
 //!
-//! State follows `calmfold_core::vault::lock::next`. Locking drops the vault
+//! State follows `ottero_core::vault::lock::next`. Locking drops the vault
 //! key and every decrypted item (both zero their memory on drop).
 
 use std::collections::HashMap;
 
 use anyhow::{Context as _, Result, bail};
-use calmfold_core::vault::health::{self, Report, Strength};
-use calmfold_core::vault::lock::{LockEvent, LockState, next};
-use calmfold_core::vault::search::Query;
-use calmfold_core::vault::{ItemFields, ItemKind, VaultItem};
-use calmfold_core::{DomainError, Timestamp, VaultItemId};
-use calmfold_crypto::{
+use ottero_core::vault::health::{self, Report, Strength};
+use ottero_core::vault::lock::{LockEvent, LockState, next};
+use ottero_core::vault::search::Query;
+use ottero_core::vault::{ItemFields, ItemKind, VaultItem};
+use ottero_core::{DomainError, Timestamp, VaultItemId};
+use ottero_crypto::{
     CryptoError, KdfParams, Salt, SecretKey, SecretString, Zeroizing, derive_key, open, seal,
 };
-use calmfold_storage::{SealedItem, Store, VaultMeta};
+use ottero_storage::{SealedItem, Store, VaultMeta};
 
 /// Associated data binding the wrapped vault key to its purpose.
-// Format identifiers from before the Calmfold rename. Never change them:
-// existing vaults and archives are bound to these exact bytes.
+// Format identifiers from the Keepstone days, kept through the Calmfold and
+// Ottero renames. Never change them: existing vaults and archives are bound
+// to these exact bytes.
 const KEY_AAD: &[u8] = b"keepstone-vault-key-v1";
 /// The same vault key wrapped by the recovery key (ADR 0006).
 const RECOVERY_AAD: &[u8] = b"keepstone-vault-recovery-v1";
@@ -518,7 +519,7 @@ impl VaultSession {
         &mut self,
         store: &mut Store,
         id: VaultItemId,
-        change: impl FnOnce(&mut VaultItem) -> calmfold_core::DomainResult<bool>,
+        change: impl FnOnce(&mut VaultItem) -> ottero_core::DomainResult<bool>,
     ) -> Result<()> {
         let mut item = self.item(id).context("That item no longer exists")?.clone();
         if change(&mut item)? {
@@ -698,8 +699,8 @@ impl VaultSession {
     }
 }
 
-/// An archived vault on disk (`vault-archives/*.cfvault`, older ones
-/// `*.ksvault`): the header and
+/// An archived vault on disk (`vault-archives/*.otvault`; Calmfold wrote
+/// `*.cfvault` and Keepstone `*.ksvault`, same format): the header and
 /// sealed items exactly as they were, as hex. Opening it needs the master
 /// password the vault had then.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -722,7 +723,13 @@ struct ArchivedItem {
     updated_at: i64,
 }
 
+// The format name predates both renames; changing it would make every
+// existing backup and archive unreadable.
 const ARCHIVE_FORMAT: &str = "keepstone-vault-archive";
+
+/// File extensions of backups and archives, newest first: `otvault` (Ottero),
+/// `cfvault` (Calmfold), `ksvault` (Keepstone). All hold the same format.
+pub const ARCHIVE_EXTENSIONS: [&str; 3] = ["otvault", "cfvault", "ksvault"];
 
 /// Writes the vault's header and sealed items to `path` atomically (temp
 /// file, fsync, rename) and proves the file reads back. Nothing is
@@ -735,7 +742,7 @@ fn write_archive(store: &Store, path: &std::path::Path, now: Timestamp) -> Resul
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).context("Couldn't create the archive folder")?;
     }
-    let tmp = path.with_extension("cfvault-tmp");
+    let tmp = path.with_extension("otvault-tmp");
     {
         use std::io::Write as _;
         let mut f = std::fs::File::create(&tmp).context("Couldn't write the archive")?;
@@ -775,9 +782,9 @@ impl ArchiveFile {
     pub fn read(path: &std::path::Path) -> Result<Self> {
         let text = std::fs::read(path).context("Couldn't read the archive")?;
         let file: Self =
-            serde_json::from_slice(&text).context("That isn't a Calmfold vault archive")?;
+            serde_json::from_slice(&text).context("That isn't an Ottero vault archive")?;
         if file.format != ARCHIVE_FORMAT || file.version != 1 {
-            bail!("That isn't a Calmfold vault archive");
+            bail!("That isn't an Ottero vault archive");
         }
         Ok(file)
     }
@@ -883,7 +890,7 @@ fn fingerprint(s: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use calmfold_crypto::SecretString;
+    use ottero_crypto::SecretString;
 
     fn now() -> Timestamp {
         Timestamp::from_second(1_800_000_000).expect("ts")
@@ -960,7 +967,7 @@ mod tests {
 
     #[test]
     fn environment_secrets_survive_encryption_reload_and_backup() {
-        use calmfold_core::vault::environment::EnvironmentSecrets;
+        use ottero_core::vault::environment::EnvironmentSecrets;
         let (mut store, mut v) = unlocked();
         let source = (0..200)
             .map(|i| format!("K{i}=secret-value-{i}\n"))
@@ -982,7 +989,7 @@ mod tests {
             fields.environment
         );
         let dir = tempfile::tempdir().expect("dir");
-        let path = dir.path().join("backup.cfvault");
+        let path = dir.path().join("backup.otvault");
         write_archive(&store, &path, now()).expect("backup");
         let archive = ArchiveFile::read(&path).expect("read");
         let k = archive.kdf().expect("kdf");

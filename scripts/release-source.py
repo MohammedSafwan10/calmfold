@@ -12,7 +12,7 @@ dirty = not os.environ.get('GITHUB_SHA') and bool(subprocess.check_output(['git'
 label = 'Development base revision (uncommitted changes present)' if dirty else 'Exact build revision'
 root=Path(sys.argv[1]); root.mkdir(parents=True,exist_ok=True)
 repo='https://github.com/MohammedSafwan10/calmfold'
-(root/'SOURCE.txt').write_text(f'''Calmfold source code — GPL-3.0-only
+(root/'SOURCE.txt').write_text(f'''Ottero source code — GPL-3.0-only
 
 {label}: {revision}
 Source: {repo}/tree/{revision}

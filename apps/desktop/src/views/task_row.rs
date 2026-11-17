@@ -2,9 +2,6 @@
 
 use std::rc::Rc;
 
-use calmfold_core::{Date, Priority, Task, TaskId, TaskStatus};
-use calmfold_storage::Progress;
-use calmfold_ui::feedback::{self, Confirm};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
@@ -16,6 +13,9 @@ use gpui_kit::{
     App, Entity, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, Window, div,
 };
+use ottero_core::{Date, Priority, Task, TaskId, TaskStatus};
+use ottero_storage::Progress;
+use ottero_ui::feedback::{self, Confirm};
 
 use crate::library::Library;
 use crate::views::relative_day;

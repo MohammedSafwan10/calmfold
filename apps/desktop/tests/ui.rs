@@ -1,28 +1,28 @@
 #![allow(clippy::expect_used)] // Test helpers outside #[test] fns.
 
-//! UI integration tests: the real Calmfold shell in a headless window.
+//! UI integration tests: the real Ottero shell in a headless window.
 //!
-//! Each test starts the app exactly like `main` does (`calmfold_desktop::start`)
+//! Each test starts the app exactly like `main` does (`ottero_desktop::start`)
 //! with a temporary data folder and an in-memory database, then drives it with
 //! actions, typing and key presses, and checks the stored result.
 //!
-//! Run: `cargo test -p calmfold-desktop --test ui`
+//! Run: `cargo test -p ottero-desktop --test ui`
 
 use std::time::Duration;
 
-use calmfold_core::TaskStatus;
-use calmfold_desktop::actions::{
-    FocusToggle, GoFocus, GoNotes, GoSettings, GoTasks, GoToday, NewNote, NewTask,
-    OpenCommandPalette, ToggleSidebar, UseDarkTheme, UseLightTheme,
-};
-use calmfold_desktop::paths::AppPaths;
-use calmfold_desktop::shell::AppShell;
-use calmfold_desktop::views::Route;
-use calmfold_desktop::views::tasks::TaskTab;
-use calmfold_storage::{Store, TaskFilter};
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext};
+use ottero_core::TaskStatus;
+use ottero_desktop::actions::{
+    FocusToggle, GoFocus, GoNotes, GoSettings, GoTasks, GoToday, NewNote, NewTask,
+    OpenCommandPalette, ToggleSidebar, UseDarkTheme, UseLightTheme,
+};
+use ottero_desktop::paths::AppPaths;
+use ottero_desktop::shell::AppShell;
+use ottero_desktop::views::Route;
+use ottero_desktop::views::tasks::TaskTab;
+use ottero_storage::{Store, TaskFilter};
 
 struct App {
     window: AnyWindowHandle,
@@ -41,8 +41,7 @@ fn launch(cx: &mut TestAppContext) -> App {
     )
     .expect("offline test prefs");
     let store = Store::open_in_memory().expect("store");
-    let (window, shell) =
-        cx.update(|cx| calmfold_desktop::start(&paths, store, cx).expect("start"));
+    let (window, shell) = cx.update(|cx| ottero_desktop::start(&paths, store, cx).expect("start"));
     cx.run_until_parked();
     App {
         window,
@@ -194,7 +193,7 @@ fn quick_add_creates_task_due_today_and_clears_input(cx: &mut TestAppContext) {
     // Blank input does nothing.
     press(&app, cx, "enter");
 
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     let tasks = cx.read(|cx| {
         app.shell
             .read(cx)
@@ -241,8 +240,8 @@ fn sidebar_toggle_persists_layout(cx: &mut TestAppContext) {
 
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
-    let saved = calmfold_desktop::ui_state::LayoutState::load(
-        &calmfold_desktop::ui_state::layout_file(&app.paths.data_dir),
+    let saved = ottero_desktop::ui_state::LayoutState::load(
+        &ottero_desktop::ui_state::layout_file(&app.paths.data_dir),
     );
     assert!(saved.sidebar_collapsed, "collapsed state written to disk");
 }
@@ -254,13 +253,13 @@ fn theme_commands_switch_mode_and_save(cx: &mut TestAppContext) {
     assert_eq!(cx.read(|cx| Theme::global(cx).mode), ThemeMode::Dark);
     assert_eq!(
         cx.read(|cx| Theme::global(cx).theme_name().to_string()),
-        calmfold_ui::theme::DARK
+        ottero_ui::theme::DARK
     );
     dispatch(&app, cx, UseLightTheme);
     assert_eq!(cx.read(|cx| Theme::global(cx).mode), ThemeMode::Light);
 
-    let saved = calmfold_ui::appearance::AppearanceSettings::load(&app.paths.appearance);
-    assert_eq!(saved.theme, calmfold_ui::appearance::ThemePreference::Light);
+    let saved = ottero_ui::appearance::AppearanceSettings::load(&app.paths.appearance);
+    assert_eq!(saved.theme, ottero_ui::appearance::ThemePreference::Light);
 }
 
 #[gpui_kit::test]
@@ -292,7 +291,7 @@ fn dialog_open(app: &App, cx: &mut TestAppContext) -> bool {
     .expect("window")
 }
 
-fn create_and_open_note(app: &App, cx: &mut TestAppContext, title: &str) -> calmfold_core::NoteId {
+fn create_and_open_note(app: &App, cx: &mut TestAppContext, title: &str) -> ottero_core::NoteId {
     let id = cx.update(|cx| {
         app.shell.read(cx).library().clone().update(cx, |lib, cx| {
             let id = lib.create_note(title, cx).expect("create");
@@ -309,7 +308,7 @@ fn create_and_open_note(app: &App, cx: &mut TestAppContext, title: &str) -> calm
     id
 }
 
-fn note_state(app: &App, cx: &mut TestAppContext, id: calmfold_core::NoteId) -> Option<bool> {
+fn note_state(app: &App, cx: &mut TestAppContext, id: ottero_core::NoteId) -> Option<bool> {
     cx.read(|cx| {
         app.shell
             .read(cx)
@@ -417,14 +416,14 @@ fn all_note_titles(app: &App, cx: &mut TestAppContext) -> Vec<String> {
 fn title_input_stops_at_the_length_limit(cx: &mut TestAppContext) {
     let app = launch(cx);
     dispatch(&app, cx, NewNote);
-    type_text(&app, cx, &"x".repeat(calmfold_core::MAX_TITLE_CHARS + 20));
+    type_text(&app, cx, &"x".repeat(ottero_core::MAX_TITLE_CHARS + 20));
     cx.executor().advance_clock(Duration::from_millis(600));
     cx.run_until_parked();
     let titles = all_note_titles(&app, cx);
     assert!(
         titles
             .iter()
-            .any(|t| t.chars().count() == calmfold_core::MAX_TITLE_CHARS),
+            .any(|t| t.chars().count() == ottero_core::MAX_TITLE_CHARS),
         "long title is capped and saved: {:?}",
         titles.iter().map(|t| t.len()).collect::<Vec<_>>()
     );
@@ -543,7 +542,7 @@ fn release_history_opens_from_about_and_returns_by_button_or_escape(cx: &mut Tes
             w.render_frame(cx);
             let texts = gpui_kit::base::test_support::texts(w);
             assert!(texts.iter().any(|t| t.text() == "What’s new"));
-            assert!(texts.iter().any(|t| t.text() == "More room for your work"));
+            assert!(texts.iter().any(|t| t.text() == "Calmfold is now Ottero"));
             assert!(texts.iter().any(|t| t.text() == "Installed"));
             w.click("release-0.1.1", cx);
         })
@@ -557,8 +556,8 @@ fn release_history_opens_from_about_and_returns_by_button_or_escape(cx: &mut Tes
                     .iter()
                     .any(|t| t.text() == "Small details, smoother days")
             );
-            assert!(!texts.iter().any(|t| t.text() == "More room for your work"));
-            w.click("release-0.1.2", cx);
+            assert!(!texts.iter().any(|t| t.text() == "Calmfold is now Ottero"));
+            w.click("release-0.1.3", cx);
         })
         .expect("current release");
         cx.run_until_parked();
@@ -567,7 +566,7 @@ fn release_history_opens_from_about_and_returns_by_button_or_escape(cx: &mut Tes
         })
         .expect("read and return");
         cx.run_until_parked();
-        dispatch(&app, cx, calmfold_desktop::actions::ShowChangelog);
+        dispatch(&app, cx, ottero_desktop::actions::ShowChangelog);
         press(&app, cx, "escape");
         cx.run_until_parked();
         cx.update_window(app.window, |_, w, cx| {
@@ -575,7 +574,7 @@ fn release_history_opens_from_about_and_returns_by_button_or_escape(cx: &mut Tes
             assert!(
                 !gpui_kit::base::test_support::texts(w)
                     .iter()
-                    .any(|t| t.text() == "More room for your work")
+                    .any(|t| t.text() == "Calmfold is now Ottero")
             );
             w.click("set-whats-new", cx);
         })
@@ -587,7 +586,7 @@ fn release_history_opens_from_about_and_returns_by_button_or_escape(cx: &mut Tes
         .expect("return again");
         cx.run_until_parked();
     }
-    dispatch(&app, cx, calmfold_desktop::actions::ShowChangelog);
+    dispatch(&app, cx, ottero_desktop::actions::ShowChangelog);
     cx.simulate_window_resize(
         app.window,
         gpui_kit::size(gpui_kit::px(800.), gpui_kit::px(650.)),
@@ -608,8 +607,8 @@ fn release_history_opens_from_about_and_returns_by_button_or_escape(cx: &mut Tes
 
 #[gpui_kit::test]
 fn update_status_refreshes_in_settings_without_navigation(cx: &mut TestAppContext) {
-    use calmfold_desktop::updates::{Status, Updates};
     use gpui_kit::BorrowAppContext as _;
+    use ottero_desktop::updates::{Status, Updates};
     let app = launch(cx);
     dispatch(&app, cx, GoSettings);
     cx.update_window(app.window, |_, w, cx| {
@@ -807,10 +806,7 @@ fn task_detail_edits_status_due_notes_and_title(cx: &mut TestAppContext) {
     assert_eq!(task(cx).status(), TaskStatus::Todo);
 
     click(&app, cx, "due-tomorrow");
-    assert_eq!(
-        task(cx).due(),
-        calmfold_core::clock::today().tomorrow().ok()
-    );
+    assert_eq!(task(cx).due(), ottero_core::clock::today().tomorrow().ok());
     click(&app, cx, "due-none");
     assert_eq!(task(cx).due(), None);
 
@@ -886,16 +882,13 @@ fn task_menu_sets_priority_and_due_through_submenus(cx: &mut TestAppContext) {
     click(&app, cx, menu);
     click_label(&app, cx, "Priority");
     click_label(&app, cx, "High");
-    assert_eq!(task(cx).priority(), calmfold_core::Priority::High);
+    assert_eq!(task(cx).priority(), ottero_core::Priority::High);
 
     // The submenu label now shows the current value.
     click(&app, cx, menu);
     click_label(&app, cx, "Due date");
     click_label(&app, cx, "Tomorrow");
-    assert_eq!(
-        task(cx).due(),
-        calmfold_core::clock::today().tomorrow().ok()
-    );
+    assert_eq!(task(cx).due(), ottero_core::clock::today().tomorrow().ok());
 
     click(&app, cx, menu);
     click_label(&app, cx, "Start");
@@ -904,8 +897,8 @@ fn task_menu_sets_priority_and_due_through_submenus(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn note_list_panel_collapses_resizes_and_persists(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::ToggleListPanel;
-    use calmfold_desktop::ui_state::{LayoutState, NOTES_LIST, layout_file};
+    use ottero_desktop::actions::ToggleListPanel;
+    use ottero_desktop::ui_state::{LayoutState, NOTES_LIST, layout_file};
     let app = launch(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let panel =
@@ -996,15 +989,11 @@ fn leak(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
 }
 
-fn library(app: &App, cx: &mut TestAppContext) -> Entity<calmfold_desktop::library::Library> {
+fn library(app: &App, cx: &mut TestAppContext) -> Entity<ottero_desktop::library::Library> {
     cx.read(|cx| app.shell.read(cx).library().clone())
 }
 
-fn task_by_id(
-    app: &App,
-    cx: &mut TestAppContext,
-    id: calmfold_core::TaskId,
-) -> calmfold_core::Task {
+fn task_by_id(app: &App, cx: &mut TestAppContext, id: ottero_core::TaskId) -> ottero_core::Task {
     cx.read(|cx| {
         app.shell
             .read(cx)
@@ -1015,7 +1004,7 @@ fn task_by_id(
     })
 }
 
-fn open_tasks(app: &App, cx: &mut TestAppContext) -> Vec<calmfold_core::Task> {
+fn open_tasks(app: &App, cx: &mut TestAppContext) -> Vec<ottero_core::Task> {
     cx.read(|cx| {
         app.shell
             .read(cx)
@@ -1047,8 +1036,8 @@ fn quick_add_reads_date_priority_and_project_from_the_text(cx: &mut TestAppConte
         .iter()
         .find(|t| t.title() == "Plan Monday standup")
         .expect("dates are read only from the end of the text");
-    assert_eq!(plan.due(), calmfold_core::clock::today().tomorrow().ok());
-    assert_eq!(plan.priority(), calmfold_core::Priority::High);
+    assert_eq!(plan.due(), ottero_core::clock::today().tomorrow().ok());
+    assert_eq!(plan.priority(), ottero_core::Priority::High);
     assert_eq!(plan.project(), Some(home));
 
     let paint = tasks
@@ -1059,7 +1048,7 @@ fn quick_add_reads_date_priority_and_project_from_the_text(cx: &mut TestAppConte
     assert_eq!(paint.project(), None);
     assert_eq!(
         paint.due(),
-        Some(calmfold_core::clock::today()),
+        Some(ottero_core::clock::today()),
         "no date in the text: the Today tab's default applies"
     );
 }
@@ -1071,13 +1060,13 @@ fn completing_a_repeating_task_schedules_the_next_one(cx: &mut TestAppContext) {
     type_text(&app, cx, "Water plants every day");
     press(&app, cx, "enter");
 
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     let first = open_tasks(&app, cx);
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].title(), "Water plants");
     assert_eq!(
         first[0].recurrence(),
-        Some(calmfold_core::Recurrence::Days(1))
+        Some(ottero_core::Recurrence::Days(1))
     );
     assert_eq!(first[0].due(), Some(today));
 
@@ -1094,10 +1083,7 @@ fn completing_a_repeating_task_schedules_the_next_one(cx: &mut TestAppContext) {
     assert_ne!(next[0].id(), id);
     assert_eq!(next[0].title(), "Water plants");
     assert_eq!(next[0].due(), today.tomorrow().ok());
-    assert_eq!(
-        next[0].recurrence(),
-        Some(calmfold_core::Recurrence::Days(1))
-    );
+    assert_eq!(next[0].recurrence(), Some(ottero_core::Recurrence::Days(1)));
 }
 
 #[gpui_kit::test]
@@ -1153,7 +1139,7 @@ fn task_detail_adds_checks_and_removes_steps(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn projects_are_created_shown_renamed_and_deleted_without_losing_tasks(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::NewProject;
+    use ottero_desktop::actions::NewProject;
     let app = launch(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
 
@@ -1214,11 +1200,11 @@ fn projects_are_created_shown_renamed_and_deleted_without_losing_tasks(cx: &mut 
 
 #[gpui_kit::test]
 fn daily_note_opens_todays_note_and_never_duplicates_it(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::OpenDailyNote;
+    use ottero_desktop::actions::OpenDailyNote;
     let app = launch(cx);
     dispatch(&app, cx, OpenDailyNote);
     assert_eq!(route(&app, cx), Route::Notes);
-    let title = calmfold_desktop::library::daily_note_title(calmfold_core::clock::today());
+    let title = ottero_desktop::library::daily_note_title(ottero_core::clock::today());
     let first = cx.read(|cx| app.shell.read(cx).notes().read(cx).open_note_id());
     assert!(first.is_some());
     assert_eq!(
@@ -1267,7 +1253,7 @@ fn tag_filter_shows_only_tagged_notes(cx: &mut TestAppContext) {
     );
 
     dispatch(&app, cx, GoNotes);
-    let shown = |id: calmfold_core::NoteId, cx: &mut TestAppContext| {
+    let shown = |id: ottero_core::NoteId, cx: &mut TestAppContext| {
         cx.update_window(app.window, |_, window, cx| {
             window.render_frame(cx);
             window.try_find(leak(format!("note-{id}"))).is_some()
@@ -1444,7 +1430,7 @@ fn long_notes_scroll_the_page_not_the_editor(cx: &mut TestAppContext) {
 fn today_shows_the_week_and_the_next_seven_days(cx: &mut TestAppContext) {
     let app = launch(cx);
     let lib = library(&app, cx);
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     let in_three = today.checked_add(jiff::Span::new().days(3)).expect("date");
     let in_twenty = today.checked_add(jiff::Span::new().days(20)).expect("date");
     let (soon, later) = cx.update(|cx| {
@@ -1493,7 +1479,7 @@ fn today_shows_the_week_and_the_next_seven_days(cx: &mut TestAppContext) {
 fn note_editor(
     app: &App,
     cx: &mut TestAppContext,
-) -> Entity<calmfold_desktop::views::note_editor::NoteEditor> {
+) -> Entity<ottero_desktop::views::note_editor::NoteEditor> {
     cx.read(|cx| app.shell.read(cx).notes().read(cx).note_editor().clone())
 }
 
@@ -1502,7 +1488,7 @@ fn open_note_with(
     cx: &mut TestAppContext,
     title: &str,
     body: &str,
-) -> calmfold_core::NoteId {
+) -> ottero_core::NoteId {
     let lib = library(app, cx);
     let id = cx.update(|cx| {
         lib.update(cx, |l, cx| {
@@ -1619,7 +1605,7 @@ fn selecting_text_shows_a_format_bar_that_keeps_focus(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn markdown_source_mode_toggles_without_changing_text(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::ToggleMarkdownSource;
+    use ottero_desktop::actions::ToggleMarkdownSource;
     let app = launch(cx);
     open_note_with(&app, cx, "Source", "# Heading\n**bold**");
     let notes = cx.read(|cx| app.shell.read(cx).notes().clone());
@@ -1699,7 +1685,7 @@ fn arrow_keys_move_through_math_blocks(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn find_in_note_counts_steps_wraps_and_closes(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::{FindInNote, FindNext, FindPrevious};
+    use ottero_desktop::actions::{FindInNote, FindNext, FindPrevious};
     let app = launch(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     dispatch(&app, cx, GoNotes);
@@ -1787,7 +1773,7 @@ fn spelling_flags_prose_skips_code_and_can_be_turned_off(cx: &mut TestAppContext
         "code, links and tags are not prose: {words:?}"
     );
 
-    cx.update(|cx| calmfold_ui::appearance::update(cx, |s| s.spell_check = false));
+    cx.update(|cx| ottero_ui::appearance::update(cx, |s| s.spell_check = false));
     cx.run_until_parked();
     assert!(flagged(cx).is_empty(), "the setting turns underlines off");
 }
@@ -1805,7 +1791,7 @@ fn picking_a_theme_card_applies_and_saves_it(cx: &mut TestAppContext) {
     .expect("Appearance navigation");
     cx.run_until_parked();
     let name = |cx: &mut TestAppContext| cx.read(|cx| Theme::global(cx).theme_name().to_string());
-    assert_eq!(name(cx), calmfold_ui::theme::DARK);
+    assert_eq!(name(cx), ottero_ui::theme::DARK);
 
     click(&app, cx, "theme-catppuccin-mocha");
     assert_eq!(name(cx), "Catppuccin Mocha");
@@ -1820,7 +1806,7 @@ fn picking_a_theme_card_applies_and_saves_it(cx: &mut TestAppContext) {
     assert_eq!(cx.read(|cx| Theme::global(cx).mode), ThemeMode::Light);
     assert_eq!(name(cx), "Solarized Light");
 
-    let saved = calmfold_ui::appearance::AppearanceSettings::load(&app.paths.appearance);
+    let saved = ottero_ui::appearance::AppearanceSettings::load(&app.paths.appearance);
     assert_eq!(saved.dark_theme, "Catppuccin Mocha");
     assert_eq!(saved.light_theme, "Solarized Light");
 
@@ -1831,14 +1817,14 @@ fn picking_a_theme_card_applies_and_saves_it(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn calendar_quick_add_keyboard_views_and_moves(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::{GoCalendar, NewEvent};
-    use calmfold_desktop::views::calendar_layout::CalendarMode;
+    use ottero_desktop::actions::{GoCalendar, NewEvent};
+    use ottero_desktop::views::calendar_layout::CalendarMode;
 
     let app = launch(cx);
     dispatch(&app, cx, GoCalendar);
     assert_eq!(route(&app, cx), Route::Calendar);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
 
     // Quick add from the "New event" command.
     dispatch(&app, cx, NewEvent);
@@ -1857,7 +1843,7 @@ fn calendar_quick_add_keyboard_views_and_moves(cx: &mut TestAppContext) {
     assert_eq!(event.title(), "Lunch with Sam");
     assert_eq!(
         event.start(),
-        tomorrow.to_datetime(calmfold_core::Time::constant(13, 0, 0, 0))
+        tomorrow.to_datetime(ottero_core::Time::constant(13, 0, 0, 0))
     );
     assert_eq!(
         cx.read(|cx| calendar.read(cx).anchor()),
@@ -1896,11 +1882,11 @@ fn calendar_quick_add_keyboard_views_and_moves(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn every_calendar_view_renders_events_and_tasks(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::GoCalendar;
-    use calmfold_desktop::views::calendar_layout::CalendarMode;
+    use ottero_desktop::actions::GoCalendar;
+    use ottero_desktop::views::calendar_layout::CalendarMode;
 
     let app = launch(cx);
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     cx.update(|cx| {
         app.shell.read(cx).library().clone().update(cx, |lib, cx| {
             for text in [
@@ -1934,8 +1920,8 @@ fn every_calendar_view_renders_events_and_tasks(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn habits_quick_add_check_in_keyboard_and_archive(cx: &mut TestAppContext) {
-    use calmfold_core::habit::Schedule;
-    use calmfold_desktop::actions::{GoHabits, NewHabit};
+    use ottero_core::habit::Schedule;
+    use ottero_desktop::actions::{GoHabits, NewHabit};
 
     let app = launch(cx);
     dispatch(&app, cx, NewHabit);
@@ -1978,7 +1964,7 @@ fn habits_quick_add_check_in_keyboard_and_archive(cx: &mut TestAppContext) {
     assert_eq!(archived[0].today_count, 3, "history kept");
 
     // Future check-ins are refused.
-    let tomorrow = calmfold_core::clock::today().tomorrow().expect("date");
+    let tomorrow = ottero_core::clock::today().tomorrow().expect("date");
     let other = list[1].habit.id();
     let err = cx.update(|cx| {
         app.shell
@@ -1992,11 +1978,11 @@ fn habits_quick_add_check_in_keyboard_and_archive(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn habit_insights_render_with_history(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::GoHabits;
-    use calmfold_desktop::views::habits::HabitTab;
+    use ottero_desktop::actions::GoHabits;
+    use ottero_desktop::views::habits::HabitTab;
 
     let app = launch(cx);
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     cx.update(|cx| {
         app.shell.read(cx).library().clone().update(cx, |lib, cx| {
             let read = lib.quick_add_habit("Read daily", cx).expect("habit");
@@ -2023,10 +2009,10 @@ fn habit_insights_render_with_history(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn calendar_routines_can_be_hidden(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::GoCalendar;
+    use ottero_desktop::actions::GoCalendar;
 
     let app = launch(cx);
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     cx.update(|cx| {
         app.shell.read(cx).library().clone().update(cx, |lib, cx| {
             lib.quick_add_event("Gym 7am every day", today, cx)
@@ -2047,7 +2033,7 @@ fn calendar_routines_can_be_hidden(cx: &mut TestAppContext) {
         })
     };
     assert_eq!(shown(cx), 2);
-    cx.update(|cx| calmfold_ui::appearance::update(cx, |s| s.calendar_routines = false));
+    cx.update(|cx| ottero_ui::appearance::update(cx, |s| s.calendar_routines = false));
     cx.update_window(app.window, |_, window, _| window.refresh())
         .expect("window");
     cx.run_until_parked();
@@ -2056,12 +2042,12 @@ fn calendar_routines_can_be_hidden(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn today_dashboard_shows_schedule_habits_and_respects_layout(cx: &mut TestAppContext) {
-    use calmfold_desktop::views::today::set_shown;
-    use calmfold_desktop::views::today_layout::TodaySection;
+    use ottero_desktop::views::today::set_shown;
+    use ottero_desktop::views::today_layout::TodaySection;
 
     let app = launch(cx);
     let lib = library(&app, cx);
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     let (event, habit) = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             let e = l
@@ -2111,15 +2097,15 @@ fn today_dashboard_shows_schedule_habits_and_respects_layout(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn vault_setup_items_lock_unlock_and_copy(cx: &mut TestAppContext) {
-    use calmfold_core::vault::lock::LockState;
-    use calmfold_core::vault::{ItemFields, ItemKind};
-    use calmfold_desktop::actions::{GoPasswords, LockVault};
+    use ottero_core::vault::lock::LockState;
+    use ottero_core::vault::{ItemFields, ItemKind};
+    use ottero_desktop::actions::{GoPasswords, LockVault};
 
     let app = launch(cx);
     let lib = library(&app, cx);
     cx.update(|cx| {
         lib.update(cx, |l, _| {
-            l.set_kdf_params_for_tests(calmfold_crypto::KdfParams::MINIMUM)
+            l.set_kdf_params_for_tests(ottero_crypto::KdfParams::MINIMUM)
         })
     });
     dispatch(&app, cx, GoPasswords);
@@ -2210,14 +2196,14 @@ fn vault_setup_items_lock_unlock_and_copy(cx: &mut TestAppContext) {
 
     // The right one does, and the item is back.
     cx.update_window(app.window, |_, window, cx| {
-        window.dispatch_action(Box::new(calmfold_desktop::actions::GoPasswords), cx)
+        window.dispatch_action(Box::new(ottero_desktop::actions::GoPasswords), cx)
     })
     .expect("window");
     cx.run_until_parked();
     let unlock_task = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             l.unlock_vault(
-                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                ottero_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -2237,22 +2223,22 @@ fn vault_setup_items_lock_unlock_and_copy(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn vault_auto_locks_after_idle(cx: &mut TestAppContext) {
-    use calmfold_core::vault::lock::{AutoLock, LockState};
-    use calmfold_desktop::actions::GoPasswords;
+    use ottero_core::vault::lock::{AutoLock, LockState};
+    use ottero_desktop::actions::GoPasswords;
 
     let app = launch(cx);
     let lib = library(&app, cx);
     cx.update(|cx| {
         lib.update(cx, |l, _| {
-            l.set_kdf_params_for_tests(calmfold_crypto::KdfParams::MINIMUM)
+            l.set_kdf_params_for_tests(ottero_crypto::KdfParams::MINIMUM)
         });
-        calmfold_desktop::vault_prefs::update(cx, |p| p.auto_lock = AutoLock::OneMinute);
+        ottero_desktop::vault_prefs::update(cx, |p| p.auto_lock = AutoLock::OneMinute);
     });
     dispatch(&app, cx, GoPasswords);
     let setup = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             l.set_up_vault(
-                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                ottero_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -2276,19 +2262,19 @@ fn vault_auto_locks_after_idle(cx: &mut TestAppContext) {
 
 /// An unlocked vault on the Passwords screen (fast KDF).
 fn unlocked_vault(cx: &mut TestAppContext) -> App {
-    use calmfold_desktop::actions::GoPasswords;
+    use ottero_desktop::actions::GoPasswords;
     let app = launch(cx);
     let lib = library(&app, cx);
     cx.update(|cx| {
         lib.update(cx, |l, _| {
-            l.set_kdf_params_for_tests(calmfold_crypto::KdfParams::MINIMUM)
+            l.set_kdf_params_for_tests(ottero_crypto::KdfParams::MINIMUM)
         })
     });
     dispatch(&app, cx, GoPasswords);
     let setup = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             l.set_up_vault(
-                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                ottero_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -2308,8 +2294,8 @@ fn element_present(app: &App, cx: &mut TestAppContext, id: &'static str) -> bool
 
 #[gpui_kit::test]
 fn sidebar_customization_reorders_hides_persists_and_resets_with_undo(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::CustomizeSidebar;
-    use calmfold_desktop::ui_state::{LayoutState, layout_file};
+    use ottero_desktop::actions::CustomizeSidebar;
+    use ottero_desktop::ui_state::{LayoutState, layout_file};
     let app = launch(cx);
     let prefs = |cx: &mut TestAppContext| {
         cx.read(|cx| {
@@ -2348,7 +2334,7 @@ fn sidebar_customization_reorders_hides_persists_and_resets_with_undo(cx: &mut T
     click(&app, cx, "sidebar-up-notes");
     let customized = prefs(cx);
     cx.update(|cx| {
-        calmfold_ui::appearance::reset(cx);
+        ottero_ui::appearance::reset(cx);
         cx.set_reduce_motion(true);
     });
     cx.run_until_parked();
@@ -2371,7 +2357,7 @@ fn sidebar_customization_reorders_hides_persists_and_resets_with_undo(cx: &mut T
 
 #[gpui_kit::test]
 fn sidebar_more_is_inline_and_all_hidden_still_has_navigation(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::{CustomizeSidebar, GoPasswords};
+    use ottero_desktop::actions::{CustomizeSidebar, GoPasswords};
     let app = launch(cx);
     // More sits immediately after four default features, not in the footer.
     cx.update_window(app.window, |_, w, cx| {
@@ -2384,7 +2370,7 @@ fn sidebar_more_is_inline_and_all_hidden_still_has_navigation(cx: &mut TestAppCo
     .expect("More");
     cx.run_until_parked();
     dispatch(&app, cx, CustomizeSidebar);
-    for entry in calmfold_desktop::nav::entries() {
+    for entry in ottero_desktop::nav::entries() {
         let visible = cx.read(|cx| {
             app.shell
                 .read(cx)
@@ -2409,7 +2395,7 @@ fn sidebar_more_is_inline_and_all_hidden_still_has_navigation(cx: &mut TestAppCo
     dispatch(&app, cx, GoPasswords);
     assert_eq!(route(&app, cx), Route::Passwords);
     dispatch(&app, cx, CustomizeSidebar);
-    for entry in calmfold_desktop::nav::entries() {
+    for entry in ottero_desktop::nav::entries() {
         click(&app, cx, leak(format!("sidebar-show-{}", entry.id)));
     }
     cx.update_window(app.window, |_, w, cx| {
@@ -2424,7 +2410,7 @@ fn sidebar_more_is_inline_and_all_hidden_still_has_navigation(cx: &mut TestAppCo
 
 #[gpui_kit::test]
 fn hiding_focus_keeps_timer_running_and_feature_settings_are_searchable(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::CustomizeSidebar;
+    use ottero_desktop::actions::CustomizeSidebar;
     let app = launch(cx);
     dispatch(&app, cx, GoFocus);
     dispatch(&app, cx, FocusToggle);
@@ -2454,7 +2440,7 @@ fn hiding_focus_keeps_timer_running_and_feature_settings_are_searchable(cx: &mut
 
 #[gpui_kit::test]
 fn workspace_start_page_loads_and_can_be_changed_without_pinning_it(cx: &mut TestAppContext) {
-    use calmfold_desktop::{
+    use ottero_desktop::{
         navigation::SidebarPreferences,
         ui_state::{LayoutState, layout_file},
     };
@@ -2471,7 +2457,7 @@ fn workspace_start_page_loads_and_can_be_changed_without_pinning_it(cx: &mut Tes
     }
     .save(&layout_file(dir.path()));
     let (window, shell) = cx.update(|cx| {
-        calmfold_desktop::start(&paths, Store::open_in_memory().expect("store"), cx).expect("start")
+        ottero_desktop::start(&paths, Store::open_in_memory().expect("store"), cx).expect("start")
     });
     cx.run_until_parked();
     let app = App {
@@ -2503,8 +2489,8 @@ fn workspace_start_page_loads_and_can_be_changed_without_pinning_it(cx: &mut Tes
 
 #[gpui_kit::test]
 fn sidebar_hiding_preserves_note_drafts_and_vault_state(cx: &mut TestAppContext) {
-    use calmfold_core::vault::lock::LockState;
-    use calmfold_desktop::actions::CustomizeSidebar;
+    use ottero_core::vault::lock::LockState;
+    use ottero_desktop::actions::CustomizeSidebar;
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
     dispatch(&app, cx, NewNote);
@@ -2559,10 +2545,8 @@ fn click_placeholder(app: &App, cx: &mut TestAppContext, placeholder: &str) {
 
 #[gpui_kit::test]
 fn developer_forms_leave_cleanly_and_unlock_guidance_is_contextual(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::{
-        GoDeveloper, LockVault, NewDeveloperProject, NewProjectSecrets,
-    };
     use gpui_kit::test::TestQueryExt as _;
+    use ottero_desktop::actions::{GoDeveloper, LockVault, NewDeveloperProject, NewProjectSecrets};
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
     let project = cx.update(|cx| {
@@ -2622,7 +2606,7 @@ fn developer_forms_leave_cleanly_and_unlock_guidance_is_contextual(cx: &mut Test
     let task = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             l.unlock_vault(
-                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                ottero_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -2640,10 +2624,10 @@ fn developer_forms_leave_cleanly_and_unlock_guidance_is_contextual(cx: &mut Test
 
 #[gpui_kit::test]
 fn passwords_navigation_preserves_invalid_environment_drafts(cx: &mut TestAppContext) {
-    use calmfold_core::vault::environment::EnvironmentSecrets;
-    use calmfold_core::vault::{ItemFields, ItemKind};
-    use calmfold_desktop::actions::{GoPasswords, NewLogin};
-    use calmfold_desktop::vault::VaultFilter;
+    use ottero_core::vault::environment::EnvironmentSecrets;
+    use ottero_core::vault::{ItemFields, ItemKind};
+    use ottero_desktop::actions::{GoPasswords, NewLogin};
+    use ottero_desktop::vault::VaultFilter;
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
     let id = cx.update(|cx| {
@@ -2749,10 +2733,10 @@ fn passwords_navigation_preserves_invalid_environment_drafts(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn environment_reveal_is_literal_and_copy_updates_recent_use(cx: &mut TestAppContext) {
-    use calmfold_core::vault::environment::EnvironmentSecrets;
-    use calmfold_core::vault::{ItemFields, ItemKind};
-    use calmfold_desktop::actions::{CopyProjectEnvironment, GoPasswords};
     use gpui_kit::test::TestQueryExt as _;
+    use ottero_core::vault::environment::EnvironmentSecrets;
+    use ottero_core::vault::{ItemFields, ItemKind};
+    use ottero_desktop::actions::{CopyProjectEnvironment, GoPasswords};
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
     let value = "line one\nline two\tC:\\folder";
@@ -2760,8 +2744,7 @@ fn environment_reveal_is_literal_and_copy_updates_recent_use(cx: &mut TestAppCon
         None,
         "Development",
         vec![
-            calmfold_core::vault::environment::EnvVariable::new("PRIVATE_KEY", value)
-                .expect("value"),
+            ottero_core::vault::environment::EnvVariable::new("PRIVATE_KEY", value).expect("value"),
         ],
     )
     .expect("env");
@@ -2865,9 +2848,9 @@ fn environment_reveal_is_literal_and_copy_updates_recent_use(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn environment_export_rejects_existing_files_and_late_locked_dialogs(cx: &mut TestAppContext) {
-    use calmfold_core::vault::environment::EnvironmentSecrets;
-    use calmfold_core::vault::{ItemFields, ItemKind};
-    use calmfold_desktop::actions::{ExportProjectEnvironment, GoPasswords, LockVault};
+    use ottero_core::vault::environment::EnvironmentSecrets;
+    use ottero_core::vault::{ItemFields, ItemKind};
+    use ottero_desktop::actions::{ExportProjectEnvironment, GoPasswords, LockVault};
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
     cx.update(|cx| {
@@ -2899,7 +2882,7 @@ fn environment_export_rejects_existing_files_and_late_locked_dialogs(cx: &mut Te
         std::fs::read_to_string(&path).expect("unchanged"),
         "keep original"
     );
-    let error = calmfold_desktop::library::Library::write_environment_file(&path, "new")
+    let error = ottero_desktop::library::Library::write_environment_file(&path, "new")
         .expect_err("no overwrite");
     assert!(error.to_string().contains("already exists"));
     let late = app._dir.path().join("late.env");
@@ -2916,12 +2899,12 @@ fn environment_export_rejects_existing_files_and_late_locked_dialogs(cx: &mut Te
 
 #[gpui_kit::test]
 fn developer_projects_reuse_tasks_and_setup_notes(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::{GoDeveloper, NewDeveloperProject};
+    use ottero_desktop::actions::{GoDeveloper, NewDeveloperProject};
     let app = launch(cx);
     let lib = library(&app, cx);
     dispatch(&app, cx, NewDeveloperProject);
     assert_eq!(route(&app, cx), Route::Developer);
-    type_text(&app, cx, "Calmfold website");
+    type_text(&app, cx, "Ottero website");
     press(&app, cx, "enter");
     let project = cx.read(|cx| {
         lib.read(cx)
@@ -2930,7 +2913,7 @@ fn developer_projects_reuse_tasks_and_setup_notes(cx: &mut TestAppContext) {
             .remove(0)
     });
     let note_id = project.setup_note().expect("setup note");
-    assert_eq!(project.project().name(), "Calmfold website");
+    assert_eq!(project.project().name(), "Ottero website");
     click(&app, cx, "developer-setup-note");
     assert_eq!(route(&app, cx), Route::Notes);
     assert!(cx.read(|cx| lib.read(cx).note(note_id).expect("read").is_some()));
@@ -2994,7 +2977,7 @@ fn developer_projects_reuse_tasks_and_setup_notes(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn developer_secrets_import_edit_export_and_lock(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::{
+    use ottero_desktop::actions::{
         CopyProjectEnvironment, ExportProjectEnvironment, GoDeveloper, GoPasswords,
         ImportProjectEnvironment, LockVault, NewProjectSecrets,
     };
@@ -3002,7 +2985,7 @@ fn developer_secrets_import_edit_export_and_lock(cx: &mut TestAppContext) {
     let lib = library(&app, cx);
     let project = cx.update(|cx| {
         lib.update(cx, |l, cx| {
-            l.create_developer_project("Calmfold", None, cx)
+            l.create_developer_project("Ottero", None, cx)
                 .expect("project")
         })
     });
@@ -3055,7 +3038,7 @@ fn developer_secrets_import_edit_export_and_lock(cx: &mut TestAppContext) {
             .expect("copied")
     });
     assert_eq!(
-        calmfold_core::vault::environment::EnvironmentSecrets::parse(&copied)
+        ottero_core::vault::environment::EnvironmentSecrets::parse(&copied)
             .expect("copy")
             .variables(),
         expected.variables()
@@ -3071,7 +3054,7 @@ fn developer_secrets_import_edit_export_and_lock(cx: &mut TestAppContext) {
     );
     let exported = std::fs::read_to_string(&out).expect("read");
     let parsed =
-        calmfold_core::vault::environment::EnvironmentSecrets::parse(&exported).expect("parse");
+        ottero_core::vault::environment::EnvironmentSecrets::parse(&exported).expect("parse");
     assert_eq!(parsed.variables(), expected.variables());
     cx.executor().advance_clock(Duration::from_secs(31));
     cx.run_until_parked();
@@ -3149,7 +3132,7 @@ fn developer_secrets_import_edit_export_and_lock(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn developer_late_import_cannot_replace_another_draft(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::{GoDeveloper, ImportProjectEnvironment, NewProjectSecrets};
+    use ottero_desktop::actions::{GoDeveloper, ImportProjectEnvironment, NewProjectSecrets};
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
     let (first, second) = cx.update(|cx| {
@@ -3191,10 +3174,10 @@ fn developer_late_import_cannot_replace_another_draft(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn locking_wipes_unsaved_drafts_and_closes_the_generator(cx: &mut TestAppContext) {
-    use calmfold_core::vault::ItemKind;
-    use calmfold_core::vault::lock::LockState;
-    use calmfold_desktop::actions::{GeneratePassword, LockVault};
     use gpui_kit::component::WindowExt as _;
+    use ottero_core::vault::ItemKind;
+    use ottero_core::vault::lock::LockState;
+    use ottero_desktop::actions::{GeneratePassword, LockVault};
 
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
@@ -3231,7 +3214,7 @@ fn locking_wipes_unsaved_drafts_and_closes_the_generator(cx: &mut TestAppContext
 
 #[gpui_kit::test]
 fn waking_from_sleep_locks_the_vault(cx: &mut TestAppContext) {
-    use calmfold_core::vault::lock::LockState;
+    use ottero_core::vault::lock::LockState;
 
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
@@ -3243,18 +3226,18 @@ fn waking_from_sleep_locks_the_vault(cx: &mut TestAppContext) {
 }
 
 fn set_up_with_key(app: &App, cx: &mut TestAppContext) -> String {
-    use calmfold_desktop::actions::GoPasswords;
+    use ottero_desktop::actions::GoPasswords;
     let lib = library(app, cx);
     cx.update(|cx| {
         lib.update(cx, |l, _| {
-            l.set_kdf_params_for_tests(calmfold_crypto::KdfParams::MINIMUM)
+            l.set_kdf_params_for_tests(ottero_crypto::KdfParams::MINIMUM)
         })
     });
     dispatch(app, cx, GoPasswords);
     let setup = cx.update(|cx| {
         lib.update(cx, |l, cx| {
             l.set_up_vault(
-                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                ottero_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -3276,9 +3259,9 @@ fn set_up_with_key(app: &App, cx: &mut TestAppContext) -> String {
 
 #[gpui_kit::test]
 fn a_forgotten_password_is_recovered_with_the_recovery_key(cx: &mut TestAppContext) {
-    use calmfold_core::vault::lock::LockState;
-    use calmfold_core::vault::{ItemFields, ItemKind};
-    use calmfold_desktop::actions::LockVault;
+    use ottero_core::vault::lock::LockState;
+    use ottero_core::vault::{ItemFields, ItemKind};
+    use ottero_desktop::actions::LockVault;
 
     let app = launch(cx);
     let lib = library(&app, cx);
@@ -3298,7 +3281,7 @@ fn a_forgotten_password_is_recovered_with_the_recovery_key(cx: &mut TestAppConte
         lib.update(cx, |l, cx| {
             l.recover_vault(
                 "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA",
-                calmfold_crypto::SecretString::from("a whole new master 7".to_owned()),
+                ottero_crypto::SecretString::from("a whole new master 7".to_owned()),
                 cx,
             )
         })
@@ -3312,7 +3295,7 @@ fn a_forgotten_password_is_recovered_with_the_recovery_key(cx: &mut TestAppConte
         lib.update(cx, |l, cx| {
             l.recover_vault(
                 &typed,
-                calmfold_crypto::SecretString::from("a whole new master 7".to_owned()),
+                ottero_crypto::SecretString::from("a whole new master 7".to_owned()),
                 cx,
             )
         })
@@ -3331,9 +3314,9 @@ fn a_forgotten_password_is_recovered_with_the_recovery_key(cx: &mut TestAppConte
 
 #[gpui_kit::test]
 fn starting_over_archives_the_old_vault_and_it_can_be_reopened(cx: &mut TestAppContext) {
-    use calmfold_core::vault::lock::LockState;
-    use calmfold_core::vault::{ItemFields, ItemKind};
-    use calmfold_desktop::actions::LockVault;
+    use ottero_core::vault::lock::LockState;
+    use ottero_core::vault::{ItemFields, ItemKind};
+    use ottero_desktop::actions::LockVault;
 
     let app = launch(cx);
     let lib = library(&app, cx);
@@ -3360,6 +3343,12 @@ fn starting_over_archives_the_old_vault_and_it_can_be_reopened(cx: &mut TestAppC
         LockState::Uninitialized
     );
     assert_eq!(cx.read(|cx| lib.read(cx).vault_archives().len()), 1);
+    assert_eq!(path.extension().and_then(|e| e.to_str()), Some("otvault"));
+    // Archives written before the renames (same format) are still listed.
+    for old in ["cfvault", "ksvault"] {
+        std::fs::copy(&path, path.with_extension(old)).expect("copy");
+    }
+    assert_eq!(cx.read(|cx| lib.read(cx).vault_archives().len()), 3);
 
     // New vault, then the old password brings the old items back.
     set_up_with_key(&app, cx);
@@ -3367,7 +3356,7 @@ fn starting_over_archives_the_old_vault_and_it_can_be_reopened(cx: &mut TestAppC
         lib.update(cx, |l, cx| {
             l.import_vault_archive(
                 path.clone(),
-                calmfold_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
+                ottero_crypto::SecretString::from("plum-orbit-candle-9-meadow".to_owned()),
                 cx,
             )
         })
@@ -3387,8 +3376,8 @@ fn starting_over_archives_the_old_vault_and_it_can_be_reopened(cx: &mut TestAppC
 
 #[gpui_kit::test]
 fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppContext) {
-    use calmfold_core::vault::{ItemFields, ItemKind};
-    use calmfold_desktop::actions::LockVault;
+    use ottero_core::vault::{ItemFields, ItemKind};
+    use ottero_desktop::actions::LockVault;
 
     let app = launch(cx);
     let lib = library(&app, cx);
@@ -3405,7 +3394,7 @@ fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppCont
             l.create_vault_item(&bank, cx).expect("bank")
         })
     });
-    let path = app.paths.data_dir.join("backups/Calmfold Vault.cfvault");
+    let path = app.paths.data_dir.join("backups/Ottero Vault.otvault");
     cx.read(|cx| lib.read(cx).export_vault(&path))
         .expect("export");
     let text = std::fs::read_to_string(&path).expect("file");
@@ -3422,7 +3411,7 @@ fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppCont
             lib.update(cx, |l, cx| {
                 l.import_vault_archive(
                     path.clone(),
-                    calmfold_crypto::SecretString::from(password.to_owned()),
+                    ottero_crypto::SecretString::from(password.to_owned()),
                     cx,
                 )
             })
@@ -3457,15 +3446,15 @@ fn encrypted_backup_exports_and_restores_without_duplicates(cx: &mut TestAppCont
 
 #[gpui_kit::test]
 fn one_occurrence_of_a_repeating_event_can_change_on_its_own(cx: &mut TestAppContext) {
-    use calmfold_core::{Recurrence, Time};
-    use calmfold_desktop::actions::GoCalendar;
-    use calmfold_desktop::views::event_detail::open_event_detail;
+    use ottero_core::{Recurrence, Time};
+    use ottero_desktop::actions::GoCalendar;
+    use ottero_desktop::views::event_detail::open_event_detail;
 
     let app = launch(cx);
     dispatch(&app, cx, GoCalendar);
     let lib = library(&app, cx);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     let tomorrow = today.tomorrow().expect("date");
     let id = cx.update(|cx| {
         lib.update(cx, |l, cx| {
@@ -3560,14 +3549,14 @@ fn one_occurrence_of_a_repeating_event_can_change_on_its_own(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn deleted_events_can_be_restored_or_removed_for_good(cx: &mut TestAppContext) {
-    use calmfold_core::Time;
-    use calmfold_desktop::actions::{GoCalendar, ShowDeletedEvents};
+    use ottero_core::Time;
+    use ottero_desktop::actions::{GoCalendar, ShowDeletedEvents};
 
     let app = launch(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     dispatch(&app, cx, GoCalendar);
     let lib = library(&app, cx);
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     let make = |cx: &mut TestAppContext, title: &str| {
         cx.update(|cx| {
             lib.update(cx, |l, cx| {
@@ -3588,7 +3577,7 @@ fn deleted_events_can_be_restored_or_removed_for_good(cx: &mut TestAppContext) {
     let party = make(cx, "Party");
     let trashed = |cx: &mut TestAppContext, id| {
         cx.read(|cx| lib.read(cx).event(id))
-            .map(|e: calmfold_core::Event| e.is_trashed())
+            .map(|e: ottero_core::Event| e.is_trashed())
     };
 
     dispatch(&app, cx, ShowDeletedEvents);
@@ -3618,13 +3607,13 @@ fn deleted_events_can_be_restored_or_removed_for_good(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn ics_files_import_once(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::GoCalendar;
+    use ottero_desktop::actions::GoCalendar;
 
     let app = launch(cx);
     dispatch(&app, cx, GoCalendar);
     let lib = library(&app, cx);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     let day = today.strftime("%Y%m%d").to_string();
     let text = format!(
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:a\r\nSUMMARY:Imported lunch\r\n\
@@ -3670,13 +3659,13 @@ fn ics_files_import_once(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
-    use calmfold_desktop::actions::GoCalendar;
-    use calmfold_desktop::views::calendar_layout::CalendarMode;
-    use calmfold_ui::appearance;
+    use ottero_desktop::actions::GoCalendar;
+    use ottero_desktop::views::calendar_layout::CalendarMode;
+    use ottero_ui::appearance;
 
     let app = launch(cx);
     cx.update(|cx| {
-        calmfold_desktop::holidays::set_detected_country_for_tests(Some("IN"), cx);
+        ottero_desktop::holidays::set_detected_country_for_tests(Some("IN"), cx);
         appearance::update(cx, |s| {
             s.holidays = true;
             s.holiday_observances = true;
@@ -3686,8 +3675,8 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
     });
     dispatch(&app, cx, GoCalendar);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let diwali: calmfold_core::Date = "2026-11-08".parse().expect("date");
-    let thanksgiving: calmfold_core::Date = "2026-11-26".parse().expect("date");
+    let diwali: ottero_core::Date = "2026-11-08".parse().expect("date");
+    let thanksgiving: ottero_core::Date = "2026-11-26".parse().expect("date");
     let names = |cx: &mut TestAppContext, day| -> Vec<String> {
         cx.update_window(app.window, |_, window, _| window.refresh())
             .expect("window");
@@ -3715,7 +3704,7 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
 
     // Travelling to the US: its holidays join, labelled with the country.
     cx.update(|cx| {
-        calmfold_desktop::holidays::set_detected_country_for_tests(Some("US"), cx);
+        ottero_desktop::holidays::set_detected_country_for_tests(Some("US"), cx);
         appearance::update(cx, |s| s.holidays_where_you_are = true);
         calendar.update(cx, |c, cx| c.reload(cx));
     });
@@ -3728,7 +3717,7 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
     );
 
     // A state adds its own days: Pongal is a day off in Tamil Nadu.
-    let pongal: calmfold_core::Date = "2026-01-14".parse().expect("date");
+    let pongal: ottero_core::Date = "2026-01-14".parse().expect("date");
     cx.update(|cx| {
         appearance::update(cx, |s| s.holiday_observances = false);
         calendar.update(cx, |c, cx| c.select(pongal, cx));
@@ -3743,7 +3732,7 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
     cx.update(|cx| appearance::update(cx, |s| s.holiday_observances = true));
 
     // Observances (Raksha Bandhan in India) and the whole layer can be switched off.
-    let rakhi: calmfold_core::Date = "2026-08-28".parse().expect("date");
+    let rakhi: ottero_core::Date = "2026-08-28".parse().expect("date");
     cx.update(|cx| calendar.update(cx, |c, cx| c.select(rakhi, cx)));
     assert_eq!(names(cx, rakhi), ["Raksha Bandhan"]);
     cx.update(|cx| appearance::update(cx, |s| s.holiday_observances = false));
@@ -3755,15 +3744,15 @@ fn holidays_show_quietly_follow_settings_and_travel(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn birthdays_come_from_quick_add_and_can_be_hidden(cx: &mut TestAppContext) {
-    use calmfold_core::OccasionKind;
-    use calmfold_desktop::actions::GoCalendar;
-    use calmfold_ui::appearance;
+    use ottero_core::OccasionKind;
+    use ottero_desktop::actions::GoCalendar;
+    use ottero_ui::appearance;
 
     let app = launch(cx);
     dispatch(&app, cx, GoCalendar);
     let lib = library(&app, cx);
     let calendar = cx.read(|cx| app.shell.read(cx).calendar().clone());
-    let today = calmfold_core::clock::today();
+    let today = ottero_core::clock::today();
     let born = today.year() - 60;
     let id = cx
         .update(|cx| {
@@ -3810,8 +3799,8 @@ fn birthdays_come_from_quick_add_and_can_be_hidden(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
-    use calmfold_core::vault::template::Template;
-    use calmfold_core::vault::{FieldKind, ItemFields, ItemKind};
+    use ottero_core::vault::template::Template;
+    use ottero_core::vault::{FieldKind, ItemFields, ItemKind};
 
     let app = unlocked_vault(cx);
     let lib = library(&app, cx);
@@ -3849,7 +3838,7 @@ fn templates_custom_fields_tags_and_search(cx: &mut TestAppContext) {
             let f = ItemFields {
                 title: "GitHub".into(),
                 tags: vec!["work".into()],
-                custom: vec![calmfold_core::vault::CustomField {
+                custom: vec![ottero_core::vault::CustomField {
                     kind: FieldKind::Text,
                     label: "Account ID".into(),
                     value: "acme-42".into(),
@@ -4026,13 +4015,13 @@ fn focus_failed_save_preserves_progress_and_can_be_retried(cx: &mut TestAppConte
     cx.update_window(app.window, |_, window, cx| {
         let controller = app.shell.read(cx).focus_ctrl().clone();
         controller.update(cx, |f, cx| {
-            f.start_task_focus(calmfold_core::TaskId::new(), "Missing task", window, cx);
+            f.start_task_focus(ottero_core::TaskId::new(), "Missing task", window, cx);
             assert!(f.finish_now(true, cx).is_err());
             assert!(f.timer().is_paused());
             assert_eq!(f.timer().cycle_completed, 0);
             assert!(f.save_error().is_some());
             let before = f.timer().clone();
-            f.set_kind(calmfold_core::FocusKind::ShortBreak, cx);
+            f.set_kind(ottero_core::FocusKind::ShortBreak, cx);
             assert_eq!(
                 f.timer(),
                 &before,
@@ -4049,7 +4038,7 @@ fn focus_failed_save_preserves_progress_and_can_be_retried(cx: &mut TestAppConte
     cx.run_until_parked();
     let sessions = cx.read(|cx| {
         lib.read(cx)
-            .focus_sessions_between(calmfold_core::Timestamp::MIN, calmfold_core::Timestamp::MAX)
+            .focus_sessions_between(ottero_core::Timestamp::MIN, ottero_core::Timestamp::MAX)
             .expect("sessions")
     });
     assert_eq!(sessions.len(), 1);
@@ -4058,8 +4047,8 @@ fn focus_failed_save_preserves_progress_and_can_be_retried(cx: &mut TestAppConte
 
 #[gpui_kit::test]
 fn focus_mode_tabs_preserve_running_and_paused_sessions(cx: &mut TestAppContext) {
-    use calmfold_core::FocusKind;
     use gpui_kit::component::WindowExt as _;
+    use ottero_core::FocusKind;
 
     let app = launch(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
@@ -4105,7 +4094,7 @@ fn focus_mode_tabs_preserve_running_and_paused_sessions(cx: &mut TestAppContext)
             paused,
             "A paused session is still protected"
         );
-        dispatch(&app, cx, calmfold_desktop::actions::FocusReset);
+        dispatch(&app, cx, ottero_desktop::actions::FocusReset);
         assert!(
             cx.update_window(app.window, |_, window, _| {
                 window.try_find("focus-mode-hint").is_none()

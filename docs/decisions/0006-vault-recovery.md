@@ -4,7 +4,7 @@ Status: accepted (2026-11-09)
 
 ## Context
 
-A forgotten master password can't be reset: Calmfold never has it. Users
+A forgotten master password can't be reset: Ottero never has it. Users
 still need a way forward that never silently loses data.
 
 ## Decision
@@ -19,7 +19,7 @@ still need a way forward that never silently loses data.
 - **Recover.** Locked screen → "Forgot master password?" → Use recovery key →
   new master password. The vault key is re-wrapped; items are untouched.
 - **Start a new vault.** For no key: the encrypted vault is written to
-  `vault-archives/vault-<date>.cfvault` (`.ksvault` before the rename) (header + sealed blobs, hex), read back
+  `vault-archives/vault-<date>.otvault` (`.cfvault`/`.ksvault` before the renames) (header + sealed blobs, hex), read back
   and checked, and only then removed. Settings → Passwords → Archived vaults
   opens one with its old password and adds its items (new IDs) to the
   current vault. Lock state machine gains `Locked ──Reset──▶ Uninitialized`.

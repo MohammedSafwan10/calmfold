@@ -1,6 +1,6 @@
 # What's new
 
-Primary task: read changes across releases without leaving Calmfold.
+Primary task: read changes across releases without leaving Ottero.
 
 - Open from Settings → About or the command palette.
 - Use the entire Settings content area, with a quiet back button; retain the app

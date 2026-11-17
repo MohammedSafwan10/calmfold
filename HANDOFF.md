@@ -2,11 +2,21 @@
 
 Overwrite **Current state** and **Next steps** every session. Append to the log.
 
-## Current state (2026-11-16)
+## Current state (2026-11-17)
 
-- App: **Calmfold by Nexdark Labs** (renamed from Keepstone). Branch `main`,
-  repo `MohammedSafwan10/calmfold`. `scripts/check.sh` passes; CI runs on
-  macOS and Windows.
+- App: **Ottero by Nexdark Labs** (formerly Calmfold, formerly Keepstone).
+  Branch `main`, repo still `MohammedSafwan10/calmfold` (not renamed yet).
+  Version 0.1.3 (unreleased). `scripts/check.sh` passes (350 tests); CI runs
+  on macOS and Windows.
+- Rename to Ottero is done in code, packaging and docs (ADR 0009): crates
+  `ottero-*`, binary `ottero`, `Ottero.app` (exe `Ottero`, helper
+  `OtteroUpdater.app`), `Ottero.exe`, env vars `OTTERO_*` (`CALMFOLD_DATA_DIR`
+  still read as a fallback), themes "Ottero Light/Dark", new Quiet Loop icon.
+  First launch moves the Calmfold (or Keepstone) data folder to
+  `com.Nexdark.Ottero` / `Nexdark\Ottero\data` and renames the database to
+  `ottero.sqlite3`. Kept for compatibility: bundle ID `com.nexdark.calmfold`,
+  Velopack packId `Calmfold`, vault AADs/archive format, `calmfold-releases`
+  feed URLs, signing keys. Vault backups now `.otvault`; `.cfvault`/`.ksvault` open.
 - Done: notes editor, tasks, Today, calendar (exceptions, ends, ICS import,
   deleted events, holidays for ~245 countries + states, birthdays), habits,
   focus/pomodoro timer (task-linked, header pill when active), password vault
@@ -38,6 +48,17 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
   reporting enabled. Shared `.kiro/skills` remains tracked; local state ignored.
 
 ## Next steps (in order)
+
+**Ottero rename follow-ups (before releasing 0.1.3):**
+
+1. Push and let `update-probes.yml` run on Windows: it now upgrades a
+   `Calmfold.exe` Velopack install to `Ottero.exe` (same packId). Not run yet.
+2. Audit and rename the GitHub repos (`calmfold`, `calmfold-releases`,
+   `calmfold-site`) and the website domain (`calmfold.nexdark.com`, still
+   shown in Settings → About), then move the feed URLs in a later release while
+   the old URLs keep redirecting.
+3. Release 0.1.3 and prove a real installed v0.1.2 Calmfold → Ottero update on
+   both OSes. Existing Mac installs keep the folder name `Calmfold.app`.
 
 **v0.1.2 is published and immutable:**
 https://github.com/MohammedSafwan10/calmfold-releases/releases/tag/v0.1.2
@@ -106,14 +127,24 @@ pages/release metadata before deployment.
 ## Useful commands
 
 ```bash
-rm -rf /tmp/ks && cargo run -p calmfold-storage --example seed -- /tmp/ks/calmfold.sqlite3
-CALMFOLD_DATA_DIR=/tmp/ks CALMFOLD_DEV_ROUTE=notes cargo run   # debug: open on a screen
+rm -rf /tmp/ks && cargo run -p ottero-storage --example seed -- /tmp/ks/ottero.sqlite3
+OTTERO_DATA_DIR=/tmp/ks OTTERO_DEV_ROUTE=notes cargo run   # debug: open on a screen
+cargo run -p ottero-desktop --example seed_developer -- /tmp/ottero-review/ottero.sqlite3
 scripts/screenshot.sh target/shot.png
-CALMFOLD_DEV_ROUTE=notes CALMFOLD_DEV_SOURCE=1 cargo run    # debug: first note as Markdown source
-CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calendar view (month|week|day|agenda)
+OTTERO_DEV_ROUTE=notes OTTERO_DEV_SOURCE=1 cargo run    # debug: first note as Markdown source
+OTTERO_DEV_ROUTE=calendar OTTERO_DEV_CALENDAR=week cargo run  # debug: calendar view (month|week|day|agenda)
 ```
 
 ## Log
+
+### 2026-11-17: Save approved Ottero icon master
+
+- Owner chose concept 01 (curled charcoal otter/O). Generated a clean square
+  source image without presentation labels or wordmark; opaque ivory canvas so
+  platform masks can be derived separately. Saved master, original reference and
+  generation prompt in assets/brand/ottero with a rename handoff README.
+- Visually inspected the source and verified the saved copy matches its generated
+  file. No runtime assets replaced, repositories renamed or user data touched.
 
 ### 2026-11-17: Repo split
 
@@ -695,3 +726,22 @@ CALMFOLD_DEV_ROUTE=calendar CALMFOLD_DEV_CALENDAR=week cargo run  # debug: calen
   forever" (confirmed) and an "Empty trash" button on the Trash tab; Upcoming
   quick-add is due tomorrow; Tasks/badges refresh after midnight; load
   failures show an error state instead of an empty list. 3 regression tests added.
+
+### 2026-11-17: Rename the app to Ottero
+
+- Calmfold → Ottero by Nexdark Labs everywhere user-visible and in code
+  (crates, binary, bundle/exe names, updater helper, env vars, themes, preview
+  link scheme, Emergency Kit, seeds, docs, AGENTS.md, vendored patch notes).
+  New icon files wired into `build.rs`, `bundle-mac.sh`, `release.yml`.
+- Migrations with tests: data folder Calmfold/Keepstone → Ottero and
+  `calmfold.sqlite3`/`keepstone.sqlite3` → `ottero.sqlite3` (once, never
+  overwriting); saved "Calmfold Light/Dark" → "Ottero Light/Dark"; old vault
+  archive extensions still listed and opened.
+- Updates (ADR 0009, evidence from Sparkle/Velopack source): bundle ID and
+  packId kept; `--mainExe Ottero.exe` and `--packTitle Ottero`. Local Sparkle
+  installed-upgrade test now goes from Calmfold-named to Ottero-named fixture
+  and passes (plus tamper rejection). Windows probe updated, not yet run.
+- Version bumped to 0.1.3 with a "Calmfold is now Ottero" What's new entry
+  (0.1.2 is published and immutable). Ran the debug app on a throwaway folder
+  (light mode, migrated theme name), and `bundle-mac.sh --debug` (Ottero name
+  and icon, ad-hoc seal only).

@@ -121,11 +121,11 @@ struct Main {
         do {
             guard CommandLine.arguments.count == 2, let host = Bundle(path: CommandLine.arguments[1]),
                   let feed = host.object(forInfoDictionaryKey: "SUFeedURL") as? String,
-                  let url = URL(string: feed) else { throw NSError(domain: "CalmfoldUpdater", code: 1) }
+                  let url = URL(string: feed) else { throw NSError(domain: "OtteroUpdater", code: 1) }
             #if UPDATER_TESTING
-            guard url.scheme == "https" || (url.scheme == "http" && url.host == "127.0.0.1") else { throw NSError(domain: "CalmfoldUpdater", code: 2) }
+            guard url.scheme == "https" || (url.scheme == "http" && url.host == "127.0.0.1") else { throw NSError(domain: "OtteroUpdater", code: 2) }
             #else
-            guard url.scheme == "https" else { throw NSError(domain: "CalmfoldUpdater", code: 2) }
+            guard url.scheme == "https" else { throw NSError(domain: "OtteroUpdater", code: 2) }
             #endif
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.prohibited)

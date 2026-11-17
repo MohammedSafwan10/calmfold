@@ -1,8 +1,8 @@
 //! Authenticated update metadata and bounded package transport; no installation logic.
 use anyhow::{Context as _, Result};
 #[cfg(any(windows, test))]
-use calmfold_core::update::Download;
-use calmfold_core::update::{self, Feed};
+use ottero_core::update::Download;
+use ottero_core::update::{self, Feed};
 #[cfg(any(windows, test))]
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -17,7 +17,7 @@ pub fn agent(timeout: Duration) -> ureq::Agent {
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
         .https_only(true)
-        .user_agent(concat!("Calmfold/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Ottero/", env!("CARGO_PKG_VERSION")))
         .build()
         .into()
 }

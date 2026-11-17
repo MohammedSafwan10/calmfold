@@ -32,7 +32,7 @@ def build():
     if not output.exists():
         archive = sdk / "Sparkle-source.tar.gz"
         if not archive.exists():
-            request = urllib.request.Request(f"https://codeload.github.com/sparkle-project/Sparkle/tar.gz/{COMMIT}", headers={"User-Agent": "Calmfold-build"})
+            request = urllib.request.Request(f"https://codeload.github.com/sparkle-project/Sparkle/tar.gz/{COMMIT}", headers={"User-Agent": "Ottero-build"})
             with urllib.request.urlopen(request, timeout=60) as response, archive.open("wb") as file: shutil.copyfileobj(response, file)
         with archive.open("rb") as file:
             if hashlib.file_digest(file, "sha256").hexdigest() != SHA256: raise RuntimeError("Sparkle source checksum mismatch")

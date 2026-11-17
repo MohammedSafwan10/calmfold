@@ -1,4 +1,4 @@
-//! Calmfold desktop app.
+//! Ottero desktop app.
 //!
 //! Startup order matters: GPUI Kit init → design system (fonts, themes,
 //! appearance) → key bindings and commands → open the database → open the
@@ -23,11 +23,11 @@ pub mod vault_prefs;
 pub mod views;
 
 use anyhow::{Context as _, Result};
-use calmfold_storage::Store;
 use gpui_kit::component::TitleBar;
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Bounds, Entity, WindowBounds, WindowOptions, px, size,
 };
+use ottero_storage::Store;
 
 use crate::library::Library;
 use crate::paths::AppPaths;
@@ -42,11 +42,11 @@ pub fn run() -> Result<()> {
         .with_context(|| format!("could not open {}", paths.database.display()))?;
 
     gpui_kit::application()
-        .with_assets(calmfold_ui::assets::CalmfoldAssets)
+        .with_assets(ottero_ui::assets::OtteroAssets)
         .run(move |cx| match start(&paths, store, cx) {
             Ok(_) => cx.activate(true),
             Err(err) => {
-                eprintln!("calmfold: failed to open window: {err:#}");
+                eprintln!("ottero: failed to open window: {err:#}");
                 cx.quit();
             }
         });
@@ -60,10 +60,10 @@ pub fn start(
     cx: &mut App,
 ) -> Result<(AnyWindowHandle, Entity<AppShell>)> {
     gpui_kit::init(cx);
-    calmfold_ui::init(paths.appearance.clone(), cx);
+    ottero_ui::init(paths.appearance.clone(), cx);
     ui_state::initialize_navigation(
         &paths.data_dir,
-        calmfold_ui::appearance::settings(cx).developer_tools,
+        ottero_ui::appearance::settings(cx).developer_tools,
         paths.existing_database,
     );
     vault_prefs::init(&paths.data_dir, cx);
@@ -86,6 +86,8 @@ pub fn start(
             cx,
         ))),
         window_min_size: Some(size(px(720.), px(480.))),
+        // Same identifier as the Mac bundle ID, which stays the pre-rename
+        // one so installed apps keep updating (ADR 0009).
         app_id: Some("com.nexdark.calmfold".into()),
         ..TitleBar::window_options()
     };
@@ -111,7 +113,7 @@ pub fn start(
 
     // Debug and perf builds only: start on a given screen, for screenshot and perf scripts.
     #[cfg(any(debug_assertions, feature = "perf"))]
-    if let Some(route) = std::env::var("CALMFOLD_DEV_ROUTE")
+    if let Some(route) = std::env::var("OTTERO_DEV_ROUTE")
         .ok()
         .and_then(|r| views::Route::parse(&r))
     {
@@ -120,7 +122,7 @@ pub fn start(
         })?;
         // Existing review hook: open the Workspace settings directly.
         if route == views::Route::Settings
-            && std::env::var("CALMFOLD_DEV_SETTINGS")
+            && std::env::var("OTTERO_DEV_SETTINGS")
                 .is_ok_and(|v| v.eq_ignore_ascii_case("workspace"))
         {
             window.update(cx, |_, w, cx| {
@@ -128,14 +130,14 @@ pub fn start(
             })?;
         }
         if route == views::Route::Settings
-            && std::env::var("CALMFOLD_DEV_SETTINGS").is_ok_and(|v| v == "changelog")
+            && std::env::var("OTTERO_DEV_SETTINGS").is_ok_and(|v| v == "changelog")
         {
             window.update(cx, |_, w, cx| {
                 w.dispatch_action(Box::new(actions::ShowChangelog), cx)
             })?;
         }
-        // CALMFOLD_DEV_SOURCE=1 with route=notes: open the first note as Markdown source.
-        if route == views::Route::Notes && std::env::var_os("CALMFOLD_DEV_SOURCE").is_some() {
+        // OTTERO_DEV_SOURCE=1 with route=notes: open the first note as Markdown source.
+        if route == views::Route::Notes && std::env::var_os("OTTERO_DEV_SOURCE").is_some() {
             window.update(cx, |_, window, cx| {
                 let notes = shell.read(cx).notes().clone();
                 notes.update(cx, |n, cx| {
@@ -144,8 +146,8 @@ pub fn start(
                 });
             })?;
         }
-        // CALMFOLD_DEV_CALENDAR=month|week|day|agenda: open the calendar in that view.
-        if let Ok(name) = std::env::var("CALMFOLD_DEV_CALENDAR") {
+        // OTTERO_DEV_CALENDAR=month|week|day|agenda: open the calendar in that view.
+        if let Ok(name) = std::env::var("OTTERO_DEV_CALENDAR") {
             let mode = views::calendar_layout::CalendarMode::OPTIONS
                 .into_iter()
                 .find(|(_, label)| label.eq_ignore_ascii_case(name.trim()))
@@ -155,8 +157,8 @@ pub fn start(
                 calendar.update(cx, |c, cx| c.set_mode(mode, cx));
             }
         }
-        // CALMFOLD_DEV_HABITS=insights|archived: open that Habits tab.
-        if let Ok(name) = std::env::var("CALMFOLD_DEV_HABITS") {
+        // OTTERO_DEV_HABITS=insights|archived: open that Habits tab.
+        if let Ok(name) = std::env::var("OTTERO_DEV_HABITS") {
             use views::habits::HabitTab;
             let tab = match name.trim() {
                 "insights" => Some(HabitTab::Insights),
@@ -168,14 +170,14 @@ pub fn start(
                 habits.update(cx, |h, cx| h.set_tab(tab, cx));
             }
         }
-        // CALMFOLD_DEV_VAULT=<password> (debug builds only): set up or unlock
+        // OTTERO_DEV_VAULT=<password> (debug builds only): set up or unlock
         // the vault with that password and add sample items to an empty one.
         #[cfg(debug_assertions)]
-        if let Ok(password) = std::env::var("CALMFOLD_DEV_VAULT") {
+        if let Ok(password) = std::env::var("OTTERO_DEV_VAULT") {
             dev_vault(window, shell.clone(), password, cx);
         }
-        // CALMFOLD_DEV_NOTE=<title>: open that note with the caret at the end of its body.
-        if let Ok(title) = std::env::var("CALMFOLD_DEV_NOTE") {
+        // OTTERO_DEV_NOTE=<title>: open that note with the caret at the end of its body.
+        if let Ok(title) = std::env::var("OTTERO_DEV_NOTE") {
             window.update(cx, |_, window, cx| {
                 let notes = shell.read(cx).notes().clone();
                 notes.update(cx, |n, cx| n.open_note_titled_at_end(&title, window, cx));
@@ -190,9 +192,9 @@ pub fn start(
 #[cfg(debug_assertions)]
 fn dev_vault(window: AnyWindowHandle, shell: Entity<AppShell>, password: String, cx: &mut App) {
     let library = shell.read(cx).library().clone();
-    use calmfold_core::vault::lock::LockState;
-    use calmfold_core::vault::{ItemFields, ItemKind};
-    use calmfold_crypto::SecretString;
+    use ottero_core::vault::lock::LockState;
+    use ottero_core::vault::{ItemFields, ItemKind};
+    use ottero_crypto::SecretString;
     let fresh = library.read(cx).vault_state() == LockState::Uninitialized;
     let (setup, unlock) = library.update(cx, |lib, cx| {
         if fresh {
@@ -214,7 +216,7 @@ fn dev_vault(window: AnyWindowHandle, shell: Entity<AppShell>, password: String,
             _ => false,
         };
         if !opened {
-            eprintln!("calmfold: CALMFOLD_DEV_VAULT couldn't open the vault");
+            eprintln!("ottero: OTTERO_DEV_VAULT couldn't open the vault");
             return;
         }
         library.update(cx, |lib, cx| {
@@ -321,11 +323,11 @@ fn dev_vault(window: AnyWindowHandle, shell: Entity<AppShell>, password: String,
                 ),
             ];
             if let Err(err) = lib.import_vault_items(rows, cx) {
-                eprintln!("calmfold: sample vault items failed: {err:#}");
+                eprintln!("ottero: sample vault items failed: {err:#}");
             }
         });
-        // CALMFOLD_DEV_VAULT_ITEM=<title>: open that item.
-        if let Ok(title) = std::env::var("CALMFOLD_DEV_VAULT_ITEM") {
+        // OTTERO_DEV_VAULT_ITEM=<title>: open that item.
+        if let Ok(title) = std::env::var("OTTERO_DEV_VAULT_ITEM") {
             // After the list has refreshed from the import above.
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(300))

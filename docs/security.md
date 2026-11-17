@@ -86,19 +86,19 @@ be described as proven merely because a clean upgrade passed.
   stops while macOS sleeps. A 10 s tick that arrives ≥ 60 s late means the
   Mac slept: the vault locks on wake.
 - **Not detected:** the macOS lock screen without sleep. GPUI exposes no
-  hook and `unsafe` FFI is forbidden, so use "Lock when Calmfold is in the
+  hook and `unsafe` FFI is forbidden, so use "Lock when Ottero is in the
   background" for that.
 - **Randomness** never falls back: if the OS RNG fails, nothing is generated
   (the generator shows an error; a stuck source stops after 1,000 tries).
 - **Clipboard:** copied secrets are cleared after 15/30/90 s, only if the
   clipboard still holds them. macOS clipboard history apps may still keep a copy.
 - **Memory:** decrypted items zero on drop. Text in input fields lives in
-  GPUI's input state and its undo history, which Calmfold clears but can't
+  GPUI's input state and its undo history, which Ottero clears but can't
   zero; that's within "malware while unlocked" (out of scope).
 - **Health** (weak/reused/old) is computed locally with zxcvbn; no breach
   lookups, nothing leaves the device.
 - **Encrypted backup** (Settings → Passwords, File menu, ⌘K) writes the
-  header and sealed items to a `.cfvault` file (`.ksvault` before the Calmfold rename) (the archive format, ADR 0006)
+  header and sealed items to an `.otvault` file (`.cfvault` under Calmfold, `.ksvault` under Keepstone; all still open) (the archive format, ADR 0006)
   atomically and reads it back. Nothing is decrypted to write it; it opens
   with the master password at the time of export (not the recovery key).
   Restore needs an unlocked vault, adds copies with new IDs, and skips items
@@ -119,7 +119,7 @@ be described as proven merely because a clean upgrade passed.
 - Import is bounded to 1 MiB, 512 variables and 64 KiB per value; duplicate
   names and malformed input are rejected with safe line-number errors.
   Parsing never executes commands or expands references. Canonical export
-  preserves literal values in Calmfold's documented dialect; other dotenv
+  preserves literal values in Ottero's documented dialect; other dotenv
   runtimes can differ. Comments and original file layout are not preserved.
 - The masked single-line editor represents line breaks as `\n`, returns as
   `\r`, tabs as `\t` and backslashes as `\\`. Pasting a value escapes these
@@ -131,7 +131,7 @@ be described as proven merely because a clean upgrade passed.
 - Plaintext export needs confirmation and a chosen location. A temporary file
   is written/synced and published without overwriting an existing file; Unix
   permissions are 0600. This exported file is no longer protected by the vault.
-  Prefer encrypted `.cfvault` backups for storage/transfer.
+  Prefer encrypted `.otvault` backups for storage/transfer.
 - Export takes an unlocked snapshot only after confirmation/path selection;
   disk writing and sync run in the background. Locking before a picker returns
   prevents the export. Once an approved write starts, it completes that snapshot;

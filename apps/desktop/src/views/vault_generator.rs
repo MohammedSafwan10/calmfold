@@ -5,12 +5,6 @@
 //! plain words, and can be copied or (from an edit form) used directly.
 //! Options are remembered in `vault.json`; generated values never are.
 
-use calmfold_core::vault::generator::{
-    MAX_LENGTH, MAX_WORDS, MIN_LENGTH, MIN_WORDS, Options, Style, generate,
-};
-use calmfold_core::vault::health::Strength;
-use calmfold_crypto::Zeroizing;
-use calmfold_ui::components::segmented;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::InputState;
@@ -23,6 +17,12 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
     Styled as _, Subscription, Window, div, px, rems,
 };
+use ottero_core::vault::generator::{
+    MAX_LENGTH, MAX_WORDS, MIN_LENGTH, MIN_WORDS, Options, Style, generate,
+};
+use ottero_core::vault::health::Strength;
+use ottero_crypto::Zeroizing;
+use ottero_ui::components::segmented;
 
 use crate::library::Library;
 use crate::vault_prefs;
@@ -87,7 +87,7 @@ impl GeneratorPanel {
                 if *event == crate::library::LibraryEvent::VaultChanged
                     && this.was_unlocked
                     && library.read(cx).vault_state()
-                        != calmfold_core::vault::lock::LockState::Unlocked
+                        != ottero_core::vault::lock::LockState::Unlocked
                 {
                     this.value = None;
                     this.target = None;
@@ -117,7 +117,7 @@ impl GeneratorPanel {
             value,
             target,
             was_unlocked: library.read(cx).vault_state()
-                == calmfold_core::vault::lock::LockState::Unlocked,
+                == ottero_core::vault::lock::LockState::Unlocked,
             length,
             words,
             _subscriptions: subscriptions,

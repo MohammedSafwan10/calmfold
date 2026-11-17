@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="assets/brand/png/icon-128.png" width="88" height="88" alt="Calmfold folded-paper icon">
-  <h1>Calmfold</h1>
+  <img src="assets/brand/png/icon-128.png" width="88" height="88" alt="Ottero icon: a curled otter forming an O">
+  <h1>Ottero</h1>
   <p><strong>Your day, in one calm place.</strong></p>
   <p>Notes, tasks, calendar, habits, focus and passwords.<br>Local-first. Native. Made for macOS and Windows.</p>
   <p>
@@ -11,21 +11,21 @@
   </p>
 </div>
 
-![Calmfold Today dashboard in light mode, showing a schedule, habits and tasks with fictional sample data](docs/images/today-light.png)
+![Ottero Today dashboard in light mode, showing a schedule, habits and tasks with fictional sample data](docs/images/today-light.png)
 
-Calmfold brings everyday personal tools into one quiet workspace. Your notes and
+Ottero brings everyday personal tools into one quiet workspace. Your notes and
 plans live on your device. There is no required account, cloud subscription or
 telemetry. The interface is built in Rust with GPUI Kit.
 
 ## Download
 
-Get official builds from [Calmfold Releases](https://github.com/MohammedSafwan10/calmfold-releases/releases/latest).
+Get official builds from [Ottero Releases](https://github.com/MohammedSafwan10/calmfold-releases/releases/latest).
 
 | Platform | Package |
 | --- | --- |
-| macOS · Apple Silicon | `Calmfold-<version>-macos-arm64.zip` — extract and move Calmfold.app to Applications |
-| Windows · x64 | `Calmfold-win-Setup.exe` — per-user installer |
-| Windows · portable | `Calmfold-win-Portable.zip` — extract and keep the complete folder together |
+| macOS · Apple Silicon | `Ottero-<version>-macos-arm64.zip` — extract and move Ottero.app to Applications |
+| Windows · x64 | `Ottero-win-Setup.exe` — per-user installer |
+| Windows · portable | `Ottero-win-Portable.zip` — extract and keep the complete folder together |
 
 These early builds are not yet Apple-notarized or Windows publisher-signed, so
 the OS may warn on first installation. Update signatures are verified separately.
@@ -70,13 +70,13 @@ Rust is pinned in [`rust-toolchain.toml`](rust-toolchain.toml).
 
 ```sh
 git clone https://github.com/MohammedSafwan10/calmfold.git
-cd calmfold
+cd calmfold   # the repository keeps its old name for now
 cargo run
 ```
 
-The first build can take several minutes. Debug builds use a separate **Calmfold
+The first build can take several minutes. Debug builds use a separate **Ottero
 Dev** data folder; installing a release does not automatically migrate that data.
-Use `CALMFOLD_DATA_DIR` with a new throwaway directory for experiments.
+Use `OTTERO_DATA_DIR` with a new throwaway directory for experiments.
 
 Run `scripts/check.sh` before submitting a change (Git Bash on Windows).
 The [contribution guide](CONTRIBUTING.md) covers setup, tests and pull requests.
@@ -87,7 +87,7 @@ The [contribution guide](CONTRIBUTING.md) covers setup, tests and pull requests.
 [Testing](docs/testing.md) · [Roadmap](docs/roadmap.md) ·
 [Code of Conduct](CODE_OF_CONDUCT.md)
 
-Calmfold’s original source is licensed under **GPL-3.0-only**. Third-party code,
+Ottero’s original source is licensed under **GPL-3.0-only**. Third-party code,
 fonts and icons retain their own terms; see [NOTICE](NOTICE) and the bundled
 third-party notices. The license does not grant trademark rights or imply
 endorsement of a fork.

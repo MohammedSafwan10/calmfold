@@ -7,14 +7,6 @@ use super::{
 use crate::library::{Library, LibraryEvent};
 use crate::vault::{VaultFilter, VaultSort};
 use anyhow::Result;
-use calmfold_core::{
-    ProjectId, VaultItemId,
-    developer::{DeveloperProject, ProjectLink},
-};
-use calmfold_ui::{
-    components::{empty_state, page_header, section_label, segmented},
-    feedback,
-};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::combobox::{Combobox, ComboboxEvent, ComboboxState};
@@ -28,6 +20,14 @@ use gpui_kit::{
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, div,
     rems,
+};
+use ottero_core::{
+    ProjectId, VaultItemId,
+    developer::{DeveloperProject, ProjectLink},
+};
+use ottero_ui::{
+    components::{empty_state, page_header, section_label, segmented},
+    feedback,
 };
 
 #[derive(Clone)]

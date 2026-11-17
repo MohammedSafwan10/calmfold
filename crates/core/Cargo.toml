@@ -1,5 +1,5 @@
 [package]
-name = "calmfold-core"
+name = "ottero-core"
 description = "Domain models and business rules. No IO, no UI."
 version.workspace = true
 edition.workspace = true

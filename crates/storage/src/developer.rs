@@ -1,8 +1,8 @@
 //! Developer project metadata. Secrets are stored only in sealed vault items.
 use crate::codec::{opt_ts_from_sql, ts_from_sql, ts_to_sql, uuid_from_sql};
 use crate::{StorageError, StorageResult, Store};
-use calmfold_core::developer::{DeveloperProject, ProjectLink};
-use calmfold_core::{Note, NoteId, Project, ProjectId};
+use ottero_core::developer::{DeveloperProject, ProjectLink};
+use ottero_core::{Note, NoteId, Project, ProjectId};
 use rusqlite::{OptionalExtension, params};
 
 impl Store {
@@ -107,12 +107,12 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use calmfold_core::{Task, Timestamp};
+    use ottero_core::{Task, Timestamp};
     #[test]
     fn workspace_reuses_project_and_keeps_notes_tasks_when_archived() {
         let mut s = Store::open_in_memory().expect("store");
         let now = Timestamp::UNIX_EPOCH;
-        let p = Project::new("Calmfold", now).expect("project");
+        let p = Project::new("Ottero", now).expect("project");
         let mut w = DeveloperProject::new(p.clone());
         let note = Note::new("Setup", "", now).expect("note");
         w.set_setup_note(note.id(), now);

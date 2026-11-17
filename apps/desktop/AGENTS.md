@@ -1,11 +1,11 @@
-# calmfold-desktop
+# ottero-desktop
 
 The GPUI desktop app.
 
 ## Map
 
 - `lib.rs`: `run()` (binary) and `start()` (shared with UI tests). Startup order lives here.
-- `paths.rs`: data folder (`CALMFOLD_DATA_DIR` override; debug builds use "Calmfold Dev").
+- `paths.rs`: data folder (`OTTERO_DATA_DIR` override; debug builds use "Ottero Dev").
 - `library.rs`: `Entity<Library>`, the only path from views to storage. Emits `LibraryEvent`.
 - `actions.rs`: every command as an action, default shortcuts, macOS menus.
 - `shell.rs`: window chrome, sidebar, routing, command palette, app-level command handlers.

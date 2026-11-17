@@ -1,20 +1,20 @@
 //! Fills a database with sample notes, tasks and events for manual testing and screenshots.
 //!
-//!     cargo run -p calmfold-storage --example seed -- /tmp/ks/calmfold.sqlite3
-//!     CALMFOLD_DATA_DIR=/tmp/ks cargo run
+//!     cargo run -p ottero-storage --example seed -- /tmp/ks/ottero.sqlite3
+//!     OTTERO_DATA_DIR=/tmp/ks cargo run
 //!
 //! Never point this at a real data folder.
 #![allow(clippy::expect_used)]
 
-use calmfold_core::{
+use ottero_core::{
     Event, Habit, Note, Priority, Recurrence, Task, TaskStatus, clock, parse_event, parse_habit,
 };
-use calmfold_storage::Store;
+use ottero_storage::Store;
 
 fn main() {
     let path = std::env::args()
         .nth(1)
-        .expect("usage: seed <path/to/calmfold.sqlite3>");
+        .expect("usage: seed <path/to/ottero.sqlite3>");
     let mut store = Store::open(path.as_ref()).expect("open database");
     let now = clock::now();
     let today = clock::today();

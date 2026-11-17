@@ -102,35 +102,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
-name = "calmfold-core"
-version = "0.1.2"
-dependencies = [
- "csv",
- "jiff",
- "minisign-verify",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror",
- "totp-rs",
- "url",
- "uuid",
- "zeroize",
- "zxcvbn",
-]
-
-[[package]]
-name = "calmfold-native-update-fixture"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "calmfold-core",
- "serde_json",
- "ureq",
- "velopack",
-]
-
-[[package]]
 name = "cc"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -779,6 +750,35 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "ottero-core"
+version = "0.1.3"
+dependencies = [
+ "csv",
+ "jiff",
+ "minisign-verify",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "totp-rs",
+ "url",
+ "uuid",
+ "zeroize",
+ "zxcvbn",
+]
+
+[[package]]
+name = "ottero-native-update-fixture"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "ottero-core",
+ "serde_json",
+ "ureq",
+ "velopack",
+]
 
 [[package]]
 name = "percent-encoding"

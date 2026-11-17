@@ -1,4 +1,4 @@
-//! Real disposable Velopack app; never packaged as Calmfold or given real data.
+//! Real disposable Velopack app; never packaged as Ottero or given real data.
 #![allow(dead_code)] // Shared production modules also contain entry points the fixture does not use.
 #[cfg(windows)]
 #[path = "../../../apps/desktop/src/updates/velopack.rs"]
@@ -31,7 +31,7 @@ fn windows() -> Result<()> {
         .windows(2)
         .find(|a| a[0] == "--test-root")
         .map(|a| a[1].clone())
-        .or_else(|| std::env::var("CALMFOLD_NATIVE_TEST_ROOT").ok())
+        .or_else(|| std::env::var("OTTERO_NATIVE_TEST_ROOT").ok())
         .context("fixture root")?;
     let root = std::path::PathBuf::from(root);
     let lock = std::fs::OpenOptions::new()
@@ -67,7 +67,7 @@ fn windows() -> Result<()> {
             let key = std::fs::read_to_string(root.join("feed-key"))?;
             let result = (|| -> Result<()> {
                 let feed = transport::fetch_signed(&agent, url.trim(), key.trim())?;
-                if !calmfold_core::update::is_newer(&feed.version, &version) {
+                if !ottero_core::update::is_newer(&feed.version, &version) {
                     return Ok(());
                 }
                 let source = native_windows::SignedSource::new(&feed, agent)?;

@@ -7,7 +7,7 @@
 
 Source: the `holidays` Python package (MIT, https://github.com/vacanza/holidays),
 which tracks official calendars per country, including lunar holidays such as
-Diwali, Holi and Eid. Calmfold ships the generated table so the calendar
+Diwali, Holi and Eid. Ottero ships the generated table so the calendar
 works offline; nothing is fetched at runtime.
 
 Usage (once a year, or when upgrading the package; bump the pinned

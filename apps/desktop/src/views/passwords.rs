@@ -18,12 +18,6 @@
 use std::ops::Range;
 use std::time::Duration;
 
-use calmfold_core::VaultItemId;
-use calmfold_core::vault::health::{Strength, estimate};
-use calmfold_core::vault::lock::LockState;
-use calmfold_core::vault::{ItemKind, VaultItem};
-use calmfold_crypto::SecretString;
-use calmfold_ui::components::empty_state;
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
@@ -39,6 +33,12 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task as GpuiTask,
     TestSupportExt as _, Window, div, rems,
 };
+use ottero_core::VaultItemId;
+use ottero_core::vault::health::{Strength, estimate};
+use ottero_core::vault::lock::LockState;
+use ottero_core::vault::{ItemKind, VaultItem};
+use ottero_crypto::SecretString;
+use ottero_ui::components::empty_state;
 
 use crate::actions::{
     VAULT_CONTEXT, VaultCopyCode, VaultCopyPassword, VaultCopyUsername, VaultEditSelected,
@@ -48,16 +48,16 @@ use crate::library::{Library, LibraryEvent};
 use crate::vault::{VaultFilter, VaultSort};
 use crate::vault_prefs;
 use crate::views::vault_item::{PaneEvent, VaultItemPane, avatar, copy_field};
-use calmfold_core::vault::template::Template;
-use calmfold_core::vault::totp;
 use gpui_kit::component::{VirtualListScrollHandle, v_virtual_list};
+use ottero_core::vault::template::Template;
+use ottero_core::vault::totp;
 
 /// Shortest master password we accept (zxcvbn must also say "Fair" or better).
 pub const MIN_MASTER_CHARS: usize = 10;
 const ROW_HEIGHT: f32 = 3.25;
 const AUTO_LOCK_TICK: Duration = Duration::from_secs(10);
 /// A tick arriving this late means the Mac slept (timers don't run then):
-/// lock on wake. Calmfold can't observe the lock screen itself (GPUI has no
+/// lock on wake. Ottero can't observe the lock screen itself (GPUI has no
 /// hook and the workspace forbids `unsafe` FFI), so this plus "Lock when in
 /// background" is the defense.
 const SLEEP_GAP: Duration = Duration::from_secs(60);
@@ -89,7 +89,7 @@ pub struct PasswordsView {
     selected: Option<VaultItemId>,
     scroll: VirtualListScrollHandle,
     /// Shown once after setup or when a new key is made; zeroed on drop.
-    recovery: Option<calmfold_crypto::Zeroizing<String>>,
+    recovery: Option<ottero_crypto::Zeroizing<String>>,
     recovery_saved: bool,
     /// Re-renders codes each second in the one-time codes view.
     _codes_tick: Option<GpuiTask<()>>,
@@ -271,7 +271,7 @@ impl PasswordsView {
 
     pub fn show_recovery_key(
         &mut self,
-        key: calmfold_crypto::Zeroizing<String>,
+        key: ottero_crypto::Zeroizing<String>,
         cx: &mut Context<Self>,
     ) {
         self.recovery = Some(key);
@@ -454,9 +454,9 @@ impl PasswordsView {
 
     // ---- Setup and unlock -------------------------------------------------
 
-    fn master_estimate(&self, cx: &App) -> Option<calmfold_core::vault::health::Estimate> {
+    fn master_estimate(&self, cx: &App) -> Option<ottero_core::vault::health::Estimate> {
         let text = self.master.read(cx).value();
-        (!text.is_empty()).then(|| estimate(&text, &["calmfold", "vault", "password"]))
+        (!text.is_empty()).then(|| estimate(&text, &["ottero", "vault", "password"]))
     }
 
     /// Why "Create vault" is disabled, or `None` when it can run.
@@ -553,7 +553,7 @@ impl PasswordsView {
 
     /// Fills both setup fields with a 5-word passphrase and shows it.
     fn suggest_passphrase(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        use calmfold_core::vault::generator::{Options, Style, generate};
+        use ottero_core::vault::generator::{Options, Style, generate};
         let options = Options {
             style: Style::Words,
             words: 5,
@@ -646,7 +646,7 @@ impl PasswordsView {
                 .child(
                     Checkbox::new("vault-ack")
                         .checked(ack)
-                        .label("I understand Calmfold can't recover my vault if I forget this password.")
+                        .label("I understand Ottero can't recover my vault if I forget this password.")
                         .on_click(cx.listener(|this, checked: &bool, _, cx| {
                             this.acknowledged = *checked;
                             cx.notify();
@@ -765,7 +765,7 @@ impl PasswordsView {
                 .child(Self::hero(
                     Lucide::ShieldCheck,
                     "Save your recovery key",
-                    "If you ever forget your master password, this key is the only way back into your vault. Calmfold shows it once.",
+                    "If you ever forget your master password, this key is the only way back into your vault. Ottero shows it once.",
                     cx,
                 ))
                 .child(crate::views::vault_recovery::key_box(&key, cx))
@@ -1197,13 +1197,13 @@ impl PasswordsView {
             (CopyWhat::Code, _) => {
                 let code = item
                     .otp_setup()
-                    .and_then(|s| calmfold_core::vault::totp::parse(s).ok())
+                    .and_then(|s| ottero_core::vault::totp::parse(s).ok())
                     .map(|t| t.code_at(unix_now()).code);
                 ("One-time code", code.unwrap_or_default())
             }
         };
         if value.is_empty() {
-            calmfold_ui::feedback::error_toast(
+            ottero_ui::feedback::error_toast(
                 format!("This item has no {}.", label.to_lowercase()),
                 window,
                 cx,
@@ -1243,20 +1243,20 @@ impl PasswordsView {
                 .await;
             _ = cx.update(|window, cx| {
                 let text = match text {
-                    Ok(t) => calmfold_crypto::Zeroizing::new(t),
+                    Ok(t) => ottero_crypto::Zeroizing::new(t),
                     Err(_) => {
-                        calmfold_ui::feedback::error_toast("Couldn't read that file.", window, cx);
+                        ottero_ui::feedback::error_toast("Couldn't read that file.", window, cx);
                         return;
                     }
                 };
-                match calmfold_core::vault::import::parse_csv(&text) {
-                    Err(msg) => calmfold_ui::feedback::error_toast(msg, window, cx),
+                match ottero_core::vault::import::parse_csv(&text) {
+                    Err(msg) => ottero_ui::feedback::error_toast(msg, window, cx),
                     Ok(parsed) => {
                         let skipped = parsed.skipped;
                         let source = parsed.source.map_or("CSV", |s| s.label());
                         let result =
                             library.update(cx, |lib, cx| lib.import_vault_items(parsed.items, cx));
-                        if let Some(n) = calmfold_ui::feedback::report(result, window, cx) {
+                        if let Some(n) = ottero_ui::feedback::report(result, window, cx) {
                             let mut msg = format!(
                                 "Imported {n} item{} from {source}.",
                                 if n == 1 { "" } else { "s" }
@@ -1295,7 +1295,7 @@ enum CopyWhat {
 
 /// Seconds since the Unix epoch (for one-time codes).
 pub fn unix_now() -> u64 {
-    u64::try_from(calmfold_core::clock::now().as_second()).unwrap_or(0)
+    u64::try_from(ottero_core::clock::now().as_second()).unwrap_or(0)
 }
 
 pub fn template_icon(t: Template) -> Lucide {
@@ -1383,7 +1383,7 @@ impl Render for PasswordsView {
 /// Opens "Change master password". Only while unlocked.
 pub fn open_change_password(library: Entity<Library>, window: &mut Window, cx: &mut App) {
     if library.read(cx).vault_state() != LockState::Unlocked {
-        calmfold_ui::feedback::error_toast("Unlock the vault first.", window, cx);
+        ottero_ui::feedback::error_toast("Unlock the vault first.", window, cx);
         return;
     }
     let form = cx.new(|cx| ChangePassword::new(library, window, cx));

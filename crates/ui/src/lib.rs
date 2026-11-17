@@ -1,6 +1,6 @@
-//! Calmfold design system.
+//! Ottero design system.
 //!
-//! * [`theme`]: the monochrome Calmfold Light/Dark themes (`themes/calmfold.json`).
+//! * [`theme`]: the monochrome Ottero Light/Dark themes (`themes/ottero.json`).
 //! * [`fonts`]: bundled Inter and JetBrains Mono (SIL OFL 1.1).
 //! * [`appearance`]: user-chosen appearance (mode, fonts, sizes, motion,
 //!   content width), persisted as JSON and applied to the GPUI Kit theme.

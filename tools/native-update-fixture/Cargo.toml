@@ -1,5 +1,5 @@
 [package]
-name = "calmfold-native-update-fixture"
+name = "ottero-native-update-fixture"
 version = "0.0.0"
 edition = "2024"
 publish = false
@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-calmfold-core = { path = "../../crates/core" }
+ottero-core = { path = "../../crates/core" }
 velopack = { version = "=1.2.161", features = ["public-utils"] }
 ureq = { version = "=3.5.2", default-features = false, features = ["rustls", "gzip"] }
 serde_json = "1"

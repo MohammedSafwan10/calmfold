@@ -2772,7 +2772,7 @@ fn shape_document(
 ) -> ShapedDoc {
     let lines: Vec<&str> = content.split('\n').collect();
     // Sized once: growing ten per-line vectors from empty re-copied them
-    // ~15 times per frame on long notes (Calmfold patch P6).
+    // ~15 times per frame on long notes (Ottero patch P6).
     let mut out = ShapedDoc::with_capacity(lines.len());
     // Ordered items paint their computed CommonMark position, not their
     // literal source digits (the reader renumbers the same way).
@@ -2922,7 +2922,7 @@ fn shape_document(
     // `<!-- math:ALIGN -->` marker lines to hide (revealed only when the caret lands on them),
     // like table style markers.
     let math_marker_lines: Vec<usize> = if md.is_some() {
-        // The scan cache already holds these for this generation (Calmfold patch P5).
+        // The scan cache already holds these for this generation (Ottero patch P5).
         scan.math
             .iter()
             .filter_map(|r| r.marker_line)
@@ -3060,7 +3060,7 @@ fn shape_document(
     // line of the alert gets the kind's bar color.
     let mut alert_run: Option<Hsla> = None;
     let mut y_acc = px(0.);
-    // Per-line lookups (Calmfold patch P2). The loop below used to scan every
+    // Per-line lookups (Ottero patch P2). The loop below used to scan every
     // region list for every line — O(lines × regions) per frame, ~15M checks
     // for a 500 KB note with a table per section. Built once here, first match
     // wins, matching the old `find` / `position` / `any` semantics.
@@ -3867,7 +3867,7 @@ fn shape_document(
         } else {
             wrap_width
         };
-        // Calmfold patch P7: off-screen table and code rows skip shaping, like
+        // Ottero patch P7: off-screen table and code rows skip shaping, like
         // plain lines already did. Paint and hit-testing cull the same band,
         // so their (empty) layout is never read; geometry comes from `h`/`span`.
         // A table grid row never wraps its source (span 1) and its height
@@ -4461,7 +4461,7 @@ fn hit_target(
 }
 
 /// End of row `row`'s text given the document's line starts: before its `\n`,
-/// or `len` for the last row. O(1), unlike `EditorState::line_end` (Calmfold patch P1).
+/// or `len` for the last row. O(1), unlike `EditorState::line_end` (Ottero patch P1).
 fn line_end_in(starts: &[usize], row: usize, len: usize) -> usize {
     starts.get(row + 1).map_or(len, |&s| s - 1)
 }

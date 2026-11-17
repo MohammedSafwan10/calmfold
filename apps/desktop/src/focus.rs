@@ -5,8 +5,8 @@
 
 use std::time::Duration;
 
-use calmfold_core::{FocusKind, FocusPreset, FocusSession, FocusTimer, TaskId, clock};
 use gpui_kit::{App, Context, Entity, EventEmitter, Global, Task as GpuiTask, Window};
+use ottero_core::{FocusKind, FocusPreset, FocusSession, FocusTimer, TaskId, clock};
 
 use crate::library::Library;
 
@@ -230,7 +230,7 @@ impl FocusController {
         let now = clock::now();
         if self.timer.has_reached_end(now) {
             if let Err(err) = self.finish_now(true, cx) {
-                eprintln!("calmfold: couldn't record focus session: {err:#}");
+                eprintln!("ottero: couldn't record focus session: {err:#}");
             }
             return false;
         }

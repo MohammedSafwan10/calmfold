@@ -1,7 +1,7 @@
 //! Password and passphrase generator.
 //!
 //! Randomness comes from the caller (`below(n)` must return a uniform value
-//! in `0..n`; the app passes `calmfold_crypto::random_below`), so the rules
+//! in `0..n`; the app passes `ottero_crypto::random_below`), so the rules
 //! here are deterministic and testable. Every pick is independent and
 //! uniform; "must include a digit" is met by retrying, which keeps the
 //! result uniform over all passwords that satisfy the options.

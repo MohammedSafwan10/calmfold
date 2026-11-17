@@ -1,10 +1,10 @@
-Calmfold by Nexdark Labs
+Ottero by Nexdark Labs
 Copyright (C) 2026 Mohammed Safwan
 
-Calmfold's original source code is licensed under the GNU General Public
+Ottero's original source code is licensed under the GNU General Public
 License, version 3 only (GPL-3.0-only). See LICENSE for the complete terms.
 
-Calmfold is provided without warranty, to the extent permitted by law.
+Ottero is provided without warranty, to the extent permitted by law.
 
 Third-party software, fonts, icons and reference material retain their own
 licenses and copyright notices. Vendored zorite-editor retains its MIT
@@ -13,4 +13,4 @@ Lucide retains its ISC license; Sparkle retains its upstream license.
 See THIRD_PARTY_NOTICES.txt in the release package for dependency notices.
 
 The software license does not grant trademark rights or imply that a fork is
-an official Calmfold or Nexdark Labs release.
+an official Ottero or Nexdark Labs release.

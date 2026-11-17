@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use calmfold_core::{FocusKind, FocusSession, FocusSessionId, TaskFocusStats, TaskId, Timestamp};
+use ottero_core::{FocusKind, FocusSession, FocusSessionId, TaskFocusStats, TaskId, Timestamp};
 use rusqlite::{Row, params};
 
 use crate::codec::{ts_from_sql, ts_to_sql, uuid_from_sql};
@@ -143,12 +143,12 @@ fn decode_session(row: &Row<'_>) -> rusqlite::Result<FocusSession> {
 
 #[cfg(test)]
 mod tests {
-    use calmfold_core::{FocusKind, FocusSession, FocusSessionId, Task};
+    use ottero_core::{FocusKind, FocusSession, FocusSessionId, Task};
 
     use crate::Store;
 
-    fn ts(secs: i64) -> calmfold_core::Timestamp {
-        calmfold_core::Timestamp::from_second(secs).expect("ts")
+    fn ts(secs: i64) -> ottero_core::Timestamp {
+        ottero_core::Timestamp::from_second(secs).expect("ts")
     }
 
     #[test]

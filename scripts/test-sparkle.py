@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Real disposable macOS apps: signed Sparkle install/relaunch and tamper rejection.
+The installed app uses the pre-rename Calmfold names and the update the Ottero
+names with the same bundle identifier, so a pass also proves the rename path
+(ADR 0009).
 No Keychain access, real app data, user signing identity or public test releases.
 """
 import base64
@@ -19,7 +22,7 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
-SDK = Path(os.environ.get("CALMFOLD_SPARKLE_DIR", ROOT / "target/tools/sparkle")).resolve()
+SDK = Path(os.environ.get("OTTERO_SPARKLE_DIR", ROOT / "target/tools/sparkle")).resolve()
 
 
 def run(*args, **kwargs):
@@ -45,7 +48,7 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def smoke(tamper):
-    with tempfile.TemporaryDirectory(prefix="calmfold-sparkle-test-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="ottero-sparkle-test-") as tmp:
         root = Path(tmp)
         web = root / "web"
         web.mkdir()
@@ -55,18 +58,18 @@ def smoke(tamper):
         key, public = keypair(root)
         log = root / "started.log"
         app_id = "com.nexdark.calmfold.updater-fixture." + uuid.uuid4().hex
-        host = root / "installed/Fixture.app"
-        newer = root / "package/Fixture.app"
+        host = root / "installed/Calmfold.app"
+        newer = root / "package/Ottero.app"
         fixture = root / "Fixture"
         run("xcrun", "swiftc", "-swift-version", "5", ROOT / "native/macos/UpdateFixture.swift", "-o", fixture)
-        for app, version in [(host, "0.1.0"), (newer, "0.1.1")]:
+        for app, version, name in [(host, "0.1.0", "Calmfold"), (newer, "0.1.1", "Ottero")]:
             (app / "Contents/MacOS").mkdir(parents=True)
             (app / "Contents/Frameworks").mkdir()
-            shutil.copy2(fixture, app / "Contents/MacOS/Fixture")
+            shutil.copy2(fixture, app / "Contents/MacOS" / name)
             shutil.copytree(SDK / "core/Sparkle.framework", app / "Contents/Frameworks/Sparkle.framework", symlinks=True)
             info = {
-                "CFBundleIdentifier": app_id, "CFBundleName": "Calmfold Update Fixture",
-                "CFBundleExecutable": "Fixture", "CFBundlePackageType": "APPL",
+                "CFBundleIdentifier": app_id, "CFBundleName": name,
+                "CFBundleExecutable": name, "CFBundlePackageType": "APPL",
                 "CFBundleVersion": version, "CFBundleShortVersionString": version,
                 "SUPublicEDKey": public, "SUFeedURL": base + "/appcast.xml",
                 "SURequireSignedFeed": True, "SUVerifyUpdateBeforeExtraction": True,
@@ -75,12 +78,12 @@ def smoke(tamper):
                 "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True},
             }
             (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
-            helper = app / "Contents/Helpers/CalmfoldUpdater.app"
+            helper = app / f"Contents/Helpers/{name}Updater.app"
             (helper / "Contents/MacOS").mkdir(parents=True)
-            shutil.copy2(SDK / "CalmfoldUpdater", helper / "Contents/MacOS/CalmfoldUpdater")
+            shutil.copy2(SDK / "OtteroUpdater", helper / f"Contents/MacOS/{name}Updater")
             (helper / "Contents/Info.plist").write_bytes(plistlib.dumps({
-                "CFBundleIdentifier": app_id + ".updater", "CFBundleExecutable": "CalmfoldUpdater",
-                "CFBundleName": "Calmfold Update Bridge Fixture", "CFBundlePackageType": "APPL",
+                "CFBundleIdentifier": app_id + ".updater", "CFBundleExecutable": f"{name}Updater",
+                "CFBundleName": f"{name} Update Bridge Fixture", "CFBundlePackageType": "APPL",
                 "CFBundleVersion": version, "LSBackgroundOnly": True,
                 "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True},
             }))
@@ -103,7 +106,7 @@ def smoke(tamper):
         if tamper:
             with archive.open("r+b") as file:
                 file.seek(100); byte = file.read(1); file.seek(100); file.write(bytes([byte[0] ^ 1]))
-        old = subprocess.Popen([str(host / "Contents/MacOS/Fixture")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        old = subprocess.Popen([str(host / "Contents/MacOS/Calmfold")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         bridge = None
         try:
             deadline = time.monotonic() + 15
@@ -149,8 +152,11 @@ def smoke(tamper):
                         time.sleep(0.1)
                 if log.exists() and "0.1.1 " in log.read_text():
                     assert not tamper
-                    assert plistlib.loads((host / "Contents/Info.plist").read_bytes())["CFBundleVersion"] == "0.1.1"
-                    print("PASS: real installed Sparkle app upgraded 0.1.0 -> 0.1.1 and relaunched", flush=True)
+                    installed = plistlib.loads((host / "Contents/Info.plist").read_bytes())
+                    assert installed["CFBundleVersion"] == "0.1.1" and installed["CFBundleExecutable"] == "Ottero"
+                    assert (host / "Contents/Helpers/OtteroUpdater.app/Contents/MacOS/OtteroUpdater").exists()
+                    assert not (root / "installed/Ottero.app").exists(), "Sparkle installs at the existing path"
+                    print("PASS: real installed Sparkle app upgraded 0.1.0 (Calmfold names) -> 0.1.1 (Ottero names) and relaunched", flush=True)
                     return
             raise AssertionError(f"update timed out: {events}")
         finally:

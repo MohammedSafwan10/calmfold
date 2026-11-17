@@ -6,10 +6,6 @@
 
 use std::time::Duration;
 
-use calmfold_core::habit::{MAX_TARGET, Schedule, StreakUnit};
-use calmfold_core::{HabitId, Weekdays, clock};
-use calmfold_ui::components::{section_label, segmented};
-use calmfold_ui::feedback::{self, Confirm};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::chart::LineChart;
@@ -24,6 +20,10 @@ use gpui_kit::{
     ParentElement as _, Render, SharedString, Styled as _, Subscription, Task as GpuiTask, Window,
     div, px, rems,
 };
+use ottero_core::habit::{MAX_TARGET, Schedule, StreakUnit};
+use ottero_core::{HabitId, Weekdays, clock};
+use ottero_ui::components::{section_label, segmented};
+use ottero_ui::feedback::{self, Confirm};
 
 use crate::library::{HabitSummary, Library, LibraryEvent};
 use crate::views::habit_widgets::heatmap;
@@ -67,7 +67,7 @@ impl HabitDetail {
         let name = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Habit name")
-                .validate(|text, _| text.chars().count() <= calmfold_core::MAX_TITLE_CHARS)
+                .validate(|text, _| text.chars().count() <= ottero_core::MAX_TITLE_CHARS)
         });
         if let Some(h) = &habit {
             name.update(cx, |n, cx| {
@@ -246,7 +246,7 @@ impl HabitDetail {
                         )))
                         .small()
                         .w(rems(2.75))
-                        .label(calmfold_core::habit::short_day(day))
+                        .label(ottero_core::habit::short_day(day))
                         .selected(on)
                         .map(|b| if on { b.primary() } else { b.outline() })
                         .disabled(on && days.len() == 1)
@@ -328,7 +328,7 @@ fn stepper(
         )
 }
 
-fn strength_chart(h: &HabitSummary, today: calmfold_core::Date, cx: &App) -> impl IntoElement {
+fn strength_chart(h: &HabitSummary, today: ottero_core::Date, cx: &App) -> impl IntoElement {
     let series: Vec<(SharedString, f64)> = h
         .habit
         .strength_series(&h.counts, h.first, today, 90)

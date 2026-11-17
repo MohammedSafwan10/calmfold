@@ -32,8 +32,8 @@ fn my_flow(cx: &mut TestAppContext) {
 
 ## Manual check
 
-`CALMFOLD_DATA_DIR=/tmp/ks cargo run`, then `scripts/screenshot.sh /tmp/k.png`
-captures only the Calmfold window. Check light and dark mode.
+`OTTERO_DATA_DIR=/tmp/ks cargo run`, then `scripts/screenshot.sh /tmp/k.png`
+captures only the Ottero window. Check light and dark mode.
 
 ## CI scope and cost
 

@@ -1,8 +1,8 @@
 //! Native in-app updates. Sparkle owns macOS installation and Velopack owns
 //! Windows installation. No ZIP extraction, file swapping or custom installer.
 use anyhow::{Context as _, Result, bail};
-use calmfold_core::update;
 use gpui_kit::{App, BorrowAppContext as _, Global};
+use ottero_core::update;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -88,7 +88,7 @@ pub fn init(data_dir: &Path, cx: &mut App) {
                 if update::platform().is_some()
                     && cx
                         .try_global::<Updates>()
-                        .is_some_and(|u| u.prefs.due(calmfold_core::clock::now()))
+                        .is_some_and(|u| u.prefs.due(ottero_core::clock::now()))
                 {
                     check(false, cx);
                 }
@@ -154,7 +154,7 @@ pub fn check(manual: bool, cx: &mut App) {
             Ok(feed) => feed,
             Err(_) => {
                 cx.update(|cx| {
-                    record_failure(&dir, calmfold_core::clock::now(), cx);
+                    record_failure(&dir, ottero_core::clock::now(), cx);
                     set_status(if manual { Status::Failed { message: "Couldn't check for updates. Check your connection and try again.".into() } } else { before }, cx);
                 }); return;
             }
@@ -162,10 +162,10 @@ pub fn check(manual: bool, cx: &mut App) {
         let accepted = cx.update(|cx| {
             let highest = &cx.global::<Updates>().prefs.highest_version;
             if highest.as_ref().is_some_and(|v| update::is_newer(v, &feed.version)) {
-                record_failure(&dir, calmfold_core::clock::now(), cx);
+                record_failure(&dir, ottero_core::clock::now(), cx);
                 set_status(Status::Failed { message: "The update information is older than a verified release. Try again later.".into() }, cx);
                 false
-            } else { record_check(&dir, &feed.version, calmfold_core::clock::now(), cx); true }
+            } else { record_check(&dir, &feed.version, ottero_core::clock::now(), cx); true }
         });
         if !accepted { return; }
         if !update::is_newer(&feed.version, CURRENT) { cx.update(|cx| set_status(Status::UpToDate, cx)); return; }
@@ -176,8 +176,8 @@ pub fn check(manual: bool, cx: &mut App) {
                 Ok(true) => {},
                 Ok(false) => cx.update(|cx| set_status(Status::Available { version: feed.version }, cx)),
                 Err(_) => cx.update(|cx| {
-                    record_failure(&dir, calmfold_core::clock::now(), cx);
-                    set_status(Status::Failed { message: "The native updater couldn't start. Reinstall Calmfold or try again.".into() }, cx);
+                    record_failure(&dir, ottero_core::clock::now(), cx);
+                    set_status(Status::Failed { message: "The native updater couldn't start. Reinstall Ottero or try again.".into() }, cx);
                 }),
             }
         }
@@ -191,7 +191,7 @@ pub fn check(manual: bool, cx: &mut App) {
                 Ok(Some(ready)) => { cx.set_global(ready); set_status(Status::Ready { version, notes }, cx); },
                 Ok(None) => set_status(Status::Available { version }, cx),
                 Err(_) => {
-                    record_failure(&dir, calmfold_core::clock::now(), cx);
+                    record_failure(&dir, ottero_core::clock::now(), cx);
                     set_status(Status::Failed { message: "The update couldn't be downloaded or verified. Try again.".into() }, cx);
                 }
             });
@@ -210,7 +210,7 @@ pub fn snapshot_path(cx: &App) -> Result<PathBuf> {
     std::fs::create_dir_all(&u.dir)?;
     Ok(u.dir.join(format!(
         "before-{}.sqlite3",
-        calmfold_core::VaultItemId::new()
+        ottero_core::VaultItemId::new()
     )))
 }
 
@@ -253,7 +253,7 @@ impl InstanceLock {
             .truncate(false)
             .open(data_dir.join("updates/app.lock"))?;
         file.try_lock()
-            .context("Calmfold is already running for this data folder")?;
+            .context("Ottero is already running for this data folder")?;
         Ok(Self(file))
     }
 }

@@ -107,7 +107,7 @@ impl LayoutState {
             .and_then(|json| fs::write(&tmp, json).ok())
             .and_then(|()| fs::rename(&tmp, path).ok());
         if ok.is_none() {
-            eprintln!("calmfold: could not save layout to {}", path.display());
+            eprintln!("ottero: could not save layout to {}", path.display());
         }
     }
 }

@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn archive_keeps_project_identity_and_prevents_edits() {
         let now = Timestamp::UNIX_EPOCH;
-        let project = Project::new("Calmfold", now).expect("project");
+        let project = Project::new("Ottero", now).expect("project");
         let mut w = DeveloperProject::new(project.clone());
         w.set_archived(true, now);
         assert_eq!(w.update(vec![], "/tmp", now), Err(DomainError::Archived));

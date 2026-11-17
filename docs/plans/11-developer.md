@@ -80,10 +80,10 @@ Pasted literal values are escaped automatically. Import/copy/export preserve
 multiline values; UI regression tests verify this rather than relying only on
 parser tests. No unmasked multiline editor is used.
 
-Manual review fixture: `cargo run -p calmfold-desktop --example seed_developer
--- /tmp/calmfold-review/calmfold.sqlite3` creates three demo projects and a demo
+Manual review fixture: `cargo run -p ottero-desktop --example seed_developer
+-- /tmp/ottero-review/ottero.sqlite3` creates three demo projects and a demo
 encrypted environment set. It refuses existing databases. Launch with
-`CALMFOLD_DATA_DIR=/tmp/calmfold-review CALMFOLD_DEV_ROUTE=developer cargo run`.
+`OTTERO_DATA_DIR=/tmp/ottero-review OTTERO_DEV_ROUTE=developer cargo run`.
 See the example's module docs for the disposable preview vault credentials.
 
 Deferred: general developer utilities, environment comparison, CLI injection,

@@ -1,6 +1,6 @@
 //! Creates notes of known sizes for `scripts/perf.sh`.
 //!
-//! `cargo run -p calmfold-storage --example perf_seed -- <db-path>`
+//! `cargo run -p ottero-storage --example perf_seed -- <db-path>`
 //!
 //! Each note is realistic Markdown (headings, lists, bold, links, tags, code,
 //! a table) repeated to size, so the editor does the same styling work a
@@ -8,8 +8,8 @@
 
 #![allow(clippy::expect_used)] // Dev tool: failing loudly is the right behavior.
 
-use calmfold_core::{Note, clock};
-use calmfold_storage::Store;
+use ottero_core::{Note, clock};
+use ottero_storage::Store;
 
 const SECTION: &str = "## Section {n}\n\
 Some **important** text with *emphasis*, a [[Service log]] link and a #project/tag. \
@@ -49,7 +49,7 @@ fn main() {
         ("Perf 1 KB", 1_000),
         ("Perf 50 KB", 50_000),
         ("Perf 500 KB", 500_000),
-        ("Perf 2 MB", calmfold_core::MAX_BODY_BYTES - 4_000),
+        ("Perf 2 MB", ottero_core::MAX_BODY_BYTES - 4_000),
     ];
     for (title, size) in sizes {
         let note = Note::new(title, body(size), clock::now()).expect("note");

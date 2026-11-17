@@ -1,6 +1,6 @@
 # Security
 
-Calmfold is early software. The latest published release is the supported target
+Ottero is early software. The latest published release is the supported target
 for fixes; there is no long-term support branch or formal audit claim.
 
 ## Report privately

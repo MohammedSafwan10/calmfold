@@ -1,4 +1,4 @@
-// Clicks at a point inside the Calmfold window, in window-relative logical
+// Clicks at a point inside the Ottero window, in window-relative logical
 // pixels (same coordinates as a 1x screenshot of the window). Needs
 // Accessibility permission for the terminal. For manual/agent UI testing.
 // Usage: swift scripts/click.swift <x> <y> [double]
@@ -11,7 +11,7 @@ guard args.count >= 3, let x = Double(args[1]), let y = Double(args[2]) else {
     exit(2)
 }
 let double = args.count > 3 && args[3] == "double"
-let targetPID = ProcessInfo.processInfo.environment["CALMFOLD_WINDOW_PID"].flatMap(Int.init)
+let targetPID = ProcessInfo.processInfo.environment["OTTERO_WINDOW_PID"].flatMap(Int.init)
 
 let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 // The main window is the largest layer-0 window (menu-bar helpers are 33 px tall).
@@ -20,11 +20,11 @@ func area(_ w: [String: Any]) -> Double {
     return (b["Width"] ?? 0) * (b["Height"] ?? 0)
 }
 guard let window = windows.filter({
-    ($0[kCGWindowOwnerName as String] as? String)?.lowercased() == "calmfold"
+    ($0[kCGWindowOwnerName as String] as? String)?.lowercased() == "ottero"
         && ($0[kCGWindowLayer as String] as? Int) == 0
         && (targetPID == nil || ($0[kCGWindowOwnerPID as String] as? Int) == targetPID)
 }).max(by: { area($0) < area($1) }), let bounds = window[kCGWindowBounds as String] as? [String: Double] else {
-    FileHandle.standardError.write("Calmfold window not found on screen\n".data(using: .utf8)!)
+    FileHandle.standardError.write("Ottero window not found on screen\n".data(using: .utf8)!)
     exit(1)
 }
 

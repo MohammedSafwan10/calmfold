@@ -13,9 +13,6 @@
 //! Keyboard (list focused): ↑/↓ select, Space checks in today, Enter opens,
 //! N types a new habit. Rows drag to reorder.
 
-use calmfold_core::habit::StreakUnit;
-use calmfold_core::{Date, HabitId, clock};
-use calmfold_ui::components::{empty_state, page_header, segmented};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
@@ -26,6 +23,9 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, div,
     rems,
 };
+use ottero_core::habit::StreakUnit;
+use ottero_core::{Date, HabitId, clock};
+use ottero_ui::components::{empty_state, page_header, segmented};
 
 use crate::actions::{
     HABITS_CONTEXT, HabitOpenSelected, HabitQuickAdd, HabitSelectNext, HabitSelectPrevious,
@@ -138,7 +138,7 @@ impl HabitsView {
             }
             (a, b) => {
                 if let Err(err) = a.and(b) {
-                    eprintln!("calmfold: failed to load habits: {err:#}");
+                    eprintln!("ottero: failed to load habits: {err:#}");
                 }
                 self.habits.clear();
                 self.archived.clear();
@@ -423,7 +423,7 @@ impl HabitsView {
             let (title, desc) = if self.load_error {
                 (
                     "Couldn't load habits",
-                    "Your habits are still on disk. Restart Calmfold; if this keeps happening, check the data folder in Settings.",
+                    "Your habits are still on disk. Restart Ottero; if this keeps happening, check the data folder in Settings.",
                 )
             } else if archived {
                 (
@@ -462,7 +462,7 @@ fn hint(text: &str) -> Option<SharedString> {
     if text.trim().is_empty() {
         return None;
     }
-    let draft = calmfold_core::parse_habit(text);
+    let draft = ottero_core::parse_habit(text);
     let mut parts = vec![draft.schedule.to_string()];
     if draft.target > 1 {
         parts.push(format!("{} times a day", draft.target));

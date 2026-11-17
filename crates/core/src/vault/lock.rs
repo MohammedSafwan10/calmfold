@@ -73,7 +73,7 @@ pub enum AutoLock {
     FiveMinutes,
     FifteenMinutes,
     OneHour,
-    /// Only when Calmfold quits (or the user locks it).
+    /// Only when Ottero quits (or the user locks it).
     Never,
 }
 

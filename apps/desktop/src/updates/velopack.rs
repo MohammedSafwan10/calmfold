@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::mpsc::Sender;
 
 use anyhow::{Context as _, Result, ensure};
-use calmfold_core::update::{Download, Feed};
+use ottero_core::update::{Download, Feed};
 use velopack::bundle::Manifest;
 use velopack::sources::UpdateSource;
 use velopack::{UpdateCheck, UpdateInfo, UpdateManager, VelopackAsset, VelopackAssetFeed};
@@ -41,6 +41,8 @@ impl SignedSource {
             "invalid package name"
         );
         let asset = VelopackAsset {
+            // The Velopack packId is the installed app's identity (install
+            // folder, uninstall entry), so it keeps the pre-rename name (ADR 0009).
             PackageId: "Calmfold".into(),
             Version: feed.version.clone(),
             Type: "Full".into(),

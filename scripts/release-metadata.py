@@ -15,7 +15,7 @@ version, directory = sys.argv[1:]
 assert re.fullmatch(r"0|[1-9]\d*", version.split('.')[0]) and re.fullmatch(r"\d+\.\d+\.\d+", version), 'invalid version'
 root = Path(directory)
 base = f'https://github.com/MohammedSafwan10/calmfold-releases/releases/download/v{version}'
-mac = root / f'Calmfold-{version}-macos-arm64.zip'
+mac = root / f'Ottero-{version}-macos-arm64.zip'
 windows = list(root.glob(f'Calmfold-{version}-full.nupkg'))
 assert len(windows) == 1, 'exact Windows full package required'
 expected_license=Path('LICENSE').read_text().replace('\r\n','\n')
@@ -23,12 +23,12 @@ revision=os.environ.get('GITHUB_SHA') or subprocess.check_output(['git','rev-par
 assert re.fullmatch(r'[0-9a-f]{40}',revision)
 def verify_notices(archive, prefix):
     assert archive.read(prefix+'LICENSE').decode().replace('\r\n','\n') == expected_license
-    assert archive.read(prefix+'NOTICE').decode().startswith('Calmfold by Nexdark Labs')
+    assert archive.read(prefix+'NOTICE').decode().startswith('Ottero by Nexdark Labs')
     assert len(archive.read(prefix+'THIRD_PARTY_NOTICES.txt')) > 1000
     assert revision in archive.read(prefix+'SOURCE.txt').decode()
 with zipfile.ZipFile(mac) as archive:
-    verify_notices(archive,'Calmfold.app/Contents/Resources/')
-    info = plistlib.loads(archive.read('Calmfold.app/Contents/Info.plist'))
+    verify_notices(archive,'Ottero.app/Contents/Resources/')
+    info = plistlib.loads(archive.read('Ottero.app/Contents/Info.plist'))
     assert info['CFBundleVersion'] == version and info['CFBundleShortVersionString'] == version
 with zipfile.ZipFile(windows[0]) as archive:
     licenses=[name for name in archive.namelist() if name.endswith('/LICENSE')]

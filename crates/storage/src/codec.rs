@@ -1,6 +1,6 @@
 //! Conversions between domain values and SQLite columns.
 
-use calmfold_core::{Date, Timestamp};
+use ottero_core::{Date, Timestamp};
 
 use crate::{StorageError, StorageResult};
 
