@@ -1,7 +1,6 @@
 <div align="center">
   <img src="assets/brand/png/icon-128.png" width="88" height="88" alt="Ottero icon: a curled otter forming an O">
   <h1>Ottero</h1>
-  <p><strong>Your day, in one calm place.</strong></p>
   <p>Notes, tasks, calendar, habits, focus and passwords.<br>Local-first. Native. Made for macOS and Windows.</p>
   <p>
     <a href="https://github.com/MohammedSafwan10/calmfold-releases/releases/latest">Download</a> ·
