@@ -50,6 +50,11 @@ pub struct AccountSession {
     kdf_override: Option<AccountKdf>,
     /// Bumped whenever a flow starts or is abandoned.
     generation: u64,
+    /// Bumped whenever the signed-in session changes (sign in, sign out,
+    /// session ended, lock). Refresh and unlock results carry the value
+    /// and the token they started with, and are dropped if either changed,
+    /// so a late answer for one account never lands in another.
+    epoch: u64,
     derived: Option<Arc<Derived>>,
     verified: bool,
     pending_token: Option<SessionToken>,
@@ -92,6 +97,7 @@ impl AccountSession {
             api,
             kdf_override: None,
             generation: 0,
+            epoch: 0,
             derived: None,
             verified: false,
             pending_token: None,
@@ -251,6 +257,20 @@ impl AccountSession {
         self.error = Some((field, message));
     }
 
+    /// The signed-in session changed: pending refresh/unlock results no longer apply.
+    fn new_epoch(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.refresh_busy = false;
+        self.unlock_busy = false;
+    }
+
+    /// True when `epoch` and `token` still describe the signed-in session.
+    fn still_current(&self, epoch: u64, token: Option<&str>) -> bool {
+        self.epoch == epoch
+            && self.state.is_signed_in()
+            && self.file.token().as_ref().map(SessionToken::expose) == token
+    }
+
     fn forget_flow(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.derived = None;
@@ -281,6 +301,7 @@ impl AccountSession {
                     plan: Some(PlanRecord::from_me(me)),
                 })
             });
+        self.new_epoch();
         self.account_key = Some(account_key);
         self.sessions.clear();
         self.sessions_loaded = false;
@@ -743,6 +764,7 @@ impl Library {
         };
         session.refresh_busy = true;
         let api = session.api.clone();
+        let (epoch, started_with) = (session.epoch, Zeroizing::new(token.expose().to_owned()));
         cx.emit(LibraryEvent::AccountChanged);
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -755,10 +777,10 @@ impl Library {
                 .await;
             _ = this.update(cx, |lib, cx| {
                 let session = &mut lib.account;
-                session.refresh_busy = false;
-                if !session.state.is_signed_in() {
-                    return;
+                if !session.still_current(epoch, Some(&started_with)) {
+                    return; // another session took over; its own refresh decides
                 }
+                session.refresh_busy = false;
                 match result {
                     Ok((me, sessions)) => {
                         let record = PlanRecord::from_me(&me);
@@ -784,6 +806,7 @@ impl Library {
     fn end_account_session(&mut self, cx: &mut Context<Self>) {
         let session = &mut self.account;
         _ = session.file.sign_out();
+        session.new_epoch();
         session.account_key = None;
         session.sessions.clear();
         session.sessions_loaded = false;
@@ -802,6 +825,7 @@ impl Library {
         }
         let token = session.file.token();
         let saved = session.file.sign_out();
+        session.new_epoch();
         session.account_key = None;
         session.sessions.clear();
         session.sessions_loaded = false;
@@ -879,6 +903,10 @@ impl Library {
         session.unlock_busy = true;
         let (api, kdf) = (session.api.clone(), session.kdf());
         let token = session.file.token();
+        let epoch = session.epoch;
+        let started_with = token
+            .as_ref()
+            .map(|t| Zeroizing::new(t.expose().to_owned()));
         cx.emit(LibraryEvent::AccountChanged);
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -900,16 +928,20 @@ impl Library {
                 .await;
             this.update(cx, |lib, cx| {
                 let session = &mut lib.account;
+                if !session.still_current(epoch, started_with.as_deref().map(String::as_str)) {
+                    // Signed out, locked or another account since: never apply A's key to B.
+                    cx.emit(LibraryEvent::AccountChanged);
+                    return Err("The account changed while unlocking. Try again.".to_owned());
+                }
                 session.unlock_busy = false;
                 let outcome = match result {
-                    Ok((key, wrapped)) if session.state.is_signed_in() => {
+                    Ok((key, wrapped)) => {
                         _ = session
                             .file
                             .update_signed_in(|a| a.wrapped_by_password = Some(wrapped));
                         session.account_key = Some(key);
                         Ok(())
                     }
-                    Ok(_) => Err("You were signed out.".to_owned()),
                     Err(err) => Err(err.message()),
                 };
                 cx.emit(LibraryEvent::AccountChanged);
@@ -921,7 +953,13 @@ impl Library {
 
     /// Locks the account key again (it is re-derived from the password).
     pub fn lock_account(&mut self, cx: &mut Context<Self>) {
-        if self.account.account_key.take().is_some() {
+        let was_open = self.account.account_key.take().is_some();
+        // An unlock still deriving must not reopen what was just locked.
+        let pending = self.account.unlock_busy;
+        if pending {
+            self.account.new_epoch();
+        }
+        if was_open || pending {
             cx.emit(LibraryEvent::AccountChanged);
         }
     }

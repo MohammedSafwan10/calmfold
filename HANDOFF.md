@@ -62,6 +62,15 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
 
 ## Next steps (in order)
 
+**Account review (2026-11-17):** resolve the P1 findings recorded in
+`/Users/admin/saf/ottero-cloud/ACCOUNT-REVIEW-2026-11-17.md` before deploying
+accounts or adding real encrypted sync data. Isolated API tests confirmed
+uncoordinated email-only credential reset, email-only OTP login and a direct
+plugin admin route bypassing owner protection/auditing. Desktop late unlock/
+refresh callbacks also lack session/generation guards (code-review finding).
+Focused checks pass: 17 account crypto tests, 6 account UI tests, API typecheck;
+these cases need additional regressions. No implementation fixes applied.
+
 **Ottero Cloud (plan 06):**
 
 1. Push the account commit; owner review of Settings → Account.
@@ -157,6 +166,20 @@ OTTERO_DEV_ROUTE=calendar OTTERO_DEV_CALENDAR=week cargo run  # debug: calendar 
 ```
 
 ## Log
+
+### 2026-11-17: Account review fixes (ottero-cloud docs/reviews/ACCOUNT-REVIEW-2026-11-17.md)
+
+- API (ottero-cloud d08c056, deployed): public Better Auth surface is an
+  allowlist (sign-up, sign-in, verify/resend email code, sign-out, session
+  list/revoke, token, jwks). Email-code password reset/sign-in, password and
+  email change, update/delete user and every /admin/* plugin route now 404;
+  verification-code requests for any type but email-verification are refused.
+  Only the owner acts on staff; role changes go through an audited route.
+  Tests sweep every Better Auth endpoint and fail on the previous code.
+- App: refresh and unlock results are bound to the session epoch and token;
+  sign-in, sign-out, session end and lock start a new epoch. Three UI tests
+  (late refresh, late unlock after an account switch, late unlock after
+  sign-out) failed before the fix and pass now.
 
 ### 2026-11-17: Ottero Cloud sign-up, sign-in and account page
 

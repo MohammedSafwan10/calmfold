@@ -4620,3 +4620,111 @@ fn account_other_device_can_be_signed_out_after_confirming(cx: &mut TestAppConte
     assert_eq!(cx.read(|cx| lib.read(cx).account().sessions().len()), 1);
     assert_eq!(account_screen(&app, cx), Screen::SignedIn);
 }
+
+/// Account B signed in on this device (locked), standing in for "A signed
+/// out and B signed in" while one of A's requests is still in flight.
+fn other_account_signed_in() -> ottero_desktop::account::AccountSession {
+    use ottero_desktop::account::store::{AccountFile, PlanRecord, SignedIn};
+    let mut file = AccountFile::in_memory();
+    file.set_signed_in(SignedIn {
+        email: "bea@example.com".into(),
+        token: "token-of-bea".into(),
+        salt: "AAAAAAAAAAAAAAAAAAAAAA".into(),
+        wrapped_by_password: None,
+        plan: Some(PlanRecord {
+            role: "user".into(),
+            cloud_source: None,
+            cloud_ends_at: None,
+        }),
+    })
+    .expect("signed in");
+    ottero_desktop::account::AccountSession::new(file, std::sync::Arc::new(FakeAccountApi::new()))
+}
+
+#[gpui_kit::test]
+fn account_late_refresh_for_a_previous_account_is_dropped(cx: &mut TestAppContext) {
+    let (app, fake) = launch_with_account(cx);
+    sign_up_through_the_ui(&app, &fake, cx);
+    fake.grant_owner(ACCOUNT_EMAIL);
+    let lib = library(&app, cx);
+    // A's refresh starts (it would report "Owner"), then B takes over before it lands.
+    lib.update(cx, |lib, cx| {
+        lib.refresh_account(cx);
+        lib.set_account_session(other_account_signed_in());
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let account = lib.read(cx).account();
+        assert_eq!(
+            account.state().email(),
+            Some("bea@example.com"),
+            "B stays signed in"
+        );
+        assert!(
+            matches!(
+                account.state(),
+                ottero_core::account::AccountState::SignedIn {
+                    plan: ottero_core::account::Plan::Free,
+                    ..
+                }
+            ),
+            "A's plan isn't copied into B"
+        );
+        assert!(
+            account.sessions().is_empty(),
+            "A's devices aren't shown as B's"
+        );
+        assert!(account.notice().is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn account_late_unlock_for_a_previous_account_is_dropped(cx: &mut TestAppContext) {
+    let (app, fake) = launch_with_account(cx);
+    sign_up_through_the_ui(&app, &fake, cx);
+    let lib = library(&app, cx);
+    lib.update(cx, |lib, cx| lib.lock_account(cx));
+    // A's unlock is still deriving when B signs in on this device.
+    let unlock = lib.update(cx, |lib, cx| {
+        let task = lib.unlock_account(
+            ottero_crypto::SecretString::from(ACCOUNT_PASSWORD.to_owned()),
+            cx,
+        );
+        lib.set_account_session(other_account_signed_in());
+        task
+    });
+    assert!(
+        finish(unlock, cx).is_err(),
+        "the late unlock reports that the account changed"
+    );
+    cx.read(|cx| {
+        let account = lib.read(cx).account();
+        assert_eq!(account.state().email(), Some("bea@example.com"));
+        assert!(
+            !account.is_unlocked(),
+            "A's account key never enters B's session"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn account_late_unlock_after_locking_again_stays_locked(cx: &mut TestAppContext) {
+    let (app, fake) = launch_with_account(cx);
+    sign_up_through_the_ui(&app, &fake, cx);
+    let lib = library(&app, cx);
+    lib.update(cx, |lib, cx| lib.lock_account(cx));
+    let unlock = lib.update(cx, |lib, cx| {
+        let task = lib.unlock_account(
+            ottero_crypto::SecretString::from(ACCOUNT_PASSWORD.to_owned()),
+            cx,
+        );
+        lib.account_sign_out(cx).expect("signed out");
+        task
+    });
+    assert!(finish(unlock, cx).is_err());
+    cx.read(|cx| {
+        let account = lib.read(cx).account();
+        assert!(!account.is_unlocked());
+        assert!(!account.state().is_signed_in());
+    });
+}
