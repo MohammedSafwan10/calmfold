@@ -2,25 +2,31 @@
 //! (`ottero_core::vault`), the crypto crate and storage.
 //!
 //! Key hierarchy (ADR 0005): master password → Argon2id → KEK → unwraps the
-//! random vault key → seals each item (AAD = item id). The slow step,
+//! random vault key → seals each item (AAD = item id). The same vault key is
+//! also wrapped by the recovery key (ADR 0006) and, once the vault is linked
+//! to an Ottero Cloud account, by a key derived from the account key
+//! (`ottero_crypto::vault_link`, ADR 0014), which then replaces the master
+//! password. Linking re-wraps the key only; no item is re-encrypted. The slow step,
 //! [`derive`], is a free function so callers run it on a background thread;
 //! everything else here is fast and runs on the main thread.
 //!
-//! State follows `ottero_core::vault::lock::next`. Locking drops the vault
+//! State follows `ottero_core::vault::lock::next`, and what opens the vault
+//! follows `next_opener`. Locking drops the vault
 //! key and every decrypted item (both zero their memory on drop).
 
 use std::collections::HashMap;
 
 use anyhow::{Context as _, Result, bail};
 use ottero_core::vault::health::{self, Report, Strength};
-use ottero_core::vault::lock::{LockEvent, LockState, next};
+use ottero_core::vault::lock::{LockEvent, LockState, Opener, OpenerEvent, next, next_opener};
 use ottero_core::vault::search::Query;
 use ottero_core::vault::{ItemFields, ItemKind, VaultItem};
 use ottero_core::{DomainError, Timestamp, VaultItemId};
 use ottero_crypto::{
     CryptoError, KdfParams, Salt, SecretKey, SecretString, Zeroizing, derive_key, open, seal,
+    vault_link,
 };
-use ottero_storage::{SealedItem, Store, VaultMeta};
+use ottero_storage::{AccountWrap, LinkOutcome, MasterWrap, SealedItem, Store, VaultMeta};
 
 /// Associated data binding the wrapped vault key to its purpose.
 // Format identifiers from the Keepstone days, kept through the Calmfold and
@@ -100,8 +106,63 @@ impl VaultSort {
     }
 }
 
+/// What opens the vault after recovery (ADR 0006, 0014).
+pub enum NewOpener<'a> {
+    /// A new master password (not signed in, or the account is locked).
+    MasterPassword(KdfInput, &'a SecretKey),
+    /// The Ottero Cloud account that is open now.
+    Account {
+        email: &'a str,
+        account_key: &'a SecretKey,
+    },
+}
+
+/// Result of [`VaultSession::unlock_with_account`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccountUnlock {
+    Opened,
+    /// The vault is linked to another account (its email).
+    OtherAccount(String),
+    /// Same email, but this account key doesn't open it (a re-created
+    /// account, or a damaged header). Nothing was changed.
+    WrongKey,
+}
+
+/// The Ottero Cloud account a link is for: its normalized email and the
+/// open account key (borrowed from the account session, never copied).
+#[derive(Clone, Copy)]
+pub struct LinkAccount<'a> {
+    pub email: &'a str,
+    pub key: &'a SecretKey,
+}
+
+/// Result of [`VaultSession::finish_link`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkResult {
+    Linked,
+    WrongPassword,
+    /// Locked, quit or changed while the password was being checked:
+    /// nothing was written.
+    Stale,
+}
+
+/// Where a link started (it must still be there when it finishes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingLink {
+    from_locked: bool,
+    epoch: u64,
+}
+
 pub struct VaultSession {
     state: LockState,
+    /// What opens the vault on this device; `None` before setup.
+    opener: Option<Opener>,
+    /// The account a linked vault opens with (its normalized email).
+    linked_email: Option<String>,
+    /// Bumped on every lock, so a slow link or unlock that started before
+    /// it can't land afterwards.
+    epoch: u64,
+    linking: Option<PendingLink>,
     key: Option<SecretKey>,
     items: Vec<VaultItem>,
     /// Items that failed to decrypt (shown as a warning, never deleted).
@@ -113,18 +174,13 @@ pub struct VaultSession {
 impl VaultSession {
     /// The state on launch: no header → setup, otherwise locked.
     pub fn load(store: &Store) -> Result<Self> {
-        let state = if store.vault_meta()?.is_some() {
-            LockState::Locked
-        } else {
-            LockState::Uninitialized
-        };
-        Ok(Self {
-            state,
-            key: None,
-            items: Vec::new(),
-            unreadable: 0,
-            strength: HashMap::new(),
-        })
+        let meta = store.vault_meta()?;
+        let mut this = Self::locked();
+        match meta {
+            None => this.state = LockState::Uninitialized,
+            Some(meta) => this.read_opener(&meta),
+        }
+        Ok(this)
     }
 
     /// A locked session (used when the header can't be read).
@@ -132,10 +188,27 @@ impl VaultSession {
     pub fn locked() -> Self {
         Self {
             state: LockState::Locked,
+            opener: None,
+            linked_email: None,
+            epoch: 0,
+            linking: None,
             key: None,
             items: Vec::new(),
             unreadable: 0,
             strength: HashMap::new(),
+        }
+    }
+
+    fn read_opener(&mut self, meta: &VaultMeta) {
+        match &meta.account {
+            Some(a) => {
+                self.opener = Some(Opener::Account);
+                self.linked_email = Some(a.email.clone());
+            }
+            None => {
+                self.opener = meta.master.as_ref().map(|_| Opener::MasterPassword);
+                self.linked_email = None;
+            }
         }
     }
 
@@ -149,6 +222,18 @@ impl VaultSession {
         self.state == LockState::Unlocked
     }
 
+    /// What opens the vault on this device.
+    #[must_use]
+    pub fn opener(&self) -> Option<Opener> {
+        self.opener
+    }
+
+    /// The account a linked vault opens with.
+    #[must_use]
+    pub fn linked_email(&self) -> Option<&str> {
+        self.linked_email.as_deref()
+    }
+
     #[must_use]
     pub fn unreadable(&self) -> usize {
         self.unreadable
@@ -160,20 +245,31 @@ impl VaultSession {
                 self.state = to;
                 Ok(())
             }
-            None => Err(DomainError::VaultState {
-                state: self.state.label(),
-            }
-            .into()),
+            None => Err(self.state_error()),
         }
     }
 
+    /// Checks an opener change against `ottero_core::vault::lock::next_opener`.
+    fn opener_allowed(&self, event: OpenerEvent) -> Result<Option<Opener>> {
+        next_opener(self.state, self.opener, event).ok_or_else(|| self.state_error())
+    }
+
+    fn state_error(&self) -> anyhow::Error {
+        DomainError::VaultState {
+            state: self.state.label(),
+        }
+        .into()
+    }
+
     fn key(&self) -> Result<&SecretKey> {
-        self.key.as_ref().ok_or_else(|| {
-            DomainError::VaultState {
-                state: self.state.label(),
-            }
-            .into()
-        })
+        self.key.as_ref().ok_or_else(|| self.state_error())
+    }
+
+    fn master_only(&self) -> Result<()> {
+        if self.opener == Some(Opener::Account) {
+            bail!("Passwords opens with your Ottero account, not a master password.");
+        }
+        Ok(())
     }
 
     // ---- Setup / unlock / lock ------------------------------------------
@@ -191,33 +287,59 @@ impl VaultSession {
         if store.vault_meta()?.is_some() {
             bail!("A vault already exists.");
         }
+        let opener = self.opener_allowed(OpenerEvent::SetUp(Opener::MasterPassword))?;
         let vault_key = SecretKey::generate().context("Couldn't get random bytes")?;
-        let wrapped =
-            seal(kek, vault_key.expose(), KEY_AAD).context("Couldn't encrypt the vault key")?;
-        let (recovery_salt, recovery_wrapped) = match recovery {
-            Some((input, rkek)) => (
-                Some(input.salt.0.to_vec()),
-                Some(
-                    seal(rkek, vault_key.expose(), RECOVERY_AAD)
-                        .context("Couldn't encrypt the vault key")?,
-                ),
-            ),
-            None => (None, None),
-        };
+        let master = master_wrap(input, kek, &vault_key)?;
+        let (recovery_salt, recovery_wrapped) = recovery_wrap(recovery, &vault_key)?;
         let at = now.as_millisecond();
         store.save_vault_meta(&VaultMeta {
             version: META_VERSION,
-            salt: input.salt.0.to_vec(),
-            kdf_memory_kib: input.params.memory_kib,
-            kdf_iterations: input.params.iterations,
-            kdf_parallelism: input.params.parallelism,
-            wrapped_key: wrapped,
+            master: Some(master),
             created_at: at,
             updated_at: at,
             recovery_salt,
             recovery_wrapped,
+            account: None,
         })?;
         self.transition(LockEvent::SetUp)?;
+        self.opener = opener;
+        self.linked_email = None;
+        self.key = Some(vault_key);
+        self.items.clear();
+        Ok(())
+    }
+
+    /// Sets the vault up under an Ottero Cloud account key: no master
+    /// password. The recovery key is required, so the vault never depends
+    /// on the account alone.
+    pub fn finish_setup_with_account(
+        &mut self,
+        store: &mut Store,
+        email: &str,
+        account_key: &SecretKey,
+        recovery: (KdfInput, &SecretKey),
+        now: Timestamp,
+    ) -> Result<()> {
+        if store.vault_meta()?.is_some() {
+            bail!("A vault already exists.");
+        }
+        let opener = self.opener_allowed(OpenerEvent::SetUp(Opener::Account))?;
+        let vault_key = SecretKey::generate().context("Couldn't get random bytes")?;
+        let account = account_wrap(email, account_key, &vault_key)?;
+        let (recovery_salt, recovery_wrapped) = recovery_wrap(Some(recovery), &vault_key)?;
+        let at = now.as_millisecond();
+        store.save_vault_meta(&VaultMeta {
+            version: META_VERSION,
+            master: None,
+            created_at: at,
+            updated_at: at,
+            recovery_salt,
+            recovery_wrapped,
+            account: Some(account),
+        })?;
+        self.transition(LockEvent::SetUp)?;
+        self.opener = opener;
+        self.linked_email = Some(email.to_owned());
         self.key = Some(vault_key);
         self.items.clear();
         Ok(())
@@ -235,16 +357,7 @@ impl VaultSession {
     /// The recovery key's KDF input (fixed cost: the key itself is random).
     pub fn recovery_kdf(store: &Store) -> Result<KdfInput> {
         let meta = store.vault_meta()?.context("No vault is set up")?;
-        let salt: [u8; Salt::LEN] = meta
-            .recovery_salt
-            .as_deref()
-            .context("This vault has no recovery key")?
-            .try_into()
-            .map_err(|_| DomainError::Corrupt)?;
-        Ok(KdfInput {
-            salt: Salt(salt),
-            params: RECOVERY_KDF,
-        })
+        recovery_input(meta.recovery_salt.as_deref())
     }
 
     /// Replaces the recovery key (the old one stops working). Unlocked only.
@@ -265,41 +378,44 @@ impl VaultSession {
         Ok(())
     }
 
-    /// Opens the vault with the recovery key's KEK and sets a new master
-    /// password. `Ok(false)`: wrong recovery key, still locked.
+    /// Opens the vault with the recovery key's KEK, then makes `new` what
+    /// opens it from now on (a new master password, or the open account).
+    /// The other opener is removed in the same write. `Ok(false)`: wrong
+    /// recovery key, still locked, nothing changed.
     pub fn recover(
         &mut self,
         store: &mut Store,
         rkek: Result<SecretKey>,
-        new_input: KdfInput,
-        new_kek: &SecretKey,
+        new: NewOpener<'_>,
         now: Timestamp,
     ) -> Result<bool> {
-        if self.state != LockState::Locked {
-            return Err(DomainError::VaultState {
-                state: self.state.label(),
-            }
-            .into());
-        }
+        let target = match new {
+            NewOpener::MasterPassword(..) => Opener::MasterPassword,
+            NewOpener::Account { .. } => Opener::Account,
+        };
+        let opener = self.opener_allowed(OpenerEvent::Recover(target))?;
         let mut meta = store.vault_meta()?.context("No vault is set up")?;
         let opened = rkek
             .ok()
             .and_then(|rkek| open(&rkek, meta.recovery_wrapped.as_deref()?, RECOVERY_AAD).ok());
-        let Some(bytes) = opened.filter(|b| b.len() == SecretKey::LEN) else {
+        let Some(key) = opened.and_then(|b| key_from(&b)) else {
             return Ok(false);
         };
-        let mut raw = Zeroizing::new([0u8; SecretKey::LEN]);
-        raw.copy_from_slice(&bytes);
-        let key = SecretKey::from_bytes(&mut raw);
-        meta.wrapped_key =
-            seal(new_kek, key.expose(), KEY_AAD).context("Couldn't encrypt the vault key")?;
-        meta.salt = new_input.salt.0.to_vec();
-        meta.kdf_memory_kib = new_input.params.memory_kib;
-        meta.kdf_iterations = new_input.params.iterations;
-        meta.kdf_parallelism = new_input.params.parallelism;
+        match new {
+            NewOpener::MasterPassword(input, kek) => {
+                meta.master = Some(master_wrap(input, kek, &key)?);
+                meta.account = None;
+            }
+            NewOpener::Account { email, account_key } => {
+                meta.account = Some(account_wrap(email, account_key, &key)?);
+                meta.master = None;
+            }
+        }
         meta.updated_at = now.as_millisecond();
         store.save_vault_meta(&meta)?;
         self.transition(LockEvent::StartUnlock)?;
+        self.opener = opener;
+        self.read_opener(&meta);
         self.load_items(store, &key)?;
         self.key = Some(key);
         self.transition(LockEvent::Unlocked)?;
@@ -307,9 +423,9 @@ impl VaultSession {
     }
 
     /// "Start a new vault": writes the current encrypted vault to `archive`
-    /// (still encrypted; opens later with its old password), then empties
-    /// the vault so setup runs again. Locked only, and never deletes before
-    /// the archive is safely on disk.
+    /// (still encrypted; opens later with its old password, its account or
+    /// its recovery key), then empties the vault so setup runs again.
+    /// Locked only, and never deletes before the archive is safely on disk.
     pub fn archive_and_reset(
         &mut self,
         store: &mut Store,
@@ -317,58 +433,33 @@ impl VaultSession {
         now: Timestamp,
     ) -> Result<()> {
         if self.state != LockState::Locked {
-            return Err(DomainError::VaultState {
-                state: self.state.label(),
-            }
-            .into());
+            return Err(self.state_error());
         }
+        let opener = self.opener_allowed(OpenerEvent::Reset)?;
         write_archive(store, archive, now)?;
         store.reset_vault()?;
         self.transition(LockEvent::Reset)?;
+        self.opener = opener;
+        self.linked_email = None;
         Ok(())
     }
 
     /// "Export encrypted backup": the same file format as an archive,
     /// written while unlocked and left in place. It opens with the master
-    /// password the vault has now. Returns the number of sealed items.
+    /// password the vault has now, or (linked vault) with its account or its
+    /// recovery key. Returns the number of sealed items.
     pub fn export(&self, store: &Store, path: &std::path::Path, now: Timestamp) -> Result<usize> {
         if self.state != LockState::Unlocked {
-            return Err(DomainError::VaultState {
-                state: self.state.label(),
-            }
-            .into());
+            return Err(self.state_error());
         }
         write_archive(store, path, now)
     }
 
-    /// Decrypts an archived vault with its old master password's KEK and
-    /// returns its live items (to import into the current vault).
-    pub fn open_archive(archive: &ArchiveFile, kek: &SecretKey) -> Result<Option<Vec<VaultItem>>> {
-        let Ok(bytes) = open(kek, &archive.meta()?.wrapped_key, KEY_AAD) else {
-            return Ok(None);
-        };
-        if bytes.len() != SecretKey::LEN {
-            return Ok(None);
-        }
-        let mut raw = Zeroizing::new([0u8; SecretKey::LEN]);
-        raw.copy_from_slice(&bytes);
-        let key = SecretKey::from_bytes(&mut raw);
-        let mut out = Vec::new();
-        for row in archive.sealed()? {
-            if let Ok(json) = open(&key, &row.blob, row.id.to_string().as_bytes())
-                && let Ok(item) = VaultItem::from_json(&json, row.id)
-                && !item.is_trashed()
-            {
-                out.push(item);
-            }
-        }
-        Ok(Some(out))
-    }
-
     /// Where to derive from for unlocking (moves the vault to `Unlocking`).
     pub fn start_unlock(&mut self, store: &Store) -> Result<KdfInput> {
+        self.master_only()?;
         let meta = store.vault_meta()?.context("No vault is set up")?;
-        let input = kdf_input(&meta)?;
+        let input = kdf_input(meta.master.as_ref().context("No master password is set")?)?;
         self.transition(LockEvent::StartUnlock)?;
         Ok(input)
     }
@@ -376,25 +467,194 @@ impl VaultSession {
     /// Finishes unlocking with the derived KEK. A wrong password returns
     /// `Ok(false)` and the vault stays locked.
     pub fn finish_unlock(&mut self, store: &Store, kek: Result<SecretKey>) -> Result<bool> {
-        if self.state != LockState::Unlocking {
+        if self.state != LockState::Unlocking || self.linking.is_some() {
             // Locked again (or quit) while deriving: ignore the stale result.
             return Ok(false);
         }
         let opened = kek.ok().and_then(|kek| {
             let meta = store.vault_meta().ok().flatten()?;
-            open(&kek, &meta.wrapped_key, KEY_AAD).ok()
+            open(&kek, &meta.master?.wrapped_key, KEY_AAD).ok()
         });
-        let Some(bytes) = opened.filter(|b| b.len() == SecretKey::LEN) else {
+        let Some(key) = opened.and_then(|b| key_from(&b)) else {
             self.transition(LockEvent::Failed)?;
             return Ok(false);
         };
-        let mut raw = Zeroizing::new([0u8; SecretKey::LEN]);
-        raw.copy_from_slice(&bytes);
-        let key = SecretKey::from_bytes(&mut raw);
         self.load_items(store, &key)?;
         self.key = Some(key);
         self.transition(LockEvent::Unlocked)?;
         Ok(true)
+    }
+
+    /// Opens a linked vault with the account key (fast: HKDF + one AEAD,
+    /// no Argon2). Locked only; a vault linked to another account, or a key
+    /// that doesn't open it, leaves everything as it was.
+    pub fn unlock_with_account(
+        &mut self,
+        store: &Store,
+        email: &str,
+        account_key: &SecretKey,
+    ) -> Result<AccountUnlock> {
+        if self.state != LockState::Locked || self.opener != Some(Opener::Account) {
+            return Err(self.state_error());
+        }
+        let meta = store.vault_meta()?.context("No vault is set up")?;
+        let wrap = meta.account.as_ref().context("This vault isn't linked")?;
+        if wrap.email != email {
+            return Ok(AccountUnlock::OtherAccount(wrap.email.clone()));
+        }
+        let Ok(key) = vault_link::unwrap_vault_key(account_key, &wrap.wrapped_key) else {
+            return Ok(AccountUnlock::WrongKey);
+        };
+        self.transition(LockEvent::StartUnlock)?;
+        if let Err(err) = self.load_items(store, &key) {
+            self.transition(LockEvent::Failed)?;
+            return Err(err);
+        }
+        self.key = Some(key);
+        self.transition(LockEvent::Unlocked)?;
+        Ok(AccountUnlock::Opened)
+    }
+
+    /// Starts linking a master-password vault to an account: returns what
+    /// to derive the master password's KEK from, and the token the result
+    /// must bring back. A locked vault moves to `Unlocking`.
+    pub fn start_link(&mut self, store: &Store) -> Result<(KdfInput, u64)> {
+        self.opener_allowed(OpenerEvent::Link)?;
+        if self.linking.is_some() {
+            bail!("Already linking.");
+        }
+        let meta = store.vault_meta()?.context("No vault is set up")?;
+        let input = kdf_input(meta.master.as_ref().context("No master password is set")?)?;
+        let from_locked = self.state == LockState::Locked;
+        if from_locked {
+            self.transition(LockEvent::StartUnlock)?;
+        }
+        self.linking = Some(PendingLink {
+            from_locked,
+            epoch: self.epoch,
+        });
+        Ok((input, self.epoch))
+    }
+
+    /// Abandons a link that won't finish (the account changed meanwhile).
+    pub fn cancel_link(&mut self, epoch: u64) {
+        if let Some(pending) = self.linking.filter(|p| p.epoch == epoch) {
+            self.linking = None;
+            if pending.from_locked && self.state == LockState::Unlocking {
+                _ = self.transition(LockEvent::Failed);
+            }
+        }
+    }
+
+    /// Finishes linking: the master password's KEK must open the vault key;
+    /// the vault key is then wrapped for `account_key`, the wrapping is
+    /// opened again to prove it, and one transaction stores it and retires
+    /// the master password (`new_recovery` first, when the vault has no
+    /// recovery key). No item is re-encrypted. A locked vault ends up
+    /// unlocked. Anything short of the commit leaves the master password
+    /// working.
+    pub fn finish_link(
+        &mut self,
+        store: &mut Store,
+        epoch: u64,
+        kek: Result<SecretKey>,
+        account: LinkAccount<'_>,
+        new_recovery: Option<(KdfInput, &SecretKey)>,
+        now: Timestamp,
+    ) -> Result<LinkResult> {
+        let LinkAccount {
+            email,
+            key: account_key,
+        } = account;
+        let Some(pending) = self
+            .linking
+            .filter(|p| p.epoch == epoch && self.epoch == epoch)
+        else {
+            return Ok(LinkResult::Stale);
+        };
+        let expected = if pending.from_locked {
+            LockState::Unlocking
+        } else {
+            LockState::Unlocked
+        };
+        if self.state != expected {
+            self.linking = None;
+            return Ok(LinkResult::Stale);
+        }
+        let outcome = self.write_link(store, kek, email, account_key, new_recovery, now);
+        self.linking = None;
+        match outcome {
+            Ok(Some(key)) => {
+                self.opener = Some(Opener::Account);
+                self.linked_email = Some(email.to_owned());
+                if pending.from_locked {
+                    if let Err(err) = self.load_items(store, &key) {
+                        self.transition(LockEvent::Failed)?;
+                        return Err(err);
+                    }
+                    self.key = Some(key);
+                    self.transition(LockEvent::Unlocked)?;
+                }
+                Ok(LinkResult::Linked)
+            }
+            Ok(None) => {
+                if pending.from_locked {
+                    self.transition(LockEvent::Failed)?;
+                }
+                Ok(LinkResult::WrongPassword)
+            }
+            Err(err) => {
+                if pending.from_locked {
+                    self.transition(LockEvent::Failed)?;
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// The link's crypto and its one write. `Ok(None)`: wrong password.
+    fn write_link(
+        &self,
+        store: &mut Store,
+        kek: Result<SecretKey>,
+        email: &str,
+        account_key: &SecretKey,
+        new_recovery: Option<(KdfInput, &SecretKey)>,
+        now: Timestamp,
+    ) -> Result<Option<SecretKey>> {
+        let meta = store.vault_meta()?.context("No vault is set up")?;
+        let master = meta.master.as_ref().context("No master password is set")?;
+        let opened = kek
+            .ok()
+            .and_then(|kek| open(&kek, &master.wrapped_key, KEY_AAD).ok());
+        let Some(vault_key) = opened.and_then(|b| key_from(&b)) else {
+            return Ok(None);
+        };
+        if let Some(live) = &self.key
+            && live.expose() != vault_key.expose()
+        {
+            bail!("The vault changed while linking; nothing was changed.");
+        }
+        let account = account_wrap(email, account_key, &vault_key)?;
+        let recovery = match (&meta.recovery_wrapped, new_recovery) {
+            (Some(_), _) if meta.recovery_salt.is_some() => None,
+            (_, Some((input, rkek))) => Some((
+                input.salt.0.to_vec(),
+                seal(rkek, vault_key.expose(), RECOVERY_AAD)
+                    .context("Couldn't encrypt the vault key")?,
+            )),
+            _ => bail!("This vault needs a recovery key before it can be linked."),
+        };
+        let outcome = store.link_vault_to_account(
+            &master.wrapped_key,
+            &account,
+            recovery.as_ref().map(|(s, w)| (s.as_slice(), w.as_slice())),
+            now.as_millisecond(),
+        )?;
+        if outcome != LinkOutcome::Linked {
+            bail!("The vault changed while linking; nothing was changed.");
+        }
+        Ok(Some(vault_key))
     }
 
     fn load_items(&mut self, store: &Store, key: &SecretKey) -> Result<()> {
@@ -417,9 +677,12 @@ impl VaultSession {
         Ok(())
     }
 
-    /// Drops the key and every decrypted item.
+    /// Drops the key and every decrypted item. Pending unlocks and links
+    /// that started before this can no longer land.
     pub fn lock(&mut self) {
         if self.transition(LockEvent::Lock).is_ok() {
+            self.epoch = self.epoch.wrapping_add(1);
+            self.linking = None;
             self.key = None;
             self.items.clear();
             self.strength.clear();
@@ -437,17 +700,14 @@ impl VaultSession {
         new_kek: &SecretKey,
         now: Timestamp,
     ) -> Result<bool> {
+        self.master_only()?;
         let key = self.key()?;
         let mut meta = store.vault_meta()?.context("No vault is set up")?;
-        if open(current_kek, &meta.wrapped_key, KEY_AAD).is_err() {
+        let master = meta.master.as_ref().context("No master password is set")?;
+        if open(current_kek, &master.wrapped_key, KEY_AAD).is_err() {
             return Ok(false);
         }
-        meta.wrapped_key =
-            seal(new_kek, key.expose(), KEY_AAD).context("Couldn't encrypt the vault key")?;
-        meta.salt = new_input.salt.0.to_vec();
-        meta.kdf_memory_kib = new_input.params.memory_kib;
-        meta.kdf_iterations = new_input.params.iterations;
-        meta.kdf_parallelism = new_input.params.parallelism;
+        meta.master = Some(master_wrap(new_input, new_kek, key)?);
         meta.updated_at = now.as_millisecond();
         store.save_vault_meta(&meta)?;
         Ok(true)
@@ -455,7 +715,8 @@ impl VaultSession {
 
     /// The header's KDF input (to verify the current password).
     pub fn current_kdf(store: &Store) -> Result<KdfInput> {
-        kdf_input(&store.vault_meta()?.context("No vault is set up")?)
+        let meta = store.vault_meta()?.context("No vault is set up")?;
+        kdf_input(meta.master.as_ref().context("No master password is set")?)
     }
 
     // ---- Items ------------------------------------------------------------
@@ -701,19 +962,44 @@ impl VaultSession {
 
 /// An archived vault on disk (`vault-archives/*.otvault`; Calmfold wrote
 /// `*.cfvault` and Keepstone `*.ksvault`, same format): the header and
-/// sealed items exactly as they were, as hex. Opening it needs the master
-/// password the vault had then.
+/// sealed items exactly as they were, as hex.
+///
+/// * **Version 1** (a master-password vault): opens with the master password
+///   the vault had then. Byte-for-byte the format older versions write.
+/// * **Version 2** (a vault linked to an Ottero Cloud account, ADR 0014):
+///   no master password; it holds the account wrapping and the recovery
+///   wrapping, and opens with that account or the vault's recovery key.
+///   Older versions refuse it ("isn't an Ottero vault archive") without
+///   touching it.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ArchiveFile {
     format: String,
     version: u32,
     archived_at: i64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     salt: String,
+    #[serde(default, skip_serializing_if = "is_zero")]
     kdf_memory_kib: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
     kdf_iterations: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
     kdf_parallelism: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     wrapped_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_wrapped: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery_salt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery_wrapped: Option<String>,
     items: Vec<ArchivedItem>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if signature
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -731,13 +1017,21 @@ const ARCHIVE_FORMAT: &str = "keepstone-vault-archive";
 /// `cfvault` (Calmfold), `ksvault` (Keepstone). All hold the same format.
 pub const ARCHIVE_EXTENSIONS: [&str; 3] = ["otvault", "cfvault", "ksvault"];
 
+/// What opens an archive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArchiveOpener {
+    MasterPassword,
+    /// The Ottero Cloud account with this email, or the recovery key.
+    Account(String),
+}
+
 /// Writes the vault's header and sealed items to `path` atomically (temp
 /// file, fsync, rename) and proves the file reads back. Nothing is
 /// decrypted. Returns the number of sealed items written.
 fn write_archive(store: &Store, path: &std::path::Path, now: Timestamp) -> Result<usize> {
     let meta = store.vault_meta()?.context("No vault is set up")?;
     let items = store.vault_items()?;
-    let file = ArchiveFile::new(&meta, &items, now);
+    let file = ArchiveFile::new(&meta, &items, now)?;
     let json = serde_json::to_vec_pretty(&file).context("Couldn't write the archive")?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).context("Couldn't create the archive folder")?;
@@ -758,16 +1052,20 @@ fn write_archive(store: &Store, path: &std::path::Path, now: Timestamp) -> Resul
 }
 
 impl ArchiveFile {
-    fn new(meta: &VaultMeta, items: &[SealedItem], now: Timestamp) -> Self {
-        Self {
+    fn new(meta: &VaultMeta, items: &[SealedItem], now: Timestamp) -> Result<Self> {
+        let mut file = Self {
             format: ARCHIVE_FORMAT.into(),
             version: 1,
             archived_at: now.as_millisecond(),
-            salt: hex(&meta.salt),
-            kdf_memory_kib: meta.kdf_memory_kib,
-            kdf_iterations: meta.kdf_iterations,
-            kdf_parallelism: meta.kdf_parallelism,
-            wrapped_key: hex(&meta.wrapped_key),
+            salt: String::new(),
+            kdf_memory_kib: 0,
+            kdf_iterations: 0,
+            kdf_parallelism: 0,
+            wrapped_key: String::new(),
+            account_email: None,
+            account_wrapped: None,
+            recovery_salt: None,
+            recovery_wrapped: None,
             items: items
                 .iter()
                 .map(|i| ArchivedItem {
@@ -776,14 +1074,46 @@ impl ArchiveFile {
                     updated_at: i.updated_at,
                 })
                 .collect(),
+        };
+        match (&meta.master, &meta.account) {
+            (Some(m), _) => {
+                // Version 1 exactly as before: the master password opens it.
+                file.salt = hex(&m.salt);
+                file.kdf_memory_kib = m.kdf_memory_kib;
+                file.kdf_iterations = m.kdf_iterations;
+                file.kdf_parallelism = m.kdf_parallelism;
+                file.wrapped_key = hex(&m.wrapped_key);
+            }
+            (None, Some(a)) => {
+                let (Some(rs), Some(rw)) = (&meta.recovery_salt, &meta.recovery_wrapped) else {
+                    bail!("This vault has no recovery key, so it can't be archived.");
+                };
+                file.version = 2;
+                file.account_email = Some(a.email.clone());
+                file.account_wrapped = Some(hex(&a.wrapped_key));
+                file.recovery_salt = Some(hex(rs));
+                file.recovery_wrapped = Some(hex(rw));
+            }
+            (None, None) => bail!("This vault has no key to archive."),
         }
+        Ok(file)
     }
 
     pub fn read(path: &std::path::Path) -> Result<Self> {
         let text = std::fs::read(path).context("Couldn't read the archive")?;
         let file: Self =
             serde_json::from_slice(&text).context("That isn't an Ottero vault archive")?;
-        if file.format != ARCHIVE_FORMAT || file.version != 1 {
+        let complete = match file.version {
+            1 => !file.wrapped_key.is_empty() && !file.salt.is_empty(),
+            2 => {
+                file.account_email.is_some()
+                    && file.account_wrapped.is_some()
+                    && file.recovery_salt.is_some()
+                    && file.recovery_wrapped.is_some()
+            }
+            _ => false,
+        };
+        if file.format != ARCHIVE_FORMAT || !complete {
             bail!("That isn't an Ottero vault archive");
         }
         Ok(file)
@@ -799,22 +1129,35 @@ impl ArchiveFile {
         Timestamp::from_millisecond(self.archived_at).unwrap_or(Timestamp::UNIX_EPOCH)
     }
 
-    pub fn kdf(&self) -> Result<KdfInput> {
-        kdf_input(&self.meta()?)
+    #[must_use]
+    pub fn opener(&self) -> ArchiveOpener {
+        match &self.account_email {
+            Some(email) if self.version == 2 => ArchiveOpener::Account(email.clone()),
+            _ => ArchiveOpener::MasterPassword,
+        }
     }
 
-    fn meta(&self) -> Result<VaultMeta> {
-        Ok(VaultMeta {
-            version: META_VERSION,
+    /// The master password's KDF input (version 1).
+    pub fn kdf(&self) -> Result<KdfInput> {
+        kdf_input(&self.master()?)
+    }
+
+    /// The recovery key's KDF input (version 2).
+    pub fn recovery_kdf(&self) -> Result<KdfInput> {
+        let salt = unhex(self.recovery_salt.as_deref().context("No recovery key")?)?;
+        recovery_input(Some(&salt))
+    }
+
+    fn master(&self) -> Result<MasterWrap> {
+        if self.version != 1 {
+            bail!("This archive opens with an Ottero account or its recovery key.");
+        }
+        Ok(MasterWrap {
             salt: unhex(&self.salt)?,
             kdf_memory_kib: self.kdf_memory_kib,
             kdf_iterations: self.kdf_iterations,
             kdf_parallelism: self.kdf_parallelism,
             wrapped_key: unhex(&self.wrapped_key)?,
-            created_at: self.archived_at,
-            updated_at: self.archived_at,
-            recovery_salt: None,
-            recovery_wrapped: None,
         })
     }
 
@@ -829,6 +1172,69 @@ impl ArchiveFile {
                 })
             })
             .collect()
+    }
+
+    /// The archive's live items, decrypted with its vault key.
+    fn items_with(&self, key: &SecretKey) -> Result<Vec<VaultItem>> {
+        let mut out = Vec::new();
+        for row in self.sealed()? {
+            if let Ok(json) = open(key, &row.blob, row.id.to_string().as_bytes())
+                && let Ok(item) = VaultItem::from_json(&json, row.id)
+                && !item.is_trashed()
+            {
+                out.push(item);
+            }
+        }
+        Ok(out)
+    }
+}
+
+impl VaultSession {
+    /// Decrypts an archived vault with its old master password's KEK and
+    /// returns its live items (to import into the current vault).
+    pub fn open_archive(archive: &ArchiveFile, kek: &SecretKey) -> Result<Option<Vec<VaultItem>>> {
+        let wrapped = archive.master()?.wrapped_key;
+        let Some(key) = open(kek, &wrapped, KEY_AAD).ok().and_then(|b| key_from(&b)) else {
+            return Ok(None);
+        };
+        archive.items_with(&key).map(Some)
+    }
+
+    /// Opens a version-2 archive with the account key it was linked to.
+    pub fn open_archive_with_account(
+        archive: &ArchiveFile,
+        account_key: &SecretKey,
+    ) -> Result<Option<Vec<VaultItem>>> {
+        let wrapped = unhex(
+            archive
+                .account_wrapped
+                .as_deref()
+                .context("No account key")?,
+        )?;
+        let Ok(key) = vault_link::unwrap_vault_key(account_key, &wrapped) else {
+            return Ok(None);
+        };
+        archive.items_with(&key).map(Some)
+    }
+
+    /// Opens a version-2 archive with the recovery key's KEK.
+    pub fn open_archive_with_recovery(
+        archive: &ArchiveFile,
+        rkek: &SecretKey,
+    ) -> Result<Option<Vec<VaultItem>>> {
+        let wrapped = unhex(
+            archive
+                .recovery_wrapped
+                .as_deref()
+                .context("No recovery key")?,
+        )?;
+        let Some(key) = open(rkek, &wrapped, RECOVERY_AAD)
+            .ok()
+            .and_then(|b| key_from(&b))
+        else {
+            return Ok(None);
+        };
+        archive.items_with(&key).map(Some)
     }
 }
 
@@ -856,21 +1262,91 @@ fn unhex(s: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
-fn kdf_input(meta: &VaultMeta) -> Result<KdfInput> {
-    let salt: [u8; Salt::LEN] = meta
+fn kdf_input(master: &MasterWrap) -> Result<KdfInput> {
+    let salt: [u8; Salt::LEN] = master
         .salt
         .as_slice()
         .try_into()
         .map_err(|_| DomainError::Corrupt)?;
     let params = KdfParams {
-        memory_kib: meta.kdf_memory_kib,
-        iterations: meta.kdf_iterations,
-        parallelism: meta.kdf_parallelism,
+        memory_kib: master.kdf_memory_kib,
+        iterations: master.kdf_iterations,
+        parallelism: master.kdf_parallelism,
     };
     params.validate().map_err(|_| DomainError::Corrupt)?;
     Ok(KdfInput {
         salt: Salt(salt),
         params,
+    })
+}
+
+fn recovery_input(salt: Option<&[u8]>) -> Result<KdfInput> {
+    let salt: [u8; Salt::LEN] = salt
+        .context("This vault has no recovery key")?
+        .try_into()
+        .map_err(|_| DomainError::Corrupt)?;
+    Ok(KdfInput {
+        salt: Salt(salt),
+        params: RECOVERY_KDF,
+    })
+}
+
+/// A vault key from opened bytes (anything but 32 bytes is no key).
+fn key_from(bytes: &[u8]) -> Option<SecretKey> {
+    if bytes.len() != SecretKey::LEN {
+        return None;
+    }
+    let mut raw = Zeroizing::new([0u8; SecretKey::LEN]);
+    raw.copy_from_slice(bytes);
+    Some(SecretKey::from_bytes(&mut raw))
+}
+
+fn master_wrap(input: KdfInput, kek: &SecretKey, vault_key: &SecretKey) -> Result<MasterWrap> {
+    Ok(MasterWrap {
+        salt: input.salt.0.to_vec(),
+        kdf_memory_kib: input.params.memory_kib,
+        kdf_iterations: input.params.iterations,
+        kdf_parallelism: input.params.parallelism,
+        wrapped_key: seal(kek, vault_key.expose(), KEY_AAD)
+            .context("Couldn't encrypt the vault key")?,
+    })
+}
+
+type RecoveryColumns = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+fn recovery_wrap(
+    recovery: Option<(KdfInput, &SecretKey)>,
+    vault_key: &SecretKey,
+) -> Result<RecoveryColumns> {
+    Ok(match recovery {
+        Some((input, rkek)) => (
+            Some(input.salt.0.to_vec()),
+            Some(
+                seal(rkek, vault_key.expose(), RECOVERY_AAD)
+                    .context("Couldn't encrypt the vault key")?,
+            ),
+        ),
+        None => (None, None),
+    })
+}
+
+/// Wraps the vault key for an account and opens the wrapping again before
+/// anything is stored, so a broken wrapping can never replace a working one.
+fn account_wrap(
+    email: &str,
+    account_key: &SecretKey,
+    vault_key: &SecretKey,
+) -> Result<AccountWrap> {
+    let wrapped = vault_link::wrap_vault_key(account_key, vault_key)
+        .context("Couldn't encrypt the vault key")?;
+    let back = vault_link::unwrap_vault_key(account_key, &wrapped)
+        .context("Couldn't encrypt the vault key")?;
+    if back.expose() != vault_key.expose() {
+        bail!("Couldn't encrypt the vault key");
+    }
+    Ok(AccountWrap {
+        email: email.to_owned(),
+        wrapped_key: wrapped,
     })
 }
 
@@ -1117,14 +1593,24 @@ mod tests {
         let ri = VaultSession::recovery_kdf(&store).expect("kdf");
         let wrong = derive(&pw("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"), &ri.salt, ri.params);
         assert!(
-            !v.recover(&mut store, wrong, new_input, &new_kek, now())
-                .expect("try")
+            !v.recover(
+                &mut store,
+                wrong,
+                NewOpener::MasterPassword(new_input, &new_kek),
+                now()
+            )
+            .expect("try")
         );
         assert_eq!(v.state(), LockState::Locked);
         let right = derive(&rkey, &ri.salt, ri.params);
         assert!(
-            v.recover(&mut store, right, new_input, &new_kek, now())
-                .expect("recover")
+            v.recover(
+                &mut store,
+                right,
+                NewOpener::MasterPassword(new_input, &new_kek),
+                now()
+            )
+            .expect("recover")
         );
         assert!(v.item(id).is_some(), "items back");
         v.lock();
@@ -1226,5 +1712,395 @@ mod tests {
             started.elapsed().as_secs() < 5,
             "unlock + decrypt 2,000 items"
         );
+    }
+
+    // ---- Linked to an Ottero Cloud account (ADR 0014) ---------------------
+
+    const EMAIL: &str = "sam@example.com";
+
+    fn account_key(b: u8) -> SecretKey {
+        let mut raw = [b; SecretKey::LEN];
+        SecretKey::from_bytes(&mut raw)
+    }
+
+    fn recovery_key() -> (KdfInput, SecretKey, SecretString) {
+        let rinput = KdfInput::fresh(RECOVERY_KDF).expect("salt");
+        let rkey = pw("ABCDABCDABCDABCDABCDABCDABCDABCD");
+        let rkek = derive(&rkey, &rinput.salt, rinput.params).expect("kek");
+        (rinput, rkek, rkey)
+    }
+
+    /// Links a locked master-password vault; returns the result.
+    fn link(
+        store: &mut Store,
+        v: &mut VaultSession,
+        password: &str,
+        key: &SecretKey,
+        recovery: Option<(KdfInput, &SecretKey)>,
+    ) -> LinkResult {
+        let (i, epoch) = v.start_link(store).expect("start");
+        let kek = derive(&pw(password), &i.salt, i.params);
+        v.finish_link(
+            store,
+            epoch,
+            kek,
+            LinkAccount { email: EMAIL, key },
+            recovery,
+            now(),
+        )
+        .expect("finish")
+    }
+
+    #[test]
+    fn linking_rewraps_the_key_without_touching_items_and_retires_the_master_password() {
+        let (mut store, mut v) = unlocked();
+        let id = v
+            .create(&mut store, &login("GitHub", "s3cret!"), now())
+            .expect("a");
+        let blobs = store.vault_items().expect("rows");
+        v.lock();
+        let ak = account_key(7);
+        let (ri, rkek, _) = recovery_key();
+
+        assert_eq!(
+            link(&mut store, &mut v, "wrong", &ak, Some((ri, &rkek))),
+            LinkResult::WrongPassword
+        );
+        assert_eq!(v.state(), LockState::Locked);
+        assert_eq!(v.opener(), Some(Opener::MasterPassword), "nothing changed");
+        assert!(
+            store
+                .vault_meta()
+                .expect("meta")
+                .expect("m")
+                .master
+                .is_some()
+        );
+
+        assert_eq!(
+            link(&mut store, &mut v, "correct horse", &ak, Some((ri, &rkek))),
+            LinkResult::Linked
+        );
+        assert_eq!(
+            v.state(),
+            LockState::Unlocked,
+            "linking from locked also unlocks"
+        );
+        assert_eq!(v.opener(), Some(Opener::Account));
+        assert_eq!(v.linked_email(), Some(EMAIL));
+        assert!(v.item(id).is_some());
+        assert_eq!(
+            store.vault_items().expect("rows"),
+            blobs,
+            "no item re-encrypted"
+        );
+        let meta = store.vault_meta().expect("meta").expect("m");
+        assert!(meta.master.is_none(), "master password retired");
+        assert!(meta.recovery_wrapped.is_some(), "a recovery key was added");
+        assert_eq!(meta.account.as_ref().map(|a| a.email.as_str()), Some(EMAIL));
+
+        // Restart: the master password no longer opens it; the account does.
+        let mut fresh = VaultSession::load(&store).expect("load");
+        assert_eq!(fresh.opener(), Some(Opener::Account));
+        assert!(fresh.start_unlock(&store).is_err(), "no master password");
+        assert_eq!(
+            fresh
+                .unlock_with_account(&store, EMAIL, &account_key(8))
+                .expect("other key"),
+            AccountUnlock::WrongKey
+        );
+        assert_eq!(
+            fresh
+                .unlock_with_account(&store, "else@example.com", &ak)
+                .expect("other"),
+            AccountUnlock::OtherAccount(EMAIL.into())
+        );
+        assert_eq!(fresh.state(), LockState::Locked);
+        assert_eq!(
+            fresh.unlock_with_account(&store, EMAIL, &ak).expect("open"),
+            AccountUnlock::Opened
+        );
+        assert_eq!(
+            fresh
+                .item(id)
+                .map(|i| i.fields().password.clone())
+                .as_deref(),
+            Some("s3cret!")
+        );
+    }
+
+    #[test]
+    fn linking_while_unlocked_needs_the_master_password_too() {
+        let (mut store, mut v) = unlocked();
+        let (ri, rkek, _) = recovery_key();
+        v.set_recovery(&mut store, ri, &rkek, now())
+            .expect("recovery");
+        let ak = account_key(7);
+        assert_eq!(
+            link(&mut store, &mut v, "nope", &ak, None),
+            LinkResult::WrongPassword
+        );
+        assert_eq!(v.state(), LockState::Unlocked, "still unlocked");
+        assert_eq!(v.opener(), Some(Opener::MasterPassword));
+        assert_eq!(
+            link(&mut store, &mut v, "correct horse", &ak, None),
+            LinkResult::Linked
+        );
+        assert_eq!(v.opener(), Some(Opener::Account));
+        assert!(v.start_link(&store).is_err(), "can't link twice");
+    }
+
+    #[test]
+    fn a_vault_without_a_recovery_key_needs_one_to_link() {
+        let (mut store, mut v) = unlocked();
+        v.lock();
+        let ak = account_key(7);
+        let (i, epoch) = v.start_link(&store).expect("start");
+        let kek = derive(&pw("correct horse"), &i.salt, i.params);
+        assert!(
+            v.finish_link(
+                &mut store,
+                epoch,
+                kek,
+                LinkAccount {
+                    email: EMAIL,
+                    key: &ak
+                },
+                None,
+                now()
+            )
+            .is_err()
+        );
+        assert_eq!(v.state(), LockState::Locked);
+        assert!(
+            unlock(&store, &mut v, "correct horse"),
+            "master password still works"
+        );
+    }
+
+    #[test]
+    fn a_link_finishing_after_a_lock_is_dropped() {
+        let (mut store, mut v) = unlocked();
+        let (ri, rkek, _) = recovery_key();
+        v.set_recovery(&mut store, ri, &rkek, now())
+            .expect("recovery");
+        v.lock();
+        let (i, epoch) = v.start_link(&store).expect("start");
+        v.lock(); // auto-lock while Argon2 runs
+        let kek = derive(&pw("correct horse"), &i.salt, i.params);
+        assert_eq!(
+            v.finish_link(
+                &mut store,
+                epoch,
+                kek,
+                LinkAccount {
+                    email: EMAIL,
+                    key: &account_key(7)
+                },
+                None,
+                now()
+            )
+            .expect("finish"),
+            LinkResult::Stale
+        );
+        assert_eq!(v.opener(), Some(Opener::MasterPassword));
+        assert!(store.vault_meta().expect("m").expect("m").account.is_none());
+        // A cancelled link (account changed) also leaves it as it was.
+        let (_, epoch) = v.start_link(&store).expect("start");
+        assert_eq!(v.state(), LockState::Unlocking);
+        v.cancel_link(epoch);
+        assert_eq!(v.state(), LockState::Locked);
+        assert!(unlock(&store, &mut v, "correct horse"));
+    }
+
+    /// The master password changed while the link's Argon2 ran: the old
+    /// password's key no longer opens the header, so nothing is written.
+    /// (A crash inside the commit itself is covered in ottero-storage:
+    /// `an_interrupted_link_leaves_the_old_header_on_disk`.)
+    #[test]
+    fn a_link_racing_a_password_change_writes_nothing() {
+        let (mut store, mut v) = unlocked();
+        let (ri, rkek, _) = recovery_key();
+        v.set_recovery(&mut store, ri, &rkek, now())
+            .expect("recovery");
+        let (i, epoch) = v.start_link(&store).expect("start");
+        let kek = derive(&pw("correct horse"), &i.salt, i.params);
+        let current = VaultSession::current_kdf(&store).expect("kdf");
+        let old = derive(&pw("correct horse"), &current.salt, current.params).expect("k");
+        let ni = input();
+        let new = derive(&pw("other master"), &ni.salt, ni.params).expect("k");
+        v.change_password(&mut store, &old, ni, &new, now())
+            .expect("change");
+        let result = v
+            .finish_link(
+                &mut store,
+                epoch,
+                kek,
+                LinkAccount {
+                    email: EMAIL,
+                    key: &account_key(7),
+                },
+                None,
+                now(),
+            )
+            .expect("finish");
+        assert_eq!(result, LinkResult::WrongPassword);
+        assert_eq!(v.opener(), Some(Opener::MasterPassword));
+        assert!(store.vault_meta().expect("m").expect("m").account.is_none());
+        v.lock();
+        assert!(unlock(&store, &mut v, "other master"));
+    }
+
+    #[test]
+    fn setup_under_the_account_has_no_master_password_and_a_recovery_key() {
+        let mut store = Store::open_in_memory().expect("store");
+        let mut v = VaultSession::load(&store).expect("load");
+        let ak = account_key(3);
+        let (ri, rkek, rkey) = recovery_key();
+        v.finish_setup_with_account(&mut store, EMAIL, &ak, (ri, &rkek), now())
+            .expect("setup");
+        assert_eq!(v.opener(), Some(Opener::Account));
+        let id = v
+            .create(&mut store, &login("Bank", "pw-1"), now())
+            .expect("a");
+        v.lock();
+        assert!(VaultSession::current_kdf(&store).is_err());
+        assert_eq!(
+            v.unlock_with_account(&store, EMAIL, &ak).expect("open"),
+            AccountUnlock::Opened
+        );
+        v.lock();
+
+        // The recovery key opens it with no account: a new master password.
+        let ri = VaultSession::recovery_kdf(&store).expect("kdf");
+        let rk = derive(&rkey, &ri.salt, ri.params);
+        let ni = input();
+        let nk = derive(&pw("fresh master"), &ni.salt, ni.params).expect("k");
+        assert!(
+            v.recover(&mut store, rk, NewOpener::MasterPassword(ni, &nk), now())
+                .expect("recover")
+        );
+        assert_eq!(v.opener(), Some(Opener::MasterPassword), "unlinked");
+        assert!(v.item(id).is_some());
+        assert!(store.vault_meta().expect("m").expect("m").account.is_none());
+        v.lock();
+        assert!(unlock(&store, &mut v, "fresh master"));
+    }
+
+    #[test]
+    fn recovery_can_move_a_linked_vault_to_the_open_account() {
+        let mut store = Store::open_in_memory().expect("store");
+        let mut v = VaultSession::load(&store).expect("load");
+        let (ri, rkek, rkey) = recovery_key();
+        v.finish_setup_with_account(&mut store, EMAIL, &account_key(3), (ri, &rkek), now())
+            .expect("setup");
+        v.lock();
+        let other = account_key(9);
+        let ri = VaultSession::recovery_kdf(&store).expect("kdf");
+        let wrong = derive(&pw("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"), &ri.salt, ri.params);
+        let new = NewOpener::Account {
+            email: "new@example.com",
+            account_key: &other,
+        };
+        assert!(!v.recover(&mut store, wrong, new, now()).expect("try"));
+        assert_eq!(v.linked_email(), Some(EMAIL), "wrong key: nothing changed");
+        let right = derive(&rkey, &ri.salt, ri.params);
+        let new = NewOpener::Account {
+            email: "new@example.com",
+            account_key: &other,
+        };
+        assert!(v.recover(&mut store, right, new, now()).expect("recover"));
+        assert_eq!(v.linked_email(), Some("new@example.com"));
+        v.lock();
+        assert_eq!(
+            v.unlock_with_account(&store, "new@example.com", &other)
+                .expect("open"),
+            AccountUnlock::Opened
+        );
+    }
+
+    #[test]
+    fn a_tampered_account_wrapping_opens_nothing_and_changes_nothing() {
+        let mut store = Store::open_in_memory().expect("store");
+        let mut v = VaultSession::load(&store).expect("load");
+        let ak = account_key(3);
+        let (ri, rkek, _) = recovery_key();
+        v.finish_setup_with_account(&mut store, EMAIL, &ak, (ri, &rkek), now())
+            .expect("setup");
+        v.lock();
+        let mut meta = store.vault_meta().expect("m").expect("m");
+        let before = meta.clone();
+        if let Some(a) = meta.account.as_mut() {
+            let last = a.wrapped_key.len() - 1;
+            a.wrapped_key[last] ^= 1;
+        }
+        store.save_vault_meta(&meta).expect("tamper");
+        assert_eq!(
+            v.unlock_with_account(&store, EMAIL, &ak).expect("try"),
+            AccountUnlock::WrongKey
+        );
+        assert_eq!(v.state(), LockState::Locked);
+        let after = store.vault_meta().expect("m").expect("m");
+        assert_eq!(after.recovery_wrapped, before.recovery_wrapped);
+    }
+
+    #[test]
+    fn a_linked_backup_opens_with_its_account_or_recovery_key_only() {
+        let mut store = Store::open_in_memory().expect("store");
+        let mut v = VaultSession::load(&store).expect("load");
+        let ak = account_key(3);
+        let (ri, rkek, rkey) = recovery_key();
+        v.finish_setup_with_account(&mut store, EMAIL, &ak, (ri, &rkek), now())
+            .expect("setup");
+        v.create(&mut store, &login("Bank", "pw-1"), now())
+            .expect("a");
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("linked.otvault");
+        v.export(&store, &path, now()).expect("export");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(text.contains("\"version\": 2") && !text.contains("pw-1"));
+        let archive = ArchiveFile::read(&path).expect("archive");
+        assert_eq!(archive.opener(), ArchiveOpener::Account(EMAIL.into()));
+        assert!(archive.kdf().is_err(), "no master password in it");
+        assert_eq!(
+            VaultSession::open_archive_with_account(&archive, &ak)
+                .expect("open")
+                .expect("items")
+                .len(),
+            1
+        );
+        assert!(
+            VaultSession::open_archive_with_account(&archive, &account_key(4))
+                .expect("open")
+                .is_none()
+        );
+        let k = archive.recovery_kdf().expect("kdf");
+        let rk = derive(&rkey, &k.salt, k.params).expect("k");
+        assert_eq!(
+            VaultSession::open_archive_with_recovery(&archive, &rk)
+                .expect("open")
+                .expect("items")[0]
+                .title(),
+            "Bank"
+        );
+    }
+
+    #[test]
+    fn master_password_backups_are_still_version_1() {
+        let (mut store, v) = unlocked();
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("plain.otvault");
+        v.export(&store, &path, now()).expect("export");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(text.contains("\"version\": 1"));
+        for absent in [
+            "account_email",
+            "account_wrapped",
+            "recovery_salt",
+            "recovery_wrapped",
+        ] {
+            assert!(!text.contains(absent), "{absent}");
+        }
+        let _ = &mut store;
     }
 }

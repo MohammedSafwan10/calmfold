@@ -10,8 +10,15 @@
 //!   open it later with its old password), then setup runs again. Nothing is
 //!   deleted silently; the user confirms after reading what happens.
 //!
+//! Signed in to Ottero Cloud with the account open (ADR 0014), recovery
+//! needs no new master password: the vault then opens with that account.
+//! Otherwise the user chooses a new master password and a link to an
+//! account is removed (the recovery key proved ownership).
+//!
 //! Also here: the recovery key box (copy, save Emergency Kit) used by setup
-//! and by "Create new recovery key", and opening an archived vault.
+//! and by "Create new recovery key", and opening an archived vault or a
+//! backup (with its master password, or for a linked vault its account or
+//! recovery key).
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -28,9 +35,11 @@ use ottero_core::vault::health::{Strength, estimate};
 use ottero_core::vault::recovery;
 use ottero_crypto::{SecretString, Zeroizing};
 
-use crate::library::Library;
+use crate::library::{ArchiveSecret, Library};
+use crate::vault::ArchiveOpener;
 use crate::views::passwords::{MIN_MASTER_CHARS, strength_meter};
 use crate::views::vault_item::copy_field;
+use ottero_core::vault::lock::Opener;
 
 /// The recovery key in a mono box with Copy and Save Emergency Kit.
 pub fn key_box(key: &str, cx: &App) -> AnyElement {
@@ -105,14 +114,23 @@ fn save_kit(key: String, window: &mut Window, cx: &mut App) {
         .detach();
 }
 
-/// Opens "Forgot master password?".
+/// Opens "Forgot master password?" (or, for a linked vault, "Can't unlock
+/// Passwords?").
 pub fn open_forgot(library: Entity<Library>, window: &mut Window, cx: &mut App) {
+    let linked = library.read(cx).vault_opener() == Some(Opener::Account);
     let view = cx.new(|cx| Forgot::new(library, window, cx));
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
-            .title("Forgot master password?")
+            .title(if linked {
+                "Can't unlock Passwords?"
+            } else {
+                "Forgot master password?"
+            })
             .w(px(480.))
             .child(view.clone())
+            // Enter belongs to the form's fields (they submit themselves);
+            // it must never just close the dialog and drop what was typed.
+            .on_ok(|_, _, _| false)
     });
 }
 
@@ -136,6 +154,15 @@ pub struct Forgot {
 }
 
 impl Forgot {
+    /// The open account the vault will open with after recovery, if any.
+    fn relink_to(&self, cx: &App) -> Option<String> {
+        let account = self.library.read(cx).account();
+        account
+            .is_unlocked()
+            .then(|| account.signed_in_email())
+            .flatten()
+    }
+
     fn new(library: Entity<Library>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let key = cx.new(|cx| InputState::new(window, cx).placeholder("XXXX-XXXX-XXXX-…"));
         let masked = |p: &'static str, window: &mut Window, cx: &mut Context<Self>| {
@@ -174,6 +201,9 @@ impl Forgot {
         if recovery::normalize(&self.key.read(cx).value()).is_none() {
             return Some("Type the 32-character key from your Emergency Kit.");
         }
+        if self.relink_to(cx).is_some() {
+            return None;
+        }
         let new = self.new.read(cx).value();
         if new.chars().count() < MIN_MASTER_CHARS {
             return Some("Use at least 10 characters for the new password.");
@@ -194,7 +224,10 @@ impl Forgot {
         self.busy = true;
         cx.notify();
         let key = Zeroizing::new(self.key.read(cx).value().to_string());
-        let new = SecretString::from(self.new.read(cx).value().to_string());
+        let relink = self.relink_to(cx);
+        let new = relink
+            .is_none()
+            .then(|| SecretString::from(self.new.read(cx).value().to_string()));
         let task = self
             .library
             .update(cx, |lib, cx| lib.recover_vault(&key, new, cx));
@@ -209,7 +242,12 @@ impl Forgot {
                         }
                         window.close_dialog(cx);
                         window.push_notification(
-                            "Vault recovered. Your new master password is set.",
+                            match relink {
+                                Some(email) => {
+                                    format!("Passwords recovered. It now opens with {email}.")
+                                }
+                                None => "Vault recovered. Your new master password is set.".into(),
+                            },
                             cx,
                         );
                     }
@@ -234,7 +272,7 @@ impl Forgot {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
                 window.push_notification(
-                    format!("Old vault archived as {name}. If you remember its password, open it from Settings → Passwords."),
+                    format!("Old vault archived as {name}. Open it later from Settings → Passwords → Archived vaults."),
                     cx,
                 );
             }
@@ -308,16 +346,20 @@ impl Render for Forgot {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("Ottero never sees your master password, so it can't reset it. Choose what to do:"),
+                        .child(if self.library.read(cx).vault_opener() == Some(Opener::Account) {
+                            "Ottero never sees your password, so it can't reset it. Choose what to do:"
+                        } else {
+                            "Ottero never sees your master password, so it can't reset it. Choose what to do:"
+                        }),
                 )
                 .child(Self::option(
                     "forgot-recover",
                     Lucide::KeyRound,
                     "Use recovery key",
-                    if self.has_key {
-                        "From your Emergency Kit. Keeps everything; you choose a new master password."
-                    } else {
-                        "This vault has no recovery key."
+                    match (self.has_key, self.relink_to(cx).is_some()) {
+                        (false, _) => "This vault has no recovery key.",
+                        (true, true) => "From your Emergency Kit. Keeps everything; Passwords then opens with the Ottero account you're signed in to.",
+                        (true, false) => "From your Emergency Kit. Keeps everything; you choose a new master password.",
                     },
                     self.has_key,
                     Step::Recover,
@@ -327,13 +369,14 @@ impl Render for Forgot {
                     "forgot-start-over",
                     Lucide::RotateCcw,
                     "Start a new vault",
-                    "Begin again with an empty vault. The old one is kept, encrypted, in case you remember its password.",
+                    "Begin again with an empty vault. The old one is kept, encrypted, and can be opened later.",
                     true,
                     Step::StartOver,
                     cx,
                 ))
                 .into_any_element(),
             Step::Recover => {
+                let relink = self.relink_to(cx);
                 let new = self.new.read(cx).value().to_string();
                 let meter = (!new.is_empty()).then(|| {
                     let e = estimate(&new, &[]);
@@ -348,13 +391,21 @@ impl Render for Forgot {
                             .child(div().text_xs().text_color(theme.muted_foreground).child("Recovery key"))
                             .child(Input::new(&self.key).id("forgot-key")),
                     )
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .child(Input::new(&self.new).id("forgot-new").mask_toggle())
-                            .children(meter)
-                            .child(Input::new(&self.confirm).id("forgot-confirm").mask_toggle()),
-                    )
+                    .map(|s| match &relink {
+                        Some(email) => s.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(format!("After recovery, Passwords opens with {email}. No master password is needed.")),
+                        ),
+                        None => s.child(
+                            v_flex()
+                                .gap_2()
+                                .child(Input::new(&self.new).id("forgot-new").mask_toggle())
+                                .children(meter)
+                                .child(Input::new(&self.confirm).id("forgot-confirm").mask_toggle()),
+                        ),
+                    })
                     .children(error)
                     .child(
                         h_flex()
@@ -402,7 +453,11 @@ impl Render for Forgot {
                             "• It isn't deleted: it's moved to Archived vaults, still encrypted.",
                         ))
                         .child(div().text_color(theme.muted_foreground).child(
-                            "• If you remember the old password later, open the archive and its items come back.",
+                            if self.library.read(cx).vault_opener() == Some(Opener::Account) {
+                                "• Signed in to its Ottero account, or with its recovery key, you can open the archive later and get its items back."
+                            } else {
+                                "• If you remember the old password later, open the archive and its items come back."
+                            },
                         )),
                 )
                 .children(error)
@@ -460,6 +515,9 @@ fn open_vault_file(
             })
             .w(px(440.))
             .child(view.clone())
+            // Enter belongs to the form's fields (they submit themselves);
+            // it must never just close the dialog and drop what was typed.
+            .on_ok(|_, _, _| false)
     });
 }
 
@@ -528,10 +586,22 @@ pub fn restore_backup(library: Entity<Library>, window: &mut Window, cx: &mut Ap
         .detach();
 }
 
+/// How the open-archive dialog opens its file.
+#[derive(Clone, PartialEq, Eq)]
+enum ArchiveMode {
+    /// A version-1 file: its master password.
+    Password,
+    /// A linked file whose account is open now: no input needed.
+    Account(String),
+    /// A linked file without its account open: its recovery key.
+    RecoveryKey(String),
+}
+
 pub struct OpenArchive {
     path: std::path::PathBuf,
     backup: bool,
     library: Entity<Library>,
+    mode: ArchiveMode,
     password: Entity<InputState>,
     error: Option<SharedString>,
     busy: bool,
@@ -546,14 +616,29 @@ impl OpenArchive {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mode = match crate::vault::ArchiveFile::read(&path).map(|a| a.opener()) {
+            Ok(ArchiveOpener::Account(email)) => {
+                let account = library.read(cx).account();
+                if account.is_unlocked()
+                    && account.signed_in_email().as_deref() == Some(email.as_str())
+                {
+                    ArchiveMode::Account(email)
+                } else {
+                    ArchiveMode::RecoveryKey(email)
+                }
+            }
+            _ => ArchiveMode::Password,
+        };
         let password = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .placeholder(if backup {
+            let state = InputState::new(window, cx);
+            match mode {
+                ArchiveMode::Password => state.masked(true).placeholder(if backup {
                     "The master password when it was saved"
                 } else {
                     "The old vault's master password"
-                })
+                }),
+                _ => state.placeholder("Recovery key: XXXX-XXXX-…"),
+            }
         });
         let sub = cx.subscribe_in(&password, window, |this, _, e, window, cx| match e {
             InputEvent::PressEnter { .. } => this.submit(window, cx),
@@ -568,6 +653,7 @@ impl OpenArchive {
             path,
             backup,
             library,
+            mode,
             password,
             error: None,
             busy: false,
@@ -577,15 +663,20 @@ impl OpenArchive {
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.password.read(cx).value().to_string();
-        if self.busy || text.is_empty() {
+        if self.busy || (text.is_empty() && !matches!(self.mode, ArchiveMode::Account(_))) {
             return;
         }
         self.busy = true;
         cx.notify();
         let path = self.path.clone();
-        let task = self.library.update(cx, |lib, cx| {
-            lib.import_vault_archive(path, SecretString::from(text), cx)
-        });
+        let secret = match &self.mode {
+            ArchiveMode::Password => ArchiveSecret::Password(SecretString::from(text)),
+            ArchiveMode::Account(_) => ArchiveSecret::Account,
+            ArchiveMode::RecoveryKey(_) => ArchiveSecret::RecoveryKey(Zeroizing::new(text)),
+        };
+        let task = self
+            .library
+            .update(cx, |lib, cx| lib.import_vault_archive(path, secret, cx));
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             _ = this.update_in(cx, |this, window, cx| {
@@ -610,10 +701,24 @@ impl OpenArchive {
                         );
                     }
                     Ok(None) => {
-                        this.error = Some(if this.backup {
-                            "That password doesn't open this backup.".into()
-                        } else {
-                            "That password doesn't open this archive.".into()
+                        let what = if this.backup { "backup" } else { "archive" };
+                        this.error = Some(match &this.mode {
+                            ArchiveMode::Password => {
+                                format!("That password doesn't open this {what}.").into()
+                            }
+                            ArchiveMode::RecoveryKey(_) => {
+                                format!("That recovery key doesn't open this {what}.").into()
+                            }
+                            ArchiveMode::Account(email) => {
+                                // Fall back to the recovery key.
+                                let email = email.clone();
+                                this.mode = ArchiveMode::RecoveryKey(email);
+                                this.password.update(cx, |i, cx| {
+                                    i.set_placeholder("Recovery key: XXXX-XXXX-…", window, cx);
+                                    i.focus(window, cx);
+                                });
+                                format!("Your account's key doesn't open this {what}. Enter its recovery key.").into()
+                            }
                         })
                     }
                     Err(err) => this.error = Some(format!("{err:#}").into()),
@@ -628,6 +733,16 @@ impl OpenArchive {
 impl Render for OpenArchive {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        let opens_with: Option<SharedString> = match &self.mode {
+            ArchiveMode::Password => None,
+            ArchiveMode::Account(email) => {
+                Some(format!("It opens with your Ottero account, {email}.").into())
+            }
+            ArchiveMode::RecoveryKey(email) => Some(
+                format!("It opens with the Ottero account {email}, or with its recovery key.")
+                    .into(),
+            ),
+        };
         v_flex()
             .gap_4()
             .child(div().text_sm().text_color(theme.muted_foreground).child(if self.backup {
@@ -635,7 +750,12 @@ impl Render for OpenArchive {
             } else {
                 "Its items are added to your current vault. The archive file stays as it is."
             }))
-            .child(Input::new(&self.password).mask_toggle())
+            .children(opens_with.map(|t| div().text_sm().text_color(theme.muted_foreground).child(t)))
+            .map(|s| match self.mode {
+                ArchiveMode::Password => s.child(Input::new(&self.password).mask_toggle()),
+                ArchiveMode::RecoveryKey(_) => s.child(Input::new(&self.password)),
+                ArchiveMode::Account(_) => s,
+            })
             .children(
                 self.error
                     .clone()
@@ -708,7 +828,7 @@ pub fn open_archives(library: Entity<Library>, window: &mut Window, cx: &mut App
                     .child(div().text_sm().text_color(theme.muted_foreground).child(if archives.is_empty() {
                         "No archived vaults. One is kept here if you ever start a new vault."
                     } else if unlocked {
-                        "Opening one asks for the master password it had, then adds its items to this vault."
+                        "Opening one asks for what opened it then (its master password, account or recovery key), then adds its items to this vault."
                     } else {
                         "Unlock your vault first, then open an archive to add its items."
                     }))

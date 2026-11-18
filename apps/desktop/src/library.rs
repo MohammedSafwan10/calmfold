@@ -18,8 +18,10 @@ use ottero_core::{Exception, VaultItemId};
 use ottero_crypto::{KdfParams, SecretString};
 
 use crate::vault::{
-    ArchiveFile, KdfInput, RECOVERY_KDF, VaultFilter, VaultSession, VaultSort, derive,
+    AccountUnlock, ArchiveFile, ArchiveOpener, KdfInput, LinkResult, NewOpener, RECOVERY_KDF,
+    VaultFilter, VaultSession, VaultSort, derive,
 };
+use ottero_core::vault::lock::Opener;
 use ottero_core::vault::recovery;
 use ottero_crypto::Zeroizing;
 
@@ -57,6 +59,19 @@ pub struct Library {
     archive_dir: std::path::PathBuf,
     /// Ottero Cloud sign-in (`crate::account`).
     pub(crate) account: crate::account::AccountSession,
+    /// Why the open account couldn't open a linked vault (shown on the
+    /// locked screen); cleared when the account or the vault changes.
+    vault_account_problem: Option<AccountUnlock>,
+}
+
+/// What opens an archive or backup the user picked.
+pub enum ArchiveSecret {
+    /// Its master password (a version-1 file).
+    Password(SecretString),
+    /// Its recovery key (a version-2 file, linked to an account).
+    RecoveryKey(Zeroizing<String>),
+    /// The Ottero Cloud account key open now (a version-2 file).
+    Account,
 }
 
 impl EventEmitter<LibraryEvent> for Library {}
@@ -80,6 +95,7 @@ impl Library {
             vault_activity: SystemTime::now(),
             archive_dir: std::env::temp_dir().join("ottero-vault-archives"),
             account: crate::account::AccountSession::detached(),
+            vault_account_problem: None,
         }
     }
 
@@ -1306,16 +1322,30 @@ impl Library {
         })
     }
 
-    /// Unlocks with the recovery key and sets `new_password` as the master
-    /// password. Resolves to `false` for a wrong recovery key.
+    /// Unlocks with the recovery key. With `new_password`, that becomes the
+    /// master password (and a link to an account is removed); without it,
+    /// the account open now opens the vault from then on. Resolves to
+    /// `false` for a wrong recovery key; nothing changes then.
     pub fn recover_vault(
         &mut self,
         recovery_key: &str,
-        new_password: SecretString,
+        new_password: Option<SecretString>,
         cx: &mut Context<Self>,
     ) -> gpui_kit::Task<Result<bool>> {
         let Some(normalized) = recovery::normalize(recovery_key) else {
             return gpui_kit::Task::ready(Ok(false));
+        };
+        let account = if new_password.is_none() {
+            match self.open_account() {
+                Some((email, epoch)) => Some((email, epoch)),
+                None => {
+                    return gpui_kit::Task::ready(Err(anyhow::anyhow!(
+                        "Unlock your Ottero account first, or choose a new master password."
+                    )));
+                }
+            }
+        } else {
+            None
         };
         let inputs = VaultSession::recovery_kdf(&self.store)
             .and_then(|r| Ok((r, KdfInput::fresh(self.kdf)?)));
@@ -1332,18 +1362,43 @@ impl Library {
                         &rinput.salt,
                         rinput.params,
                     );
-                    (
-                        rkek,
-                        derive(&new_password, &new_input.salt, new_input.params),
-                    )
+                    let new_kek = new_password
+                        .map(|p| derive(&p, &new_input.salt, new_input.params))
+                        .transpose();
+                    (rkek, new_kek)
                 })
                 .await;
             let new_kek = new_kek?;
             this.update(cx, |lib, cx| {
-                let ok =
-                    lib.vault
-                        .recover(&mut lib.store, rkek, new_input, &new_kek, clock::now())?;
+                let now = clock::now();
+                let ok = match (&new_kek, &account) {
+                    (Some(kek), _) => lib.vault.recover(
+                        &mut lib.store,
+                        rkek,
+                        NewOpener::MasterPassword(new_input, kek),
+                        now,
+                    )?,
+                    (None, Some((email, epoch))) => {
+                        let Some(key) = lib.account.key().filter(|_| {
+                            lib.account.epoch() == *epoch
+                                && lib.account.signed_in_email().as_deref() == Some(email.as_str())
+                        }) else {
+                            anyhow::bail!("The account changed in the meantime. Try again.");
+                        };
+                        lib.vault.recover(
+                            &mut lib.store,
+                            rkek,
+                            NewOpener::Account {
+                                email,
+                                account_key: key,
+                            },
+                            now,
+                        )?
+                    }
+                    (None, None) => false,
+                };
                 if ok {
+                    lib.vault_account_problem = None;
                     lib.touch_vault();
                 }
                 cx.emit(LibraryEvent::VaultChanged);
@@ -1394,12 +1449,12 @@ impl Library {
         out
     }
 
-    /// Opens an archive with its old master password and adds its items to
-    /// the current (unlocked) vault. Resolves to `None` for a wrong password.
+    /// Opens an archive or backup and adds its items to the current
+    /// (unlocked) vault. Resolves to `None` when `secret` doesn't open it.
     pub fn import_vault_archive(
         &mut self,
         path: std::path::PathBuf,
-        password: SecretString,
+        secret: ArchiveSecret,
         cx: &mut Context<Self>,
     ) -> gpui_kit::Task<Result<Option<usize>>> {
         if !self.vault.is_unlocked() {
@@ -1408,16 +1463,57 @@ impl Library {
             }
             .into()));
         }
-        cx.spawn(async move |this, cx| {
-            let items = cx
-                .background_executor()
-                .spawn(async move {
+        // The account key never leaves the main thread's session: opening
+        // with it is fast (HKDF + AEAD), so it happens here, not in a task.
+        let opened_now = if matches!(secret, ArchiveSecret::Account) {
+            let result =
+                (|| {
                     let archive = ArchiveFile::read(&path)?;
-                    let k = archive.kdf()?;
-                    let kek = derive(&password, &k.salt, k.params)?;
-                    VaultSession::open_archive(&archive, &kek)
-                })
-                .await?;
+                    let ArchiveOpener::Account(email) = archive.opener() else {
+                        return Ok(None);
+                    };
+                    let Some(key) = self.account.key().filter(|_| {
+                        self.account.signed_in_email().as_deref() == Some(email.as_str())
+                    }) else {
+                        return Ok(None);
+                    };
+                    VaultSession::open_archive_with_account(&archive, key)
+                })();
+            Some(result)
+        } else {
+            None
+        };
+        cx.spawn(async move |this, cx| {
+            let items = match opened_now {
+                Some(result) => result?,
+                None => {
+                    cx.background_executor()
+                        .spawn(async move {
+                            let archive = ArchiveFile::read(&path)?;
+                            match secret {
+                                ArchiveSecret::Password(password) => {
+                                    let k = archive.kdf()?;
+                                    let kek = derive(&password, &k.salt, k.params)?;
+                                    VaultSession::open_archive(&archive, &kek)
+                                }
+                                ArchiveSecret::RecoveryKey(text) => {
+                                    let Some(normalized) = recovery::normalize(&text) else {
+                                        return Ok(None);
+                                    };
+                                    let k = archive.recovery_kdf()?;
+                                    let rkek = derive(
+                                        &SecretString::from(normalized.to_string()),
+                                        &k.salt,
+                                        k.params,
+                                    )?;
+                                    VaultSession::open_archive_with_recovery(&archive, &rkek)
+                                }
+                                ArchiveSecret::Account => Ok(None),
+                            }
+                        })
+                        .await?
+                }
+            };
             let Some(items) = items else {
                 return Ok(None);
             };
@@ -1498,7 +1594,18 @@ impl Library {
         })
     }
 
+    /// Locks Passwords and, when signed in, the account key too: with a
+    /// linked vault the account key opens Passwords, so leaving it open
+    /// would make the lock meaningless (ADR 0014). Manual lock, idle,
+    /// sleep and "lock in background" all come through here.
     pub fn lock_vault(&mut self, cx: &mut Context<Self>) {
+        self.lock_vault_only(cx);
+        self.lock_account_key(cx);
+    }
+
+    /// Locks the vault and nothing else (the account side calls this when
+    /// it locks or signs out).
+    pub(crate) fn lock_vault_only(&mut self, cx: &mut Context<Self>) {
         if matches!(
             self.vault.state(),
             LockState::Unlocked | LockState::Unlocking
@@ -1506,6 +1613,192 @@ impl Library {
             self.vault.lock();
             cx.emit(LibraryEvent::VaultChanged);
         }
+    }
+
+    /// What opens the vault on this device (`None` before setup).
+    pub fn vault_opener(&self) -> Option<Opener> {
+        self.vault.opener()
+    }
+
+    /// The account a linked vault opens with.
+    pub fn vault_linked_email(&self) -> Option<&str> {
+        self.vault.linked_email()
+    }
+
+    /// Why the open account didn't open the linked vault, if it tried.
+    pub fn vault_account_problem(&self) -> Option<&AccountUnlock> {
+        self.vault_account_problem.as_ref()
+    }
+
+    /// The signed-in account's email and session epoch, when its key is open.
+    fn open_account(&self) -> Option<(String, u64)> {
+        self.account.key()?;
+        Some((self.account.signed_in_email()?, self.account.epoch()))
+    }
+
+    /// The account key just opened (sign-in, unlock, a password check):
+    /// a locked vault linked to this account opens with it, so one unlock
+    /// opens both.
+    pub(crate) fn account_key_opened(&mut self, cx: &mut Context<Self>) {
+        self.vault_account_problem = None;
+        if self.vault.state() != LockState::Locked || self.vault.opener() != Some(Opener::Account) {
+            cx.emit(LibraryEvent::VaultChanged);
+            return;
+        }
+        let (Some(key), Some(email)) = (self.account.key(), self.account.signed_in_email()) else {
+            return;
+        };
+        match self.vault.unlock_with_account(&self.store, &email, key) {
+            Ok(AccountUnlock::Opened) => self.touch_vault(),
+            Ok(problem) => self.vault_account_problem = Some(problem),
+            Err(err) => eprintln!("ottero: couldn't open the vault with the account: {err:#}"),
+        }
+        cx.emit(LibraryEvent::VaultChanged);
+    }
+
+    /// The account key is gone (locked, signed out, session ended).
+    pub(crate) fn account_key_closed(&mut self, cx: &mut Context<Self>) {
+        self.vault_account_problem = None;
+        self.lock_vault_only(cx);
+        cx.emit(LibraryEvent::VaultChanged);
+    }
+
+    /// Sets the vault up under the open account key (no master password)
+    /// and a new recovery key, which resolves for the user to save. The
+    /// result is dropped if the account changed while the key was derived.
+    pub fn set_up_vault_with_account(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<Zeroizing<String>>> {
+        let Some((email, epoch)) = self.open_account() else {
+            return gpui_kit::Task::ready(Err(anyhow::anyhow!(
+                "Unlock your Ottero account first."
+            )));
+        };
+        let made = KdfInput::fresh(RECOVERY_KDF).and_then(|i| Ok((i, new_recovery_key()?)));
+        let (rinput, recovery) = match made {
+            Ok(v) => v,
+            Err(err) => return gpui_kit::Task::ready(Err(err)),
+        };
+        cx.spawn(async move |this, cx| {
+            let normalized =
+                recovery::normalize(&recovery).context("Couldn't make a recovery key")?;
+            let rkek = cx
+                .background_executor()
+                .spawn(async move {
+                    derive(
+                        &SecretString::from(normalized.to_string()),
+                        &rinput.salt,
+                        rinput.params,
+                    )
+                })
+                .await?;
+            this.update(cx, |lib, cx| {
+                let Some(key) = lib.account.key().filter(|_| {
+                    lib.account.epoch() == epoch
+                        && lib.account.signed_in_email().as_deref() == Some(email.as_str())
+                }) else {
+                    anyhow::bail!("The account changed in the meantime. Try again.");
+                };
+                lib.vault.finish_setup_with_account(
+                    &mut lib.store,
+                    &email,
+                    key,
+                    (rinput, &rkek),
+                    clock::now(),
+                )?;
+                lib.touch_vault();
+                cx.emit(LibraryEvent::VaultChanged);
+                anyhow::Ok(recovery)
+            })?
+        })
+    }
+
+    /// Links a master-password vault to the open account: checks
+    /// `master_password` in the background, then re-wraps the vault key
+    /// under the account key and retires the master password in one
+    /// transaction (a vault without a recovery key gets one in the same
+    /// write; it resolves for the user to save). A locked vault ends up
+    /// unlocked. Results that arrive after the account changed, or after
+    /// the vault was locked, are dropped and change nothing.
+    pub fn link_vault_to_account(
+        &mut self,
+        master_password: SecretString,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Task<Result<(LinkResult, Option<Zeroizing<String>>)>> {
+        let Some((email, account_epoch)) = self.open_account() else {
+            return gpui_kit::Task::ready(Err(anyhow::anyhow!(
+                "Unlock your Ottero account first."
+            )));
+        };
+        let recovery = if VaultSession::has_recovery(&self.store) {
+            None
+        } else {
+            match KdfInput::fresh(RECOVERY_KDF).and_then(|i| Ok((i, new_recovery_key()?))) {
+                Ok(v) => Some(v),
+                Err(err) => return gpui_kit::Task::ready(Err(err)),
+            }
+        };
+        let (input, vault_epoch) = match self.vault.start_link(&self.store) {
+            Ok(v) => v,
+            Err(err) => return gpui_kit::Task::ready(Err(err)),
+        };
+        cx.emit(LibraryEvent::VaultChanged);
+        cx.spawn(async move |this, cx| {
+            let normalized = recovery
+                .as_ref()
+                .map(|(_, key)| recovery::normalize(key).context("Couldn't make a recovery key"))
+                .transpose();
+            let rinput = recovery.as_ref().map(|(i, _)| *i);
+            let (kek, rkek) = cx
+                .background_executor()
+                .spawn(async move {
+                    let kek = derive(&master_password, &input.salt, input.params);
+                    let rkek = match (normalized, rinput) {
+                        (Ok(Some(n)), Some(ri)) => Some(derive(
+                            &SecretString::from(n.to_string()),
+                            &ri.salt,
+                            ri.params,
+                        )),
+                        (Err(err), _) => Some(Err(err)),
+                        _ => None,
+                    };
+                    (kek, rkek)
+                })
+                .await;
+            this.update(cx, |lib, cx| {
+                let still = lib.account.epoch() == account_epoch
+                    && lib.account.signed_in_email().as_deref() == Some(email.as_str());
+                let key = lib.account.key().filter(|_| still);
+                let (Some(key), Ok(rkek)) = (key, rkek.transpose()) else {
+                    lib.vault.cancel_link(vault_epoch);
+                    cx.emit(LibraryEvent::VaultChanged);
+                    return anyhow::Ok((LinkResult::Stale, None));
+                };
+                let new_recovery = match (&recovery, &rkek) {
+                    (Some((ri, _)), Some(rkek)) => Some((*ri, rkek)),
+                    _ => None,
+                };
+                let result = lib.vault.finish_link(
+                    &mut lib.store,
+                    vault_epoch,
+                    kek,
+                    crate::vault::LinkAccount { email: &email, key },
+                    new_recovery,
+                    clock::now(),
+                );
+                cx.emit(LibraryEvent::VaultChanged);
+                let result = result?;
+                if result == LinkResult::Linked {
+                    lib.vault_account_problem = None;
+                    lib.touch_vault();
+                }
+                let shown = (result == LinkResult::Linked)
+                    .then(|| recovery.map(|(_, key)| key))
+                    .flatten();
+                anyhow::Ok((result, shown))
+            })?
+        })
     }
 
     /// Changes the master password; resolves to `false` if `current` is wrong.

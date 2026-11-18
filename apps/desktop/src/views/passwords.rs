@@ -4,6 +4,11 @@
 //!   meter, confirm it, acknowledge it can't be recovered.
 //! * **Locked**: one password field. Argon2 runs in the background; the
 //!   button shows progress and the field keeps its text on a wrong password.
+//! * **Ottero Cloud** (ADR 0014, [`Screen`]): signed in, the vault opens
+//!   with the account. A master-password vault asks for that password once
+//!   to link; a new vault is set up without one; a linked vault's locked
+//!   screen is "Unlock Ottero" (the account password opens both), or says
+//!   plainly when another account or no account is signed in.
 //! * **Unlocked**: master–detail. Left: search, New, a virtualized list
 //!   (fine with thousands of items). Right: the item (`vault_item.rs`).
 //!
@@ -35,7 +40,7 @@ use gpui_kit::{
 };
 use ottero_core::VaultItemId;
 use ottero_core::vault::health::{Strength, estimate};
-use ottero_core::vault::lock::LockState;
+use ottero_core::vault::lock::{LockState, Opener};
 use ottero_core::vault::{ItemKind, VaultItem};
 use ottero_crypto::SecretString;
 use ottero_ui::components::empty_state;
@@ -45,7 +50,7 @@ use crate::actions::{
     VaultNextItem, VaultPreviousItem, VaultTrashSelected,
 };
 use crate::library::{Library, LibraryEvent};
-use crate::vault::{VaultFilter, VaultSort};
+use crate::vault::{AccountUnlock, LinkResult, VaultFilter, VaultSort};
 use crate::vault_prefs;
 use crate::views::vault_item::{PaneEvent, VaultItemPane, avatar, copy_field};
 use gpui_kit::component::{VirtualListScrollHandle, v_virtual_list};
@@ -61,6 +66,29 @@ const AUTO_LOCK_TICK: Duration = Duration::from_secs(10);
 /// hook and the workspace forbids `unsafe` FFI), so this plus "Lock when in
 /// background" is the defense.
 const SLEEP_GAP: Duration = Duration::from_secs(60);
+
+/// What the Passwords screen shows, from the vault and the account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Screen {
+    /// No vault, not signed in: choose a master password.
+    Setup,
+    /// No vault, signed in: set up under the account (no master password).
+    SetupWithAccount,
+    /// A master-password vault, not signed in (or the account is locked).
+    Locked,
+    /// A master-password vault while the account is open: link it.
+    Link,
+    /// A linked vault and its account is signed in but locked.
+    UnlockOttero,
+    /// A linked vault and nobody is signed in (its email).
+    SignedOut(String),
+    /// A linked vault and another account is signed in (linked, signed in).
+    OtherAccount(String, String),
+    /// Same email, but the open account key doesn't open it.
+    WrongKey,
+    Recovery,
+    Unlocked,
+}
 
 /// One line in the item list.
 #[derive(Debug, Clone, PartialEq)]
@@ -100,6 +128,8 @@ pub struct PasswordsView {
     acknowledged: bool,
     // Unlock
     unlock: Entity<InputState>,
+    /// The Ottero account password ("Unlock Ottero", setup while locked).
+    account_password: Entity<InputState>,
     error: Option<SharedString>,
     busy: bool,
     list_focus: FocusHandle,
@@ -122,6 +152,7 @@ impl PasswordsView {
         let master = masked("Master password", window, cx);
         let confirm = masked("Type it again", window, cx);
         let unlock = masked("Master password", window, cx);
+        let account_password = masked("Ottero password", window, cx);
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search vault"));
         let pane = cx.new(|cx| VaultItemPane::new(library.clone(), window, cx));
         let subscriptions = vec![
@@ -153,6 +184,25 @@ impl PasswordsView {
                     cx.notify();
                 }
                 _ => {}
+            }),
+            cx.subscribe_in(
+                &account_password,
+                window,
+                |this, _, event, window, cx| match event {
+                    InputEvent::PressEnter { .. } => this.submit_account_password(window, cx),
+                    InputEvent::Change => {
+                        this.error = None;
+                        cx.notify();
+                    }
+                    _ => {}
+                },
+            ),
+            cx.subscribe_in(&library, window, |this, _, event, _, cx| {
+                if *event == LibraryEvent::AccountChanged {
+                    // The screen depends on the account (link, unlock, other account).
+                    this.error = None;
+                    cx.notify();
+                }
             }),
             cx.subscribe_in(&pane, window, |this, _, event, window, cx| match event {
                 PaneEvent::Created(id) | PaneEvent::Selected(id) => {
@@ -192,6 +242,7 @@ impl PasswordsView {
             confirm,
             acknowledged: false,
             unlock,
+            account_password,
             error: None,
             busy: false,
             list_focus: cx.focus_handle(),
@@ -218,6 +269,11 @@ impl PasswordsView {
 
     pub fn pane(&self) -> &Entity<VaultItemPane> {
         &self.pane
+    }
+
+    /// The message under the current form (wrong password and the like).
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
     }
 
     pub fn master_input(&self) -> &Entity<InputState> {
@@ -296,13 +352,50 @@ impl PasswordsView {
         }
     }
 
+    /// What the screen shows now.
+    pub fn screen(&self, cx: &App) -> Screen {
+        let lib = self.library.read(cx);
+        let account = lib.account();
+        let signed_in = account.signed_in_email();
+        let open = account.is_unlocked() && signed_in.is_some();
+        match lib.vault_state() {
+            LockState::Uninitialized if signed_in.is_some() => Screen::SetupWithAccount,
+            LockState::Uninitialized => Screen::Setup,
+            LockState::Unlocked if self.recovery.is_some() => Screen::Recovery,
+            LockState::Unlocked => Screen::Unlocked,
+            LockState::Locked | LockState::Unlocking => match lib.vault_opener() {
+                Some(Opener::Account) => {
+                    let linked = lib.vault_linked_email().unwrap_or_default().to_owned();
+                    match signed_in {
+                        None => Screen::SignedOut(linked),
+                        Some(email) if email != linked => Screen::OtherAccount(linked, email),
+                        Some(_) if !account.is_unlocked() => Screen::UnlockOttero,
+                        Some(_) => match lib.vault_account_problem() {
+                            Some(AccountUnlock::WrongKey) => Screen::WrongKey,
+                            _ => Screen::UnlockOttero,
+                        },
+                    }
+                }
+                _ if open => Screen::Link,
+                _ => Screen::Locked,
+            },
+        }
+    }
+
     /// Where focus goes when the screen opens: the field that matters.
     pub fn focus_primary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let state = self.library.read(cx).vault_state();
-        let input = match state {
-            LockState::Uninitialized => &self.master,
-            LockState::Locked | LockState::Unlocking => &self.unlock,
-            LockState::Unlocked => &self.search,
+        let input = match self.screen(cx) {
+            Screen::Setup => &self.master,
+            Screen::Locked | Screen::Link => &self.unlock,
+            Screen::UnlockOttero | Screen::SetupWithAccount => &self.account_password,
+            Screen::Unlocked => &self.search,
+            Screen::SignedOut(_)
+            | Screen::OtherAccount(..)
+            | Screen::WrongKey
+            | Screen::Recovery => {
+                window.focus(&self.focus, cx);
+                return;
+            }
         };
         input.update(cx, |i, cx| i.focus(window, cx));
     }
@@ -517,6 +610,10 @@ impl PasswordsView {
     }
 
     fn unlock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.screen(cx) == Screen::Link {
+            self.link(window, cx);
+            return;
+        }
         let text = self.unlock.read(cx).value().to_string();
         if self.busy || text.is_empty() {
             return;
@@ -542,6 +639,165 @@ impl PasswordsView {
                             i.focus(window, cx);
                             i.select_all(window, cx);
                         });
+                    }
+                    Err(err) => this.error = Some(format!("{err:#}").into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// "Use your Ottero account to unlock Passwords": the master password
+    /// once, then the account opens the vault from now on.
+    fn link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.unlock.read(cx).value().to_string();
+        if self.busy || text.is_empty() {
+            if text.is_empty() {
+                self.error = Some("Enter your master password.".into());
+                cx.notify();
+            }
+            return;
+        }
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        let task = self.library.update(cx, |lib, cx| {
+            lib.link_vault_to_account(SecretString::from(text), cx)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok((LinkResult::Linked, recovery)) => {
+                        this.unlock.update(cx, |i, cx| i.set_value("", window, cx));
+                        if let Some(key) = recovery {
+                            this.recovery = Some(key);
+                            this.recovery_saved = false;
+                        }
+                        window.push_notification(
+                            "Passwords now opens with your Ottero account.",
+                            cx,
+                        );
+                        this.focus_primary(window, cx);
+                    }
+                    Ok((LinkResult::WrongPassword, _)) => {
+                        this.error = Some("That password didn't unlock the vault.".into());
+                        this.unlock.update(cx, |i, cx| {
+                            i.focus(window, cx);
+                            i.select_all(window, cx);
+                        });
+                    }
+                    Ok((LinkResult::Stale, _)) => {
+                        this.error = Some(
+                            "The account or the vault changed in the meantime. Nothing was changed; try again."
+                                .into(),
+                        );
+                    }
+                    Err(err) => this.error = Some(format!("{err:#}").into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Enter in the Ottero password field: unlock (and set up, on the
+    /// setup screen).
+    fn submit_account_password(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.screen(cx) {
+            Screen::UnlockOttero => self.unlock_ottero(window, cx),
+            Screen::SetupWithAccount => self.create_with_account(window, cx),
+            _ => {}
+        }
+    }
+
+    /// "Unlock Ottero": the account password opens the account key, and
+    /// with it the linked vault (`Library::account_key_opened`).
+    fn unlock_ottero(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.account_password.read(cx).value().to_string();
+        if self.busy {
+            return;
+        }
+        if text.is_empty() {
+            self.error = Some("Enter your Ottero password.".into());
+            cx.notify();
+            return;
+        }
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        let task = self.library.update(cx, |lib, cx| {
+            lib.unlock_account(SecretString::from(text), cx)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(()) => {
+                        this.account_password
+                            .update(cx, |i, cx| i.set_value("", window, cx));
+                        this.focus_primary(window, cx);
+                    }
+                    Err(message) => {
+                        this.error = Some(message.into());
+                        this.account_password.update(cx, |i, cx| {
+                            i.focus(window, cx);
+                            i.select_all(window, cx);
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Sets the vault up under the account (unlocking it first if needed).
+    fn create_with_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        let unlocked = self.library.read(cx).account().is_unlocked();
+        let password = self.account_password.read(cx).value().to_string();
+        if !unlocked && password.is_empty() {
+            self.error = Some("Enter your Ottero password.".into());
+            cx.notify();
+            return;
+        }
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        let library = self.library.clone();
+        let unlock = (!unlocked).then(|| {
+            library.update(cx, |lib, cx| {
+                lib.unlock_account(SecretString::from(password), cx)
+            })
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(unlock) = unlock
+                && let Err(message) = unlock.await
+            {
+                _ = this.update_in(cx, |this, _, cx| {
+                    this.busy = false;
+                    this.error = Some(message.into());
+                    cx.notify();
+                });
+                return;
+            }
+            let task = library.update(cx, |lib, cx| lib.set_up_vault_with_account(cx));
+            let result = task.await;
+            _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok(recovery) => {
+                        this.account_password
+                            .update(cx, |i, cx| i.set_value("", window, cx));
+                        this.recovery = Some(recovery);
+                        this.recovery_saved = false;
+                        this.focus_primary(window, cx);
                     }
                     Err(err) => this.error = Some(format!("{err:#}").into()),
                 }
@@ -582,7 +838,13 @@ impl PasswordsView {
             .child(v_flex().w_full().max_w(rems(26.)).gap_5().child(content))
     }
 
-    fn hero(icon: Lucide, title: &'static str, text: &'static str, cx: &App) -> impl IntoElement {
+    fn hero(
+        icon: Lucide,
+        title: &'static str,
+        text: impl Into<SharedString>,
+        cx: &App,
+    ) -> impl IntoElement {
+        let text: SharedString = text.into();
         let theme = cx.theme();
         v_flex()
             .items_center()
@@ -751,6 +1013,200 @@ impl PasswordsView {
         .into_any_element()
     }
 
+    /// The error line under a form: fixed height so the layout doesn't jump.
+    fn error_line(&self, cx: &App) -> impl IntoElement {
+        div()
+            .h(rems(1.25))
+            .text_xs()
+            .text_center()
+            .text_color(cx.theme().danger)
+            .children(self.error.clone())
+    }
+
+    fn recovery_link(id: &'static str, label: &'static str, cx: &mut Context<Self>) -> AnyElement {
+        h_flex()
+            .justify_center()
+            .child(
+                Button::new(id)
+                    .ghost()
+                    .small()
+                    .label(label)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        crate::views::vault_recovery::open_forgot(this.library.clone(), window, cx)
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// No vault yet, signed in: the account opens it, no master password.
+    fn setup_with_account(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let lib = self.library.read(cx);
+        let unlocked = lib.account().is_unlocked();
+        let email = lib.account().signed_in_email().unwrap_or_default();
+        let busy = self.busy;
+        Self::centered(
+            v_flex()
+                .gap_5()
+                .child(Self::hero(
+                    Lucide::KeyRound,
+                    "Set up Passwords",
+                    format!("Passwords, cards and secure notes, encrypted on this device. Your Ottero account ({email}) unlocks them, so there's no extra password to remember."),
+                    cx,
+                ))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .when(!unlocked, |s| {
+                            s.child(
+                                Input::new(&self.account_password)
+                                    .id("vault-account-password")
+                                    .mask_toggle(),
+                            )
+                        })
+                        .child(
+                            Button::new("vault-create-account")
+                                .primary()
+                                .w_full()
+                                .label(if busy { "Setting up…" } else { "Set up Passwords" })
+                                .loading(busy)
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.create_with_account(window, cx)
+                                })),
+                        )
+                        .child(self.error_line(cx)),
+                ),
+        )
+        .into_any_element()
+    }
+
+    /// A master-password vault while signed in: link it once.
+    fn link_screen(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let busy = self.busy || self.library.read(cx).vault_state() == LockState::Unlocking;
+        let email = self
+            .library
+            .read(cx)
+            .account()
+            .signed_in_email()
+            .unwrap_or_default();
+        Self::centered(
+            v_flex()
+                .gap_5()
+                .child(Self::hero(
+                    Lucide::Cloud,
+                    "Use your Ottero account to unlock Passwords",
+                    format!("Enter your master password one last time. After that, your Ottero password ({email}) opens Passwords, and the master password is retired."),
+                    cx,
+                ))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(Input::new(&self.unlock).id("vault-link-master").mask_toggle())
+                        .child(
+                            Button::new("vault-link-button")
+                                .primary()
+                                .w_full()
+                                .label(if busy { "Linking…" } else { "Unlock and link" })
+                                .loading(busy)
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, window, cx| this.link(window, cx))),
+                        )
+                        .child(self.error_line(cx)),
+                )
+                .child(Self::recovery_link("vault-forgot", "Forgot master password?", cx)),
+        )
+        .into_any_element()
+    }
+
+    /// A linked vault that is locked: unlock Ottero, or explain why the
+    /// account that is signed in can't open it.
+    fn account_locked(&mut self, screen: &Screen, cx: &mut Context<Self>) -> AnyElement {
+        let busy = self.busy || self.library.read(cx).account().unlock_busy();
+        let linked = self
+            .library
+            .read(cx)
+            .vault_linked_email()
+            .unwrap_or_default()
+            .to_owned();
+        let body = match screen {
+            Screen::UnlockOttero => v_flex()
+                .gap_5()
+                .child(Self::hero(
+                    Lucide::LockKeyhole,
+                    "Unlock Ottero",
+                    format!("Enter the password for {linked}. It opens your account and Passwords."),
+                    cx,
+                ))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            Input::new(&self.account_password)
+                                .id("vault-account-password")
+                                .mask_toggle(),
+                        )
+                        .child(
+                            Button::new("vault-account-unlock")
+                                .primary()
+                                .w_full()
+                                .label(if busy { "Unlocking…" } else { "Unlock" })
+                                .loading(busy)
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.unlock_ottero(window, cx)
+                                })),
+                        )
+                        .child(self.error_line(cx)),
+                )
+                .child(Self::recovery_link("vault-forgot", "Use recovery key…", cx)),
+            Screen::SignedOut(email) => v_flex()
+                .gap_5()
+                .child(Self::hero(
+                    Lucide::Cloud,
+                    "Sign in to open Passwords",
+                    format!("Passwords on this computer opens with your Ottero account, {email}."),
+                    cx,
+                ))
+                .child(
+                    Button::new("vault-sign-in")
+                        .primary()
+                        .w_full()
+                        .label("Sign in…")
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::actions::SignInToCloud), cx)
+                        }),
+                )
+                .child(Self::recovery_link("vault-forgot", "Use recovery key…", cx)),
+            Screen::OtherAccount(linked, current) => v_flex()
+                .gap_5()
+                .child(Self::hero(
+                    Lucide::Cloud,
+                    "Passwords belongs to another account",
+                    format!("Passwords on this computer opens with {linked}. You're signed in as {current}, which can't open it. Nothing was changed. Sign in as {linked}, or use its recovery key."),
+                    cx,
+                ))
+                .child(
+                    Button::new("vault-other-account")
+                        .w_full()
+                        .label("Account settings…")
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::actions::OpenAccountSettings), cx)
+                        }),
+                )
+                .child(Self::recovery_link("vault-forgot", "Use recovery key…", cx)),
+            _ => v_flex()
+                .gap_5()
+                .child(Self::hero(
+                    Lucide::LockKeyhole,
+                    "Your account can't open Passwords",
+                    "This account's key doesn't open Passwords on this computer. It may have been linked to an earlier account with the same email, or its file was changed. Nothing was changed. Use its recovery key.",
+                    cx,
+                ))
+                .child(Self::recovery_link("vault-forgot", "Use recovery key…", cx)),
+        };
+        Self::centered(body).into_any_element()
+    }
+
     /// After setup (or "Create new recovery key"): show the key once.
     fn recovery_step(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let key = self
@@ -765,7 +1221,11 @@ impl PasswordsView {
                 .child(Self::hero(
                     Lucide::ShieldCheck,
                     "Save your recovery key",
-                    "If you ever forget your master password, this key is the only way back into your vault. Ottero shows it once.",
+                    if self.library.read(cx).vault_opener() == Some(Opener::Account) {
+                        "If you can't sign in to your Ottero account, this key is the only other way into Passwords. Ottero shows it once."
+                    } else {
+                        "If you ever forget your master password, this key is the only way back into your vault. Ottero shows it once."
+                    },
                     cx,
                 ))
                 .child(crate::views::vault_recovery::key_box(&key, cx))
@@ -1366,11 +1826,17 @@ impl Render for PasswordsView {
             // Never leave a recovery key on screen once the vault locks.
             self.recovery = None;
         }
-        let body = match state {
-            LockState::Uninitialized => self.setup(cx),
-            LockState::Locked | LockState::Unlocking => self.locked(cx),
-            LockState::Unlocked if self.recovery.is_some() => self.recovery_step(cx),
-            LockState::Unlocked => self.unlocked(window, cx),
+        let body = match self.screen(cx) {
+            Screen::Setup => self.setup(cx),
+            Screen::SetupWithAccount => self.setup_with_account(cx),
+            Screen::Locked => self.locked(cx),
+            Screen::Link => self.link_screen(cx),
+            screen @ (Screen::UnlockOttero
+            | Screen::SignedOut(_)
+            | Screen::OtherAccount(..)
+            | Screen::WrongKey) => self.account_locked(&screen, cx),
+            Screen::Recovery => self.recovery_step(cx),
+            Screen::Unlocked => self.unlocked(window, cx),
         };
         div()
             .id("passwords")
@@ -1382,17 +1848,32 @@ impl Render for PasswordsView {
 
 /// Opens "Change master password". Only while unlocked.
 pub fn open_change_password(library: Entity<Library>, window: &mut Window, cx: &mut App) {
+    if library.read(cx).vault_opener() == Some(Opener::Account) {
+        ottero_ui::feedback::error_toast(
+            "Passwords opens with your Ottero account, so it has no master password.",
+            window,
+            cx,
+        );
+        return;
+    }
     if library.read(cx).vault_state() != LockState::Unlocked {
         ottero_ui::feedback::error_toast("Unlock the vault first.", window, cx);
         return;
     }
     let form = cx.new(|cx| ChangePassword::new(library, window, cx));
+    let shown = form.clone();
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
             .title("Change master password")
             .w(gpui_kit::px(440.))
-            .child(form.clone())
+            // Enter belongs to the form's fields (they submit themselves);
+            // it must never just close the dialog and drop what was typed.
+            .on_ok(|_, _, _| false)
+            .child(shown.clone())
     });
+    // Opening the dialog focuses the dialog itself; the first field goes first.
+    let current = form.read(cx).current.clone();
+    current.update(cx, |i, cx| i.focus(window, cx));
 }
 
 pub struct ChangePassword {
@@ -1426,7 +1907,6 @@ impl ChangePassword {
                 })
             })
             .collect();
-        current.update(cx, |i, cx| i.focus(window, cx));
         Self {
             library,
             current,
@@ -1524,6 +2004,159 @@ impl Render for ChangePassword {
                         .label(if self.busy { "Changing…" } else { "Change password" })
                         .loading(self.busy)
                         .disabled(problem.is_some() || self.busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
+                ),
+            )
+    }
+}
+
+/// Opens "Use your Ottero account for Passwords" for an unlocked
+/// master-password vault: the master password once, then the account opens
+/// it. A recovery key made on the way is shown by `passwords`.
+pub fn open_link_dialog(
+    library: Entity<Library>,
+    passwords: gpui_kit::WeakEntity<PasswordsView>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let form = cx.new(|cx| LinkVault::new(library, passwords, window, cx));
+    let shown = form.clone();
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog
+            .title("Use your Ottero account for Passwords")
+            .w(gpui_kit::px(440.))
+            // Enter belongs to the form's fields (they submit themselves);
+            // it must never just close the dialog and drop what was typed.
+            .on_ok(|_, _, _| false)
+            .child(shown.clone())
+    });
+    // Opening the dialog focuses the dialog itself; the field comes first.
+    let master = form.read(cx).master.clone();
+    master.update(cx, |i, cx| i.focus(window, cx));
+}
+
+pub struct LinkVault {
+    library: Entity<Library>,
+    passwords: gpui_kit::WeakEntity<PasswordsView>,
+    master: Entity<InputState>,
+    error: Option<SharedString>,
+    busy: bool,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl LinkVault {
+    fn new(
+        library: Entity<Library>,
+        passwords: gpui_kit::WeakEntity<PasswordsView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let master = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder("Master password")
+        });
+        let sub = cx.subscribe_in(&master, window, |this, _, e, window, cx| match e {
+            InputEvent::Change => {
+                this.error = None;
+                cx.notify();
+            }
+            InputEvent::PressEnter { .. } => this.submit(window, cx),
+            _ => {}
+        });
+        Self {
+            library,
+            passwords,
+            master,
+            error: None,
+            busy: false,
+            _subscriptions: vec![sub],
+        }
+    }
+
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.master.read(cx).value().to_string();
+        if self.busy {
+            return;
+        }
+        if text.is_empty() {
+            self.error = Some("Enter your master password.".into());
+            cx.notify();
+            return;
+        }
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        let task = self.library.update(cx, |lib, cx| {
+            lib.link_vault_to_account(SecretString::from(text), cx)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            _ = this.update_in(cx, |this, window, cx| {
+                this.busy = false;
+                match result {
+                    Ok((LinkResult::Linked, recovery)) => {
+                        window.close_dialog(cx);
+                        window.push_notification(
+                            "Passwords now opens with your Ottero account.",
+                            cx,
+                        );
+                        if let Some(key) = recovery {
+                            _ = this
+                                .passwords
+                                .update(cx, |p, cx| p.show_recovery_key(key, cx));
+                        }
+                    }
+                    Ok((LinkResult::WrongPassword, _)) => {
+                        this.error = Some("That password didn't unlock the vault.".into());
+                    }
+                    Ok((LinkResult::Stale, _)) => {
+                        this.error = Some(
+                            "The account or the vault changed in the meantime. Nothing was changed; try again."
+                                .into(),
+                        );
+                    }
+                    Err(err) => this.error = Some(format!("{err:#}").into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+}
+
+impl Render for LinkVault {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let email = self
+            .library
+            .read(cx)
+            .account()
+            .signed_in_email()
+            .unwrap_or_default();
+        v_flex()
+            .gap_4()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(format!("Enter your master password one last time. After that, your Ottero password ({email}) opens Passwords, and the master password is retired. Your items stay as they are.")),
+            )
+            .child(Input::new(&self.master).id("link-master").mask_toggle())
+            .child(
+                div()
+                    .h(rems(1.25))
+                    .text_xs()
+                    .text_color(theme.danger)
+                    .children(self.error.clone()),
+            )
+            .child(
+                h_flex().justify_end().child(
+                    Button::new("link-vault")
+                        .primary()
+                        .label(if self.busy { "Linking…" } else { "Link" })
+                        .loading(self.busy)
+                        .disabled(self.busy)
                         .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
                 ),
             )

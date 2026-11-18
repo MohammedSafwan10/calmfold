@@ -185,6 +185,26 @@ impl AccountSession {
         self.account_key.is_some()
     }
 
+    /// The open account key (memory only), for the vault link (ADR 0014).
+    pub(crate) fn key(&self) -> Option<&SecretKey> {
+        self.account_key.as_ref()
+    }
+
+    /// Changes whenever the signed-in session changes; results that started
+    /// under another value must not apply.
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// The signed-in account's email, normalized as the vault stores it.
+    pub(crate) fn signed_in_email(&self) -> Option<String> {
+        self.state
+            .is_signed_in()
+            .then(|| self.state.email())
+            .flatten()
+            .map(ottero_crypto::account::normalize_email)
+    }
+
     /// Two-step verification on this account: `None` until the server has
     /// answered once.
     #[must_use]
@@ -787,6 +807,7 @@ impl Library {
                 session.error = None;
                 session.apply(AccountEvent::SignedIn { plan });
                 cx.emit(LibraryEvent::AccountChanged);
+                self.account_key_opened(cx);
                 self.refresh_account(cx);
                 return;
             }
@@ -921,6 +942,7 @@ impl Library {
                 session.notice = notice.or(saved);
                 session.apply(AccountEvent::KitSaved { plan });
                 cx.emit(LibraryEvent::AccountChanged);
+                lib.account_key_opened(cx);
                 lib.refresh_account(cx);
             });
         })
@@ -991,6 +1013,7 @@ impl Library {
         session.apply(AccountEvent::SessionEnded);
         session.notice = Some(ApiError::SessionEnded.message());
         cx.emit(LibraryEvent::AccountChanged);
+        self.account_key_closed(cx);
     }
 
     /// Signs this device out: forgets the token and account key at once,
@@ -1018,6 +1041,8 @@ impl Library {
                 .detach();
         }
         cx.emit(LibraryEvent::AccountChanged);
+        // Passwords locks at once; a linked vault reopens when this account signs in again.
+        self.account_key_closed(cx);
         saved
     }
 
@@ -1123,14 +1148,23 @@ impl Library {
                     Err(err) => Err(err.message()),
                 };
                 cx.emit(LibraryEvent::AccountChanged);
+                if outcome.is_ok() {
+                    lib.account_key_opened(cx);
+                }
                 outcome
             })
             .map_err(|_| "Ottero is closing.".to_owned())?
         })
     }
 
-    /// Locks the account key again (it is re-derived from the password).
+    /// Locks the account key and, with it, Passwords (one lock for the app).
     pub fn lock_account(&mut self, cx: &mut Context<Self>) {
+        self.lock_account_key(cx);
+        self.account_key_closed(cx);
+    }
+
+    /// Locks the account key again (it is re-derived from the password).
+    pub(crate) fn lock_account_key(&mut self, cx: &mut Context<Self>) {
         let was_open = self.account.account_key.take().is_some();
         // An unlock still deriving must not reopen what was just locked.
         let pending = self.account.unlock_busy;
@@ -1232,6 +1266,7 @@ impl Library {
                         .update_signed_in(|a| a.wrapped_by_password = Some(wrapped));
                     lib.account.account_key = Some(key);
                     cx.emit(LibraryEvent::AccountChanged);
+                    lib.account_key_opened(cx);
                 }
                 match answer {
                     Ok(answer) => apply(lib, answer, cx),

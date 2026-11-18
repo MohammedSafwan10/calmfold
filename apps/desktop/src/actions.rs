@@ -37,6 +37,7 @@ actions!(
         NewLogin,
         GeneratePassword,
         ChangeMasterPassword,
+        UseAccountForPasswords,
         CreateRecoveryKey,
         ShowVaultArchives,
         ExportVaultBackup,

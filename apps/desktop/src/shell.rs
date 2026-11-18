@@ -35,8 +35,8 @@ use crate::actions::{
     NewEvent, NewHabit, NewLogin, NewNote, NewProject, NewProjectSecrets, NewTask,
     OpenCommandPalette, OpenDailyNote, PasteProjectEnvironment, RestartToUpdate,
     RestoreVaultBackup, ShowDeletedEvents, ShowVaultArchives, ToggleArchivedDeveloperProjects,
-    ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseDarkTheme, UseLightTheme,
-    UseSystemTheme,
+    ToggleListPanel, ToggleMarkdownSource, ToggleSidebar, UseAccountForPasswords, UseDarkTheme,
+    UseLightTheme, UseSystemTheme,
 };
 use crate::focus::FocusController;
 use crate::library::{Library, LibraryEvent};
@@ -1233,6 +1233,12 @@ fn palette_commands() -> Vec<(CommandItem, Box<dyn Action>)> {
             &["vault", "passwords", "security"],
         ),
         cmd(
+            "Use Ottero account for Passwords…",
+            Lucide::Cloud,
+            Box::new(UseAccountForPasswords),
+            &["vault", "link", "master password", "cloud", "one password"],
+        ),
+        cmd(
             "Create new recovery key",
             Lucide::KeyRound,
             Box::new(CreateRecoveryKey),
@@ -1571,6 +1577,42 @@ pub fn register_commands(cx: &mut App) {
     cx.on_action(|_: &ChangeMasterPassword, cx| {
         with_shell(cx, |s, w, cx| {
             crate::views::passwords::open_change_password(s.library.clone(), w, cx)
+        })
+    });
+    cx.on_action(|_: &UseAccountForPasswords, cx| {
+        with_shell(cx, |s, w, cx| {
+            use ottero_core::vault::lock::{LockState, Opener};
+            let lib = s.library.read(cx);
+            let signed_in = lib.account().signed_in_email();
+            let open = lib.account().is_unlocked();
+            let (state, opener) = (lib.vault_state(), lib.vault_opener());
+            if let Some(email) = lib
+                .vault_linked_email()
+                .filter(|_| opener == Some(Opener::Account))
+            {
+                let message = format!("Passwords already opens with {email}.");
+                w.push_notification(message, cx);
+                s.navigate(Route::Passwords, w, cx);
+                return;
+            }
+            if signed_in.is_none() {
+                s.open_account(Some(crate::views::account::Mode::SignIn), w, cx);
+                w.push_notification("Sign in to Ottero Cloud first.", cx);
+                return;
+            }
+            if !open && state != LockState::Uninitialized {
+                s.open_account(None, w, cx);
+                w.push_notification(
+                    "Unlock your Ottero account, then Passwords asks for its master password once.",
+                    cx,
+                );
+                return;
+            }
+            s.navigate(Route::Passwords, w, cx);
+            if state == LockState::Unlocked {
+                let passwords = s.passwords.downgrade();
+                crate::views::passwords::open_link_dialog(s.library.clone(), passwords, w, cx);
+            }
         })
     });
     cx.on_action(|_: &CreateRecoveryKey, cx| {

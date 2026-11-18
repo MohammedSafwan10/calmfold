@@ -365,7 +365,7 @@ impl SettingsView {
         SettingGroup::new().title("Notes").item(spelling)
     }
 
-    fn privacy_page(data_dir: PathBuf) -> SettingPage {
+    fn privacy_page(data_dir: PathBuf, library: Entity<crate::library::Library>) -> SettingPage {
         let shown = SharedString::from(data_dir.display().to_string());
         let location = SettingItem::new(
             "Data folder",
@@ -387,7 +387,7 @@ impl SettingsView {
 
         SettingPage::new("Privacy & data")
             .icon(Lucide::ShieldCheck)
-            .groups(Self::password_groups())
+            .groups(Self::password_groups(library))
             .group(
                 SettingGroup::new()
                     .title("Storage")
@@ -510,7 +510,7 @@ impl SettingsView {
             .footer(|_, _| "Half-width sections sit side by side on wide windows.")
     }
 
-    fn password_groups() -> Vec<SettingGroup> {
+    fn password_groups(library: Entity<crate::library::Library>) -> Vec<SettingGroup> {
         use ottero_core::vault::lock::{AutoLock, ClipboardClear};
         let auto: &'static [(AutoLock, &'static str)] = &[
             (AutoLock::OneMinute, "1 min"),
@@ -559,19 +559,60 @@ impl SettingsView {
         )
         .description("Only if the clipboard still holds what Ottero copied.")
         .keywords(["clipboard", "copy", "vault", "security"]);
+        // What opens Passwords: the master password (with an offer to use the
+        // Ottero account when signed in), or the linked account (ADR 0014).
+        let linked = {
+            let library = library.clone();
+            move |cx: &App| {
+                let lib = library.read(cx);
+                (lib.vault_opener() == Some(ottero_core::vault::lock::Opener::Account))
+                    .then(|| lib.vault_linked_email().unwrap_or_default().to_owned())
+            }
+        };
+        let signed_in = {
+            let library = library.clone();
+            move |cx: &App| library.read(cx).account().signed_in_email().is_some()
+        };
         let master = SettingItem::new(
-            "Master password",
-            SettingField::render(|_, _, _| {
-                Button::new("set-change-master")
-                    .small()
-                    .label("Change…")
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(crate::actions::ChangeMasterPassword), cx)
+            "Unlock with",
+            SettingField::render(move |_, _, cx| match linked(cx) {
+                Some(email) => div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("Ottero account · {email}"))
+                    .into_any_element(),
+                None => h_flex()
+                    .gap_2()
+                    .when(signed_in(cx), |s| {
+                        s.child(
+                            Button::new("set-use-account")
+                                .small()
+                                .ghost()
+                                .label("Use Ottero account…")
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(crate::actions::UseAccountForPasswords),
+                                        cx,
+                                    )
+                                }),
+                        )
                     })
+                    .child(
+                        Button::new("set-change-master")
+                            .small()
+                            .label("Change master password…")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::actions::ChangeMasterPassword),
+                                    cx,
+                                )
+                            }),
+                    )
+                    .into_any_element(),
             }),
         )
-        .description("Requires the current password, or your recovery key if you forgot it.")
-        .keywords(["master password", "vault", "change password"]);
+        .description("A master password of its own, or your Ottero account when you're signed in. Linking asks for the master password once and then retires it.")
+        .keywords(["master password", "vault", "change password", "ottero account", "cloud", "link"]);
         let recovery = SettingItem::new(
             "Recovery key",
             SettingField::render(|_, _, _| {
@@ -584,7 +625,7 @@ impl SettingsView {
             }),
         )
         .description(
-            "Opens your vault if you forget the master password. A new key replaces the old one.",
+            "Opens your vault if you forget your password or can't sign in. A new key replaces the old one.",
         )
         .keywords(["recovery", "emergency kit", "forgot password", "vault"]);
         let archives = SettingItem::new(
@@ -630,7 +671,7 @@ impl SettingsView {
                     )
             }),
         )
-        .description("A copy of your vault that stays encrypted. It opens with the master password you have when you save it.")
+        .description("A copy of your vault that stays encrypted. It opens with the master password you have when you save it, or with your Ottero account or recovery key if Passwords uses your account.")
         .keywords(["backup", "export", "restore", "vault", "copy"]);
         vec![
             SettingGroup::new()
@@ -1133,7 +1174,10 @@ impl Render for SettingsView {
                         .group(Self::notes_group())
                         .group(Self::today_group())
                         .groups(Self::calendar_groups(pickers)),
-                    Self::privacy_page(self.data_dir.clone()),
+                    Self::privacy_page(
+                        self.data_dir.clone(),
+                        self.account.read(cx).library().clone(),
+                    ),
                     Self::keyboard_page(),
                     Self::about_page(),
                 ]),
