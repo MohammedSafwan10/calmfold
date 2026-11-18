@@ -11,6 +11,25 @@
 //!
 //! Every other (state, event) pair is refused, so for example a stale unlock
 //! result arriving after the user locked again is ignored.
+//!
+//! ## What opens the vault ([`Opener`], ADR 0014)
+//!
+//! A second, independent machine says which secret opens the vault on this
+//! device. The recovery key (ADR 0006) always works as well.
+//!
+//! ```text
+//! (none) ──SetUp(MasterPassword)──▶ MasterPassword   (not signed in to Ottero Cloud)
+//! (none) ──SetUp(Account)─────────▶ Account          (signed in: no master password)
+//! MasterPassword ──Link──▶ Account       (Locked or Unlocked; needs the master
+//!                                         password once and an unlocked account)
+//! any ──Recover(o)──▶ o                  (Locked; recovery key, then a new master
+//!                                         password, or the account that is open now)
+//! any ──Reset──▶ (none)                  (Locked; "Start a new vault", archived first)
+//! ```
+//!
+//! There is no way back from `Account` to `MasterPassword` except recovery,
+//! which needs the recovery key: signing out or signing in to another
+//! account never downgrades the vault to a password the user retired.
 
 use std::time::Duration;
 
@@ -60,6 +79,46 @@ pub fn next(state: LockState, event: LockEvent) -> Option<LockState> {
         (S::Unlocking, E::Failed) => Some(S::Locked),
         (S::Unlocked | S::Unlocking, E::Lock) => Some(S::Locked),
         (S::Locked, E::Reset) => Some(S::Uninitialized),
+        _ => None,
+    }
+}
+
+/// The secret that opens the vault on this device (besides the recovery key).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opener {
+    /// The vault's own master password (Argon2id, ADR 0003).
+    MasterPassword,
+    /// The Ottero Cloud account key: one password for the app (ADR 0014).
+    Account,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenerEvent {
+    SetUp(Opener),
+    /// Re-wrap the vault key under the account key and retire the master password.
+    Link,
+    /// The recovery key opened the vault; it now opens with this.
+    Recover(Opener),
+    Reset,
+}
+
+/// The opener after `event`, or `None` if `event` isn't allowed. The outer
+/// `Option` is "allowed?", the inner one is "is there a vault?".
+#[must_use]
+pub fn next_opener(
+    state: LockState,
+    opener: Option<Opener>,
+    event: OpenerEvent,
+) -> Option<Option<Opener>> {
+    use LockState as S;
+    use OpenerEvent as E;
+    match (state, opener, event) {
+        (S::Uninitialized, None, E::SetUp(o)) => Some(Some(o)),
+        (S::Locked | S::Unlocked, Some(Opener::MasterPassword), E::Link) => {
+            Some(Some(Opener::Account))
+        }
+        (S::Locked, Some(_), E::Recover(o)) => Some(Some(o)),
+        (S::Locked, Some(_), E::Reset) => Some(None),
         _ => None,
     }
 }
@@ -185,6 +244,78 @@ mod tests {
                     .find(|(a, b, _)| *a == s && *b == e)
                     .map(|(_, _, to)| *to);
                 assert_eq!(next(s, e), expected, "{s:?} + {e:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn opener_transition_table() {
+        use Opener::{Account, MasterPassword};
+        use OpenerEvent as O;
+        let states = [S::Uninitialized, S::Locked, S::Unlocking, S::Unlocked];
+        let openers = [None, Some(MasterPassword), Some(Account)];
+        let events = [
+            O::SetUp(MasterPassword),
+            O::SetUp(Account),
+            O::Link,
+            O::Recover(MasterPassword),
+            O::Recover(Account),
+            O::Reset,
+        ];
+        let allowed: &[(LockState, Option<Opener>, OpenerEvent, Option<Opener>)] = &[
+            (
+                S::Uninitialized,
+                None,
+                O::SetUp(MasterPassword),
+                Some(MasterPassword),
+            ),
+            (S::Uninitialized, None, O::SetUp(Account), Some(Account)),
+            (S::Locked, Some(MasterPassword), O::Link, Some(Account)),
+            (S::Unlocked, Some(MasterPassword), O::Link, Some(Account)),
+            (
+                S::Locked,
+                Some(MasterPassword),
+                O::Recover(MasterPassword),
+                Some(MasterPassword),
+            ),
+            (
+                S::Locked,
+                Some(MasterPassword),
+                O::Recover(Account),
+                Some(Account),
+            ),
+            (
+                S::Locked,
+                Some(Account),
+                O::Recover(MasterPassword),
+                Some(MasterPassword),
+            ),
+            (S::Locked, Some(Account), O::Recover(Account), Some(Account)),
+            (S::Locked, Some(MasterPassword), O::Reset, None),
+            (S::Locked, Some(Account), O::Reset, None),
+        ];
+        for s in states {
+            for o in openers {
+                for e in events {
+                    let expected = allowed
+                        .iter()
+                        .find(|(a, b, c, _)| *a == s && *b == o && *c == e)
+                        .map(|(_, _, _, to)| *to);
+                    assert_eq!(next_opener(s, o, e), expected, "{s:?} + {o:?} + {e:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_linked_vault_never_falls_back_to_the_master_password_by_itself() {
+        // Only recovery (which needs the recovery key) leaves Account.
+        for s in [S::Uninitialized, S::Locked, S::Unlocking, S::Unlocked] {
+            for e in [
+                OpenerEvent::Link,
+                OpenerEvent::SetUp(Opener::MasterPassword),
+            ] {
+                assert_eq!(next_opener(s, Some(Opener::Account), e), None);
             }
         }
     }
