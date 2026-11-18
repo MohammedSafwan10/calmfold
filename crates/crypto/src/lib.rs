@@ -7,6 +7,7 @@
 //! * Encryption: XChaCha20-Poly1305 with a random 24-byte nonce per message
 //!   ([`seal`] / [`open`]), wrapped in a versioned envelope.
 //! * Ottero Cloud account keys: Argon2id + Secret Key + HKDF ([`account`]).
+//! * The vault key wrapped by the account key ([`vault_link`], ADR 0014).
 //! * All key material lives in types that zero their memory on drop and never
 //!   print their contents.
 
@@ -15,6 +16,7 @@ mod envelope;
 mod error;
 mod kdf;
 mod key;
+pub mod vault_link;
 
 pub use envelope::{ENVELOPE_OVERHEAD, open, seal};
 pub use error::{CryptoError, CryptoResult};
