@@ -111,7 +111,9 @@ item payload = XChaCha20-Poly1305(collection_key, plaintext,
 - The existing local vault (Argon2id + XChaCha20-Poly1305, ADR 0003) keeps
   its data key. Turning Cloud on wraps that key by `account_key` (no item is
   re-encrypted); the vault's own master password is then retired on that
-  device and the account password unlocks it. Vault items sync as encrypted
+  device and the account password unlocks it. Built 2026-11-18 (ADR 0014):
+  `HKDF(account_key, "ottero vault v1")` wraps the vault key locally; the
+  master password is retired, the vault recovery key is required and kept. Vault items sync as encrypted
   blobs and stay locked until the app is unlocked on each device.
 - Recovery code: 32 random bytes plus a checksum, shown as 8 groups of 7
   Crockford characters (ADR 0011 explains why not BIP39 words), derived into
@@ -243,9 +245,16 @@ Roles: `owner` (everything), `admin` (no role changes, no deletions),
          off (confirm + password). QR via `qrcode` (ADR 0013). Fake server
          with RFC 6238, lockout and single-use backup codes; client tests,
          6 UI flows; live run against the local API.
+   - [x] Passwords under the account key (2026-11-18, ADR 0014): link an
+         existing vault with its master password once (atomic re-wrap, master
+         password retired, recovery key required), new vaults set up with no
+         master password, one unlock opens account and Passwords, auto-lock
+         and sign-out lock both, another account can't open it, the recovery
+         key still works, backups of linked vaults are archive v2. Migration
+         0012; crypto vectors; 11 UI flows; live run against the local API.
    - [ ] Later: release builds keep token + Secret Key in the OS keychain;
-         password reset with the recovery code; vault under the account key;
-         QR device approval (step 8).
+         password reset with the recovery code; QR device approval (step 8).
+         Account-key rotation (step 8) must re-wrap the linked vault key.
 4. [ ] Account website + admin panel (dashboard, users, detail, actions, audit).
 5. [ ] Razorpay plans, checkout, webhooks, trial, grace period.
 6. [ ] `crates/sync-protocol`; sync server (push/pull, WebSocket, quotas)

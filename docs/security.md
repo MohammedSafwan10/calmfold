@@ -210,8 +210,60 @@ be described as proven merely because a clean upgrade passed.
     token is saved at once and starts a new epoch, so late answers for the
     old token are dropped. If such an answer arrives after the user signed
     out or switched account, the session it created is signed out again.
-- The local password vault still unlocks with its own master password;
-  moving it under the account key is a later step.
+- Passwords moves under the account key when the user is signed in (next
+  section, ADR 0014).
+
+## Passwords under the Ottero account (ADR 0014)
+
+- **Not signed in:** unchanged. The vault has its own master password,
+  recovery key and auto-lock.
+- **Wrapping:** the vault key is sealed again with
+  `HKDF-SHA256(account_key, info="ottero vault v1")`, in the vault envelope
+  with AAD `"ottero vault key account v1"` (`ottero_crypto::vault_link`,
+  fixed vectors checked with independent implementations). No item is
+  re-encrypted.
+- **Linking** (signed in, account unlocked, existing vault) asks for the
+  master password once, also when the vault is already unlocked, so nobody at
+  an unlocked computer can tie the vault to their own account. One SQLite
+  transaction stores the account wrapping and removes the master-password
+  wrapping (compare-and-swap on the wrapping just opened); a vault without a
+  recovery key gets one in the same write and it is shown once. A failure or
+  crash before the commit leaves the master password working. The master
+  password is **retired, not kept**: a dormant second opener would stay
+  open to offline guessing after the user was told it was gone.
+- **Schema guarantee** (migration 0012): a vault always has the master
+  password, or the account wrapping together with a recovery key.
+- **New vault while signed in:** no master password; account wrapping plus
+  a recovery key from the start.
+- **One unlock:** opening the account key (sign-in, the account password
+  after a restart, any password check) opens a linked vault too. Locking
+  Passwords (manual, idle, sleep, background) also drops the account key;
+  locking the account locks Passwords.
+- **Sign out / session ended:** Passwords locks at once and the account key
+  is dropped. The link stays; signing in to the same account reopens it.
+- **Another account on this device:** the vault records the (normalized)
+  email it is linked to. Signed in as another account, it is not tried,
+  nothing changes, and the locked screen names the right account and offers
+  the recovery key. Same email but a key that doesn't open it (a re-created
+  account, a changed file): AEAD failure, explained, nothing changed.
+- **Recovery key** still opens a linked vault. With an unlocked account
+  signed in, the vault then opens with that account; otherwise the user sets
+  a new master password and the account wrapping is removed in the same
+  write. Signing out or switching accounts never brings back a master
+  password by itself.
+- **Backups and archives** of a linked vault are archive version 2: no
+  master password; they hold the account and recovery wrappings and open with
+  that account or the recovery key. Master-password vaults still write
+  version 1 unchanged. Older app versions refuse both a schema-12 database
+  and version-2 files rather than misreading them.
+- **On disk:** `vault_meta` holds the email and the account wrapping
+  (ciphertext). The account key, the derived link key and the vault key are
+  never written. Development builds still never use the system keychain.
+- **Limits:** a linked vault is as strong as the account password + Secret
+  Key, or the recovery key. Where the Secret Key is in `account.json` (macOS,
+  development), a stolen data folder leaves the account password (Argon2id
+  256 MiB) as the effective secret. Losing the account password, the
+  Emergency Kit and the vault recovery key together loses the vault.
 
 ## Sync (Phase 4)
 

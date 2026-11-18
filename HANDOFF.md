@@ -2,11 +2,24 @@
 
 Overwrite **Current state** and **Next steps** every session. Append to the log.
 
-## Current state (2026-11-17)
+## Current state (2026-11-18)
 
 - App: **Ottero by Nexdark Labs** (formerly Calmfold, formerly Keepstone).
   Branch `main`, repo `MohammedSafwan10/ottero`. Version 0.1.3 (released).
-  `scripts/check.sh` passes (390 tests, 83 UI); CI runs on macOS and Windows.
+  `scripts/check.sh` passes (448 tests, 103 UI); CI runs on macOS and Windows.
+- **Passwords under the Ottero account (ADR 0014, done, not pushed):**
+  signed in, Passwords opens with the account. An existing vault asks for
+  its master password once ("Use your Ottero account", or Settings →
+  Privacy & data → Unlock with → Use Ottero account…, or the palette); the
+  vault key is re-wrapped under `HKDF(account_key)` in one transaction and the
+  master password is retired (recovery key required, made in the same write
+  if missing). New vaults while signed in need no master password. One
+  account unlock opens both; locking either locks both; sign-out locks
+  Passwords and keeps the link; another account can't open it (clear screen,
+  recovery key offered); recovery moves it to the open account or back to a
+  master password. Backups of linked vaults are archive v2. Migration 0012
+  rebuilds `vault_meta` with CHECKs so no vault can lose its last opener.
+  Self-review: `docs/reviews/VAULT-LINK-SELF-REVIEW.md`.
 - **Ottero Cloud accounts in the app (plan 06 step 3, done, not pushed):**
   Settings → Account is the first page: intro, Create account (strength
   meter, confirm), 6-digit code (paste-friendly, resend after 30 s, change
@@ -70,6 +83,12 @@ Overwrite **Current state** and **Next steps** every session. Append to the log.
   reporting enabled. Shared `.kiro/skills` remains tracked; local state ignored.
 
 ## Next steps (in order)
+
+**Passwords under the account (2026-11-18):** push the commits; owner review
+of the new Passwords screens by clicking through once (real-window input was
+impossible here: the display was off, see Log). Open items from the
+self-review: idle auto-lock doesn't cover an open account key while the vault
+stays locked; account-key rotation (plan 06 step 8) must re-wrap the vault.
 
 **Latest account review (2026-11-17):** original unsafe routes now return 404;
 late-result guards/regressions are in place. New confirmed findings are in
@@ -176,6 +195,44 @@ OTTERO_DEV_ROUTE=calendar OTTERO_DEV_CALENDAR=week cargo run  # debug: calendar 
 ```
 
 ## Log
+
+### 2026-11-18: Passwords unlock with the Ottero account (ADR 0014)
+
+- Crypto `ottero_crypto::vault_link`: HKDF(account_key, "ottero vault v1")
+  + vault envelope, AAD "ottero vault key account v1"; fixed vectors made
+  with Python hmac/hashlib and @noble/ciphers; tamper/AAD/length tests.
+- Core: `next_opener` (MasterPassword | Account; SetUp, Link, Recover,
+  Reset) with exhaustive table test.
+- Storage: migration 0012 (rebuild `vault_meta`, nullable master columns,
+  `account_email`/`account_wrapped`, CHECKs); `link_vault_to_account` (one
+  transaction, compare-and-swap); tests for upgrade, CHECKs, and an
+  interrupted link (abort trigger on a file DB).
+- Desktop: `VaultSession` link/unlock-with-account/recover-to-account,
+  archive v2; `Library::{link_vault_to_account, set_up_vault_with_account,
+  account_key_opened, account_key_closed}`; `lock_vault` also locks the
+  account key; sign-out and ended sessions lock Passwords. Passwords screens:
+  Link, Unlock Ottero, Sign in to open, Another account, Can't open, Set up
+  with account; recovery dialog relinks to the open account; restore of v2
+  backups with the account or recovery key; `UseAccountForPasswords` action;
+  Settings row "Unlock with". Dialog Enter no longer closes the change/forgot/
+  archive/link dialogs (`on_ok` → false). Debug hook `OTTERO_DEV_ACCOUNT`.
+- Tests: 11 new UI flows (local-only unchanged, link wrong→right, link dialog,
+  new vault under account + restart → one unlock, auto-lock locks both,
+  sign out/in, other account + recovery key, recovery while signed out, late
+  link after account switch, late account unlock, linked backup restore),
+  10 vault unit tests, 5 crypto, 2 core, 5 storage.
+- Live: local API on :8787 (`ottero-cloud/api/dev.sh`), data folder
+  `/tmp/ottero-vault-link` with an 8-item master-password vault: sign-up,
+  wrong then right master password (link), restart, wrong then right account
+  password (one unlock, 8 items), sign out (locked, 0 items in memory), sign
+  in (reopened), lock. Driven through `Library` in a temporary headless test
+  against the real HTTP API, because the Mac display was off: no window was
+  on screen, so `click.swift` and typed input didn't reach the app. Screens
+  were looked at as rendered by real launches on prepared data folders
+  (Link, Unlock Ottero, Sign in to open, Another account, Set up with
+  account) in light and dark; copy shortened after looking. Not looked at in
+  a real window: the link dialog, the recovery dialog's relink text and the
+  Settings "Unlock with" row (covered by UI tests only).
 
 ### 2026-11-17: Two-step review fixes (ottero-cloud docs/reviews/TWO-STEP-REVIEW-2026-11-17.md)
 
