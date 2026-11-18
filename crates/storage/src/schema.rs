@@ -20,6 +20,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/0009_event_occasion.sql")),
         M::up(include_str!("../migrations/0010_focus.sql")),
         M::up(include_str!("../migrations/0011_developer.sql")),
+        M::up(include_str!("../migrations/0012_vault_account.sql")),
     ])
 }
 
@@ -75,6 +76,73 @@ mod tests {
             .query_row("SELECT count(*) FROM developer_projects", [], |r| r.get(0))
             .expect("table");
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn upgrading_v11_keeps_the_vault_header_and_items_byte_for_byte() {
+        let mut conn = Connection::open_in_memory().expect("db");
+        migrations().to_version(&mut conn, 11).expect("v11");
+        conn.execute(
+            "INSERT INTO vault_meta (id, version, salt, kdf_memory, kdf_time, kdf_lanes, wrapped_key,
+                                     created_at, updated_at, recovery_salt, recovery_wrapped)
+             VALUES (1, 1, x'0101', 65536, 3, 4, x'0909', 10, 20, x'0303', x'0404')",
+            [],
+        )
+        .expect("meta");
+        conn.execute(
+            "INSERT INTO vault_items (id, blob, updated_at) VALUES ('0190a0b0-0000-7000-8000-000000000001', x'abcd', 7)",
+            [],
+        )
+        .expect("item");
+        migrate(&mut conn).expect("upgrade");
+        type Row = (
+            u32,
+            Vec<u8>,
+            u32,
+            u32,
+            u32,
+            Vec<u8>,
+            i64,
+            i64,
+            Vec<u8>,
+            Vec<u8>,
+            Option<String>,
+            Option<Vec<u8>>,
+        );
+        let row: Row = conn
+            .query_row(
+                "SELECT version, salt, kdf_memory, kdf_time, kdf_lanes, wrapped_key, created_at, updated_at,
+                        recovery_salt, recovery_wrapped, account_email, account_wrapped FROM vault_meta",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+                        r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?,
+                    ))
+                },
+            )
+            .expect("row");
+        assert_eq!(
+            row,
+            (
+                1,
+                vec![1, 1],
+                65536,
+                3,
+                4,
+                vec![9, 9],
+                10,
+                20,
+                vec![3, 3],
+                vec![4, 4],
+                None,
+                None
+            )
+        );
+        let blob: Vec<u8> = conn
+            .query_row("SELECT blob FROM vault_items", [], |r| r.get(0))
+            .expect("item");
+        assert_eq!(blob, vec![0xab, 0xcd]);
     }
 
     #[test]

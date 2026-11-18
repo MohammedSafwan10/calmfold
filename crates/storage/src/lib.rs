@@ -22,7 +22,7 @@ use rusqlite::Connection;
 pub use error::{StorageError, StorageResult};
 pub use notes::NoteSummary;
 pub use tasks::{Progress, TaskCounts, TaskFilter};
-pub use vault::{SealedItem, VaultMeta};
+pub use vault::{AccountWrap, LinkOutcome, MasterWrap, SealedItem, VaultMeta};
 
 pub struct Store {
     conn: Connection,
