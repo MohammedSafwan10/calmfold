@@ -194,6 +194,18 @@ pub fn start_with_account_api(
         if let Ok(password) = std::env::var("OTTERO_DEV_VAULT") {
             dev_vault(window, shell.clone(), password, cx);
         }
+        // OTTERO_DEV_ACCOUNT=<password> (debug builds only): unlock the
+        // signed-in Ottero account at startup, for screenshots of the
+        // Passwords link and account screens. The password is never logged.
+        #[cfg(debug_assertions)]
+        if let Ok(password) = std::env::var("OTTERO_DEV_ACCOUNT") {
+            let library = shell.read(cx).library().clone();
+            library
+                .update(cx, |lib, cx| {
+                    lib.unlock_account(ottero_crypto::SecretString::from(password), cx)
+                })
+                .detach();
+        }
         // OTTERO_DEV_NOTE=<title>: open that note with the caret at the end of its body.
         if let Ok(title) = std::env::var("OTTERO_DEV_NOTE") {
             window.update(cx, |_, window, cx| {

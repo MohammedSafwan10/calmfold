@@ -1067,7 +1067,7 @@ impl PasswordsView {
                             Button::new("vault-create-account")
                                 .primary()
                                 .w_full()
-                                .label(if busy { "Setting up…" } else { "Set up Passwords" })
+                                .label(if busy { "Creating vault…" } else { "Create vault" })
                                 .loading(busy)
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -1094,8 +1094,8 @@ impl PasswordsView {
                 .gap_5()
                 .child(Self::hero(
                     Lucide::Cloud,
-                    "Use your Ottero account to unlock Passwords",
-                    format!("Enter your master password one last time. After that, your Ottero password ({email}) opens Passwords, and the master password is retired."),
+                    "Use your Ottero account",
+                    format!("Enter your master password one last time to unlock Passwords with your Ottero account ({email}) from now on. The master password is then retired."),
                     cx,
                 ))
                 .child(
@@ -1182,7 +1182,7 @@ impl PasswordsView {
                 .child(Self::hero(
                     Lucide::Cloud,
                     "Passwords belongs to another account",
-                    format!("Passwords on this computer opens with {linked}. You're signed in as {current}, which can't open it. Nothing was changed. Sign in as {linked}, or use its recovery key."),
+                    format!("It opens with {linked}, and you're signed in as {current}. Nothing was changed. Sign in as {linked}, or use the recovery key."),
                     cx,
                 ))
                 .child(
