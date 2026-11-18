@@ -183,7 +183,7 @@ item payload = XChaCha20-Poly1305(collection_key, plaintext,
   the entitlement; the app picks it up on its next token refresh. Payment
   failure: 7-day grace period, then sync pauses (read-only cloud copy for 30
   days, local data untouched).
-- Owner account `itzmesafwan@gmail.com`: role `owner`, entitlement source
+- Owner account `itzmesafwan1@gmail.com`: role `owner`, entitlement source
   `owner`, never expires.
 
 ## 6. Admin panel (`account.nexdark.com/admin`)
